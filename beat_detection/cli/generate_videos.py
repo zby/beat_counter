@@ -66,9 +66,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.ndarray], int, int]:
     """
-    Load beat timestamps and downbeat information from a file.
+    Load beat timestamps, downbeat information, and intro/ending indices from a file.
     
     Parameters:
     -----------
@@ -78,12 +78,30 @@ def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.nda
     Returns:
     --------
     tuple
-        (beat_timestamps, downbeats) where:
+        (beat_timestamps, downbeats, intro_end_idx, ending_start_idx) where:
         - beat_timestamps: Array of beat timestamps in seconds
         - downbeats: Array of indices that correspond to downbeats, or None if not available
+        - intro_end_idx: Index where the intro ends (0 if no intro detected)
+        - ending_start_idx: Index where the ending begins (len(beat_timestamps) if no ending detected)
     """
     try:
-        # First load the data from file
+        # Initialize default values for intro and ending indices
+        intro_end_idx = 0
+        ending_start_idx = -1  # Will be set to len(beat_timestamps) if not found
+        
+        # Read the file content to extract header information
+        with open(beat_file, 'r') as f:
+            lines = f.readlines()
+            
+            # Look for intro and ending information in the header comments
+            for line in lines:
+                if line.startswith('#'):
+                    if 'INTRO_END_IDX=' in line:
+                        intro_end_idx = int(line.split('=')[1].strip())
+                    elif 'ENDING_START_IDX=' in line:
+                        ending_start_idx = int(line.split('=')[1].strip())
+        
+        # Now load the actual data
         data = np.loadtxt(beat_file, comments='#')
         
         # Check if we have downbeat information (2 columns)
@@ -97,21 +115,41 @@ def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.nda
             # Get indices of downbeats
             downbeats = np.where(downbeat_flags == 1)[0]
             
+            # If ending_start_idx wasn't set in the header, set it to the length of beat_timestamps
+            if ending_start_idx == -1:
+                ending_start_idx = len(beat_timestamps)
+                
             print(f"Loaded {len(beat_timestamps)} beats with {len(downbeats)} downbeats")
-            return beat_timestamps, downbeats
+            if intro_end_idx > 0:
+                print(f"Intro section ends at beat {intro_end_idx}")
+            if ending_start_idx < len(beat_timestamps):
+                print(f"Ending section starts at beat {ending_start_idx}")
+                
+            return beat_timestamps, downbeats, intro_end_idx, ending_start_idx
         else:
             # No downbeat information, just timestamps
             beat_timestamps = data if data.ndim == 1 else data[:, 0]
+            
+            # If ending_start_idx wasn't set in the header, set it to the length of beat_timestamps
+            if ending_start_idx == -1:
+                ending_start_idx = len(beat_timestamps)
+                
             print(f"Loaded {len(beat_timestamps)} beats (no downbeat information)")
-            return beat_timestamps, None
+            if intro_end_idx > 0:
+                print(f"Intro section ends at beat {intro_end_idx}")
+            if ending_start_idx < len(beat_timestamps):
+                print(f"Ending section starts at beat {ending_start_idx}")
+                
+            return beat_timestamps, None, intro_end_idx, ending_start_idx
             
     except Exception as e:
         print(f"Error loading beats from {beat_file}: {e}")
-        return np.array([]), None
+        return np.array([]), None, 0, 0
 
 
 def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
                         beat_timestamps: np.ndarray, downbeats: np.ndarray,
+                        intro_end_idx: int = 0, ending_start_idx: Optional[int] = None,
                         resolution=(1280, 720), fps=30, meter=4, verbose=True) -> bool:
     """Generate a counter video for a given audio file with beat timestamps.
     
@@ -150,11 +188,35 @@ def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
     if verbose:
         print(f"Generating counter video with {meter}/4 time and downbeat detection...")
     try:
+        # Apply intro and ending filtering if specified
+        filtered_beat_timestamps = beat_timestamps
+        filtered_downbeats = downbeats
+        
+        # Filter out intro beats if intro_end_idx is provided
+        if intro_end_idx > 0:
+            if verbose:
+                print(f"Skipping intro section (first {intro_end_idx} beats)")
+            filtered_beat_timestamps = beat_timestamps[intro_end_idx:]
+            if downbeats is not None:
+                # Adjust downbeat indices to account for removed intro beats
+                filtered_downbeats = downbeats[downbeats >= intro_end_idx] - intro_end_idx
+        
+        # Filter out ending beats if ending_start_idx is provided
+        if ending_start_idx is not None and ending_start_idx < len(beat_timestamps):
+            if verbose:
+                print(f"Skipping ending section (last {len(beat_timestamps) - ending_start_idx} beats)")
+            # Apply ending filter after intro filter
+            ending_idx_adjusted = ending_start_idx - intro_end_idx if intro_end_idx > 0 else ending_start_idx
+            if ending_idx_adjusted > 0:  # Make sure we have beats left after filtering
+                filtered_beat_timestamps = filtered_beat_timestamps[:ending_idx_adjusted]
+                if filtered_downbeats is not None:
+                    filtered_downbeats = filtered_downbeats[filtered_downbeats < ending_idx_adjusted]
+        
         video_generator.create_counter_video(
             audio_file=str(audio_path), 
             output_file=str(output_file),
-            beat_timestamps=beat_timestamps,
-            downbeats=downbeats,
+            beat_timestamps=filtered_beat_timestamps,
+            downbeats=filtered_downbeats,
             meter=meter
         )
         if verbose:
@@ -222,7 +284,7 @@ def process_audio_file(audio_file, output_dir=None, resolution=(1280, 720), fps=
     if beats_file is not None and beats_file.exists():
         if verbose:
             print(f"Found corresponding beats file: {beats_file}")
-        beat_timestamps, downbeats = load_beat_data(beats_file)
+        beat_timestamps, downbeats, intro_end_idx, ending_start_idx = load_beat_data(beats_file)
         if len(beat_timestamps) == 0:
             raise ValueError(f"No beats found in {beats_file}. Please generate beat data first using the beat detection tool.")
     else:
@@ -246,6 +308,8 @@ def process_audio_file(audio_file, output_dir=None, resolution=(1280, 720), fps=
         output_file=counter_video,
         beat_timestamps=beat_timestamps,
         downbeats=downbeats,
+        intro_end_idx=intro_end_idx,
+        ending_start_idx=ending_start_idx,
         resolution=resolution,
         fps=fps,
         meter=meter,

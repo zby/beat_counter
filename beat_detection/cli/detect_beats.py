@@ -59,6 +59,10 @@ def parse_args():
         help="Don't attempt to detect and skip intro sections"
     )
     parser.add_argument(
+        "--no-skip-ending", action="store_true",
+        help="Don't attempt to detect and skip ending sections"
+    )
+    parser.add_argument(
         "--beats-per-bar", type=int, default=4,
         help="Number of beats per bar for downbeat detection (default: 4)"
     )
@@ -72,7 +76,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=True, verbose=True,
+def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=True, skip_ending=True, verbose=True,
                     input_base_dir="data/input", output_base_dir="data/output"):
     """
     Process a single audio file to detect beats.
@@ -87,6 +91,8 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
         Beat detector to use
     skip_intro : bool
         Whether to detect and skip intro sections
+    skip_ending : bool
+        Whether to detect and skip ending sections
     verbose : bool
         Whether to print progress and statistics
     input_base_dir : str
@@ -117,17 +123,22 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
     stats_file = file_utils.get_output_path(input_path, suffix='_beat_stats', ext='.txt')
     
     # Detect beats and downbeats
-    beat_timestamps, stats, irregular_beats, downbeats = detector.detect_beats(
-        str(input_path), skip_intro=skip_intro
+    beat_timestamps, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx = detector.detect_beats(
+        str(input_path), skip_intro=skip_intro, skip_ending=skip_ending
     )
     
     if verbose:
         reporting.print_beat_timestamps(beat_timestamps, irregular_beats, downbeats)
         reporting.print_statistics(stats, irregular_beats)
         print(f"\nDetected {len(downbeats)} downbeats")
+        if intro_end_idx > 0:
+            print(f"Detected intro section: skipped first {intro_end_idx} beats")
+        if ending_start_idx < len(beat_timestamps):
+            print(f"Detected ending section: skipped last {len(beat_timestamps) - ending_start_idx} beats")
     
     # Save beat timestamps and statistics
-    reporting.save_beat_timestamps(beat_timestamps, beats_file, downbeats)
+    reporting.save_beat_timestamps(beat_timestamps, beats_file, downbeats, 
+                                intro_end_idx=intro_end_idx, ending_start_idx=ending_start_idx)
     reporting.save_beat_statistics(stats, irregular_beats, stats_file, 
                                   filename=input_path.name)
     
@@ -155,7 +166,7 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
 
 
 def process_directory(directory, output_dir, detector, extensions=None, 
-                     skip_intro=True, verbose=True):
+                     skip_intro=True, skip_ending=True, verbose=True):
     """
     Process all audio files in a directory.
     
@@ -204,6 +215,7 @@ def process_directory(directory, output_dir, detector, extensions=None,
                 output_dir=output_dir,
                 detector=detector,
                 skip_intro=skip_intro,
+                skip_ending=skip_ending,
                 verbose=verbose
             )
             results.append((audio_file.name, (stats, irregular_beats)))
@@ -235,6 +247,10 @@ def main():
         beats_per_bar=args.beats_per_bar
     )
     
+    # Determine whether to skip intro and ending
+    skip_intro = not args.no_skip_intro
+    skip_ending = not args.no_skip_ending
+    
     # Determine base input and output directories
     input_base_dir = "data/input"
     output_base_dir = pathlib.Path(args.output_dir)
@@ -265,7 +281,8 @@ def main():
                 audio_file,
                 output_dir=output_base_dir,
                 detector=detector,
-                skip_intro=not args.no_skip_intro,
+                skip_intro=skip_intro,
+                skip_ending=skip_ending,
                 verbose=not args.quiet,
                 input_base_dir=input_base_dir,
                 output_base_dir=output_base_dir

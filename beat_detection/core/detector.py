@@ -70,7 +70,7 @@ class BeatDetector:
         self.beat_processor = RNNBeatProcessor()
         self.downbeat_processor = RNNDownBeatProcessor()
     
-    def detect_beats(self, audio_file: str, skip_intro: bool = True) -> Tuple[np.ndarray, BeatStatistics, List[int], np.ndarray]:
+    def detect_beats(self, audio_file: str, skip_intro: bool = True, skip_ending: bool = True) -> Tuple[np.ndarray, BeatStatistics, List[int], np.ndarray, int, int]:
         """
         Detect beat timestamps and downbeats in an audio file.
         
@@ -80,6 +80,8 @@ class BeatDetector:
             Path to the input audio file
         skip_intro : bool
             Whether to detect and skip intro sections
+        skip_ending : bool
+            Whether to detect and skip ending sections
             
         Returns:
         --------
@@ -91,6 +93,10 @@ class BeatDetector:
             Indices of irregular beats
         numpy.ndarray
             Array of downbeat indices (which beats are downbeats)
+        int
+            Index where the intro ends (0 if no intro detected or skip_intro is False)
+        int
+            Index where the ending begins (len(beats) if no ending detected or skip_ending is False)
         """
         # Detect beats
         beat_activations = self.beat_processor(audio_file)
@@ -109,28 +115,51 @@ class BeatDetector:
             histogram_processor=tempo_histogram_processor
         )
         
-        beats = beat_tracking(beat_activations)
+        original_beats = beat_tracking(beat_activations)
+        
+        # Store the original beats for returning intro/ending indices
+        all_beats = np.copy(original_beats)
         
         # Analyze the beats to find irregularities
-        stats, irregular_beats = self._analyze_beat_intervals(beats)
+        stats, irregular_beats = self._analyze_beat_intervals(original_beats)
         
-        # Detect and skip the intro if requested
+        # Initialize intro and ending indices
+        intro_end_idx = 0
+        ending_start_idx = len(original_beats)
+        
+        # Detect intro if requested
         if skip_intro:
-            intro_end_idx = self._detect_intro_end(beats, stats)
+            intro_end_idx = self._detect_intro_end(original_beats, stats)
             
             if intro_end_idx > 0:
-                beats = beats[intro_end_idx:]
+                original_beats = original_beats[intro_end_idx:]
                 # Recalculate statistics after skipping intro
-                stats, irregular_beats = self._analyze_beat_intervals(beats)
+                stats, irregular_beats = self._analyze_beat_intervals(original_beats)
+        
+        # Detect ending if requested
+        if skip_ending and len(original_beats) > self.min_consistent_beats:
+            ending_idx = self._detect_ending_start(original_beats, stats)
+            
+            if ending_idx < len(original_beats) and ending_idx > 0:
+                # Adjust ending_start_idx to be relative to all_beats
+                ending_start_idx = intro_end_idx + ending_idx
+                
+                # Trim the ending
+                original_beats = original_beats[:ending_idx]
+                # Recalculate statistics after skipping ending
+                stats, irregular_beats = self._analyze_beat_intervals(original_beats)
+        else:
+            # If we didn't skip the ending, ending_start_idx should be relative to all_beats
+            ending_start_idx = intro_end_idx + len(original_beats)
         
         # Warn about irregular beats
         if irregular_beats:
-            warnings.warn(f"Found {len(irregular_beats)} irregular beats out of {len(beats)-1} intervals")
+            warnings.warn(f"Found {len(irregular_beats)} irregular beats out of {len(original_beats)-1} intervals")
         
         # Detect downbeats
-        downbeats = self._detect_downbeats(audio_file, beats)
+        downbeats = self._detect_downbeats(audio_file, original_beats)
         
-        return beats, stats, irregular_beats, downbeats
+        return original_beats, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx
     
     def _detect_downbeats(self, audio_file: str, beats: np.ndarray) -> np.ndarray:
         """
@@ -288,3 +317,36 @@ class BeatDetector:
                 return i
         
         return 0
+        
+    def _detect_ending_start(self, beat_timestamps: np.ndarray, 
+                           stats: BeatStatistics) -> int:
+        """
+        Detect where the regular beat pattern ends and the ending section begins.
+        
+        Parameters:
+        -----------
+        beat_timestamps : numpy.ndarray
+            Array of beat timestamps in seconds
+        stats : BeatStatistics
+            Beat interval statistics
+            
+        Returns:
+        --------
+        int
+            Index where the regular beats end and ending begins, or len(beat_timestamps) if no ending detected
+        """
+        if len(beat_timestamps) < self.min_consistent_beats + 1:
+            return len(beat_timestamps)
+        
+        intervals = np.diff(beat_timestamps)
+        median_interval = stats.median_interval
+        tolerance = median_interval * 0.1  # 10% tolerance
+        
+        # Slide a window through the beats from the end to find where consistency breaks
+        for i in range(len(intervals) - self.min_consistent_beats, -1, -1):
+            window = intervals[i:i+self.min_consistent_beats]
+            if np.all(np.abs(window - median_interval) < tolerance):
+                # We found the last consistent window, so the ending starts after it
+                return i + self.min_consistent_beats
+        
+        return len(beat_timestamps)
