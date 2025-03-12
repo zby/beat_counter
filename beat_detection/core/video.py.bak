@@ -1,0 +1,576 @@
+"""
+Video generation with beat visualizations.
+"""
+
+import os
+import numpy as np
+import pathlib
+from typing import List, Tuple, Optional, Union, Callable
+from PIL import Image, ImageDraw, ImageFont
+from moviepy import (
+    VideoClip, AudioFileClip, CompositeVideoClip, 
+    ImageClip, TextClip, ColorClip
+)
+
+
+class BeatVideoGenerator:
+    """Generate videos with visual beat indicators."""
+    
+    def __init__(self, 
+                 resolution: Tuple[int, int] = (1280, 720),
+                 bg_color: Tuple[int, int, int] = (0, 0, 0),
+                 flash_color: Tuple[int, int, int] = (255, 255, 255),
+                 count_colors: List[Tuple[int, int, int]] = None,
+                 font_path: Optional[str] = None,
+                 font_size: int = 500,  # Much larger font size
+                 fps: int = 30):
+        """
+        Initialize the beat video generator.
+        
+        Parameters:
+        -----------
+        resolution : tuple of (width, height)
+            Video resolution in pixels
+        bg_color : tuple of (r, g, b)
+            Background color
+        flash_color : tuple of (r, g, b)
+            Color for beat flash
+        count_colors : list of (r, g, b) tuples
+            Colors for each beat count (1, 2, 3, 4) or None for default
+        font_path : str or None
+            Path to font file, or None for default
+        font_size : int
+            Font size for beat counter (default: 500 - very large)
+        fps : int
+            Frames per second for video
+        """
+        self.width, self.height = resolution
+        self.bg_color = bg_color
+        self.flash_color = flash_color
+        
+        # Default count colors if not provided
+        if count_colors is None:
+            self.count_colors = [
+                (255, 0, 0),    # 1: Red
+                (0, 255, 0),    # 2: Green
+                (0, 0, 255),    # 3: Blue
+                (255, 255, 0),  # 4: Yellow
+            ]
+        else:
+            self.count_colors = count_colors
+            
+        self.font_path = font_path
+        self.font_size = font_size
+        self.fps = fps
+        
+    def _find_large_font(self, text_size: int) -> Optional[ImageFont.ImageFont]:
+        """Find a font suitable for large text display."""
+        # Try different approaches to get the largest possible font
+        large_font = None
+        
+        # First approach: Try to get a system font
+        try:
+            # Find a default system font path that works well with numbers
+            for font_name in ["Arial.ttf", "DejaVuSans.ttf", "FreeSans.ttf", "LiberationSans-Regular.ttf"]:
+                try:
+                    font_path = f"/usr/share/fonts/truetype/{font_name}"
+                    large_font = ImageFont.truetype(font_path, text_size)
+                    break
+                except:
+                    pass
+        except:
+            pass
+            
+        # If that failed, try with default font or font path
+        if large_font is None:
+            try:
+                if self.font_path:
+                    large_font = ImageFont.truetype(self.font_path, text_size)
+                else:
+                    # Use default if nothing else works
+                    large_font = ImageFont.load_default()
+            except:
+                try:
+                    large_font = ImageFont.load_default()
+                except:
+                    pass
+        
+        return large_font
+        
+    def _calculate_text_position(self, draw, text: str, font: Optional[ImageFont.ImageFont], 
+                               text_size: int) -> Tuple[int, int]:
+        """Calculate centered position for text."""
+        # For very large text, we can approximate
+        text_width = text_size * 0.6  # Approximate width
+        text_height = text_size * 0.8  # Approximate height
+        
+        if font is not None:
+            try:
+                # Try to get actual dimensions if possible
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+            except:
+                # Use our approximation if this fails
+                pass
+        
+        # Center position
+        return ((self.width - text_width) // 2, (self.height - text_height) // 2)
+    
+    def _draw_number_with_font(self, draw, text: str, position: Tuple[int, int], 
+                             text_color: Tuple[int, int, int], font, text_size: int) -> None:
+        """Draw a number using font with outline."""
+        if font is None:
+            return
+            
+        # Draw the text with a thick border for visibility
+        border_size = max(4, text_size // 50)  # Thicker border for larger text
+        
+        for dx in range(-border_size, border_size + 1, border_size):
+            for dy in range(-border_size, border_size + 1, border_size):
+                if dx != 0 or dy != 0:  # Skip the center position
+                    draw.text((position[0] + dx, position[1] + dy), text, fill=(0, 0, 0), font=font)
+        
+        # Draw the main text in its color
+        draw.text(position, text, fill=text_color, font=font)
+    
+    def _draw_fallback_number(self, draw, text: str, center_x: int, center_y: int, 
+                            rect_size: float, bg_rect, text_color: Tuple[int, int, int]) -> None:
+        """Draw a fallback number using simple lines when font rendering fails."""
+        # Create a manual digit as a last resort
+        draw.rectangle(bg_rect, fill=text_color)
+        
+        # Draw the number as a white digit in the center
+        white = (255, 255, 255)
+        simple_size = rect_size * 0.5
+        line_width = int(simple_size // 10)
+        
+        # Just draw a huge white digit manually
+        if text == "1":
+            line_points = [(center_x, center_y - simple_size//2), (center_x, center_y + simple_size//2)]
+            draw.line(line_points, fill=white, width=line_width)
+        elif text == "2":
+            points = [
+                (center_x - simple_size//4, center_y - simple_size//4),  # Top
+                (center_x + simple_size//4, center_y - simple_size//4),  # Right top
+                (center_x, center_y),  # Middle
+                (center_x - simple_size//4, center_y + simple_size//4),  # Left bottom
+                (center_x + simple_size//4, center_y + simple_size//4)   # Right bottom
+            ]
+            draw.line(points, fill=white, width=line_width)
+        elif text == "3":
+            # Draw a 3 using lines
+            points = [
+                (center_x - simple_size//4, center_y - simple_size//4),  # Left top
+                (center_x + simple_size//4, center_y - simple_size//4),  # Right top
+                (center_x, center_y),  # Middle
+                (center_x + simple_size//4, center_y + simple_size//4)   # Right bottom
+            ]
+            draw.line(points, fill=white, width=line_width)
+            draw.line([(center_x - simple_size//4, center_y + simple_size//4), 
+                     (center_x + simple_size//4, center_y + simple_size//4)], 
+                     fill=white, width=line_width)
+        else:  # text == "4" or other
+            # Draw a simple 4
+            draw.line([(center_x - simple_size//4, center_y - simple_size//4), 
+                     (center_x - simple_size//4, center_y)], 
+                     fill=white, width=line_width)
+            draw.line([(center_x - simple_size//4, center_y), 
+                     (center_x + simple_size//4, center_y - simple_size//4)], 
+                     fill=white, width=line_width)
+            draw.line([(center_x + simple_size//4, center_y - simple_size//4), 
+                     (center_x + simple_size//4, center_y + simple_size//4)], 
+                     fill=white, width=line_width)
+        """
+        Initialize the beat video generator.
+        
+        Parameters:
+        -----------
+        resolution : tuple of (width, height)
+            Video resolution in pixels
+        bg_color : tuple of (r, g, b)
+            Background color
+        flash_color : tuple of (r, g, b)
+            Color for beat flash
+        count_colors : list of (r, g, b) tuples
+            Colors for each beat count (1, 2, 3, 4) or None for default
+        font_path : str or None
+            Path to font file, or None for default
+        font_size : int
+            Font size for beat counter (default: 500 - very large)
+        fps : int
+            Frames per second for video
+        """
+        self.width, self.height = resolution
+        self.bg_color = bg_color
+        self.flash_color = flash_color
+        
+        # Default count colors if not provided
+        if count_colors is None:
+            self.count_colors = [
+                (255, 0, 0),    # 1: Red
+                (0, 255, 0),    # 2: Green
+                (0, 0, 255),    # 3: Blue
+                (255, 255, 0),  # 4: Yellow
+            ]
+        else:
+            self.count_colors = count_colors
+            
+        self.font_path = font_path
+        self.font_size = font_size
+        self.fps = fps
+    
+    def create_flash_frame(self, t: float, beat_timestamps: np.ndarray, 
+                           flash_duration: float = 0.1) -> np.ndarray:
+        """
+        Create a frame with flash effect for a given time.
+        
+        Parameters:
+        -----------
+        t : float
+            Time in seconds
+        beat_timestamps : numpy.ndarray
+            Array of beat timestamps in seconds
+        flash_duration : float
+            Duration of each flash in seconds
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Frame with flash effect
+        """
+        # Check if beat_timestamps is empty
+        if len(beat_timestamps) == 0:
+            return np.tile(np.array(self.bg_color, dtype=np.uint8), 
+                          (self.height, self.width, 1))
+        
+        # Find the beat that just happened or is about to happen
+        current_beat_idx = np.searchsorted(beat_timestamps, t, side='right') - 1
+        
+        # If we're before the first beat
+        if current_beat_idx < 0:
+            return np.tile(np.array(self.bg_color, dtype=np.uint8), 
+                         (self.height, self.width, 1))
+        
+        # Get the timestamp of the most recent beat
+        beat_time = beat_timestamps[current_beat_idx]
+        
+        # Calculate time since the beat
+        time_since_beat = t - beat_time
+        
+        # Determine if we should show a flash
+        if 0 <= time_since_beat < flash_duration:
+            # Calculate flash intensity (1.0 at beat, fading to 0.0)
+            intensity = 1.0 - (time_since_beat / flash_duration)
+            
+            # Create the frame with flash
+            r = int(self.bg_color[0] + intensity * (self.flash_color[0] - self.bg_color[0]))
+            g = int(self.bg_color[1] + intensity * (self.flash_color[1] - self.bg_color[1]))
+            b = int(self.bg_color[2] + intensity * (self.flash_color[2] - self.bg_color[2]))
+            
+            # Debug print
+            if time_since_beat < 0.01:  # Just at the beat
+                print(f"Flash at time {t:.2f}s (beat {current_beat_idx+1}), intensity: {intensity:.2f}")
+            
+            # Create the frame ensuring correct shape
+            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            frame[:, :] = [r, g, b]
+            return frame
+        else:
+            # Return background color with correct shape
+            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            frame[:, :] = self.bg_color
+            return frame
+    
+    def create_counter_frame(self, t: float, beat_timestamps: np.ndarray, 
+                            count_beats: int = 4) -> np.ndarray:
+        """
+        Create a frame with beat counter for a given time.
+        
+        Parameters:
+        -----------
+        t : float
+            Time in seconds
+        beat_timestamps : numpy.ndarray
+            Array of beat timestamps in seconds
+        count_beats : int
+            Number of beats to count (typically 4 for 4/4 time)
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Frame with beat counter
+        """
+        # Check if beat_timestamps is empty
+        if len(beat_timestamps) == 0:
+            # Create a plain background
+            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            frame[:, :] = self.bg_color
+            return frame
+            
+        # Find the current beat index
+        current_beat_idx = np.searchsorted(beat_timestamps, t, side='right') - 1
+        
+        if current_beat_idx < 0:
+            # Before first beat
+            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            frame[:, :] = self.bg_color
+            return frame
+        
+        # Calculate the beat number within the pattern (1 to count_beats)
+        beat_in_pattern = (current_beat_idx % count_beats) + 1
+        color_idx = beat_in_pattern - 1
+        
+        # Debug print for first frame of new beat
+        beat_time = beat_timestamps[current_beat_idx]
+        time_since_beat = t - beat_time
+        if time_since_beat < 0.1 / self.fps:  # Just at the beat
+            print(f"Counter at time {t:.2f}s: {beat_in_pattern} (beat {current_beat_idx+1})")
+        
+        # Create a PIL Image
+        img = Image.new('RGB', (self.width, self.height), self.bg_color)
+        draw = ImageDraw.Draw(img)
+        
+        # Try to load font, or use default
+        try:
+            if self.font_path:
+                font = ImageFont.truetype(self.font_path, self.font_size)
+            else:
+                # Use default font, can't resize in older PIL versions
+                font = ImageFont.load_default()
+        except Exception:
+            try:
+                # Try to create a plain default font
+                font = ImageFont.load_default()
+            except:
+                # If all else fails, create a fake font
+                font = None
+        
+        # Draw the beat number
+        text = str(beat_in_pattern)
+        text_color = self.count_colors[color_idx % len(self.count_colors)]
+        
+        # Debug print but only at beat transitions to reduce output
+        beat_time = beat_timestamps[current_beat_idx]
+        time_since_beat = t - beat_time
+        if time_since_beat < 0.5 / self.fps:  # Just at the start of a beat
+            print(f"Beat at t={t:.3f}s: {beat_in_pattern}/{count_beats} (beat #{current_beat_idx+1})")
+        
+        # Draw the number as big as possible
+        center_x = self.width // 2
+        center_y = self.height // 2
+        
+        # Create a colored background for better visibility
+        rect_size = min(self.width, self.height) * 0.9  # Almost full screen
+        bg_rect = [
+            (center_x - rect_size/2), (center_y - rect_size/2),
+            (center_x + rect_size/2), (center_y + rect_size/2)
+        ]
+        
+        # Draw a semi-transparent background square
+        bg_color = tuple(int(c * 0.3) for c in text_color)  # Darker version of text color
+        draw.rectangle(bg_rect, fill=bg_color)
+        
+        # For the number text
+        try:
+            # Make the text EXTRA large - at least 3/4 of the screen height
+            text_size = int(self.height * 0.75)
+            
+            # Try different approaches to get the largest possible font
+            large_font = None
+            
+            # First approach: Try to get a system font
+            try:
+                # Find a default system font path that works well with numbers
+                for font_name in ["Arial.ttf", "DejaVuSans.ttf", "FreeSans.ttf", "LiberationSans-Regular.ttf"]:
+                    try:
+                        font_path = f"/usr/share/fonts/truetype/{font_name}"
+                        large_font = ImageFont.truetype(font_path, text_size)
+                        break
+                    except:
+                        pass
+            except:
+                pass
+                
+            # If that failed, try with default font or font path
+            if large_font is None:
+                try:
+                    if self.font_path:
+                        large_font = ImageFont.truetype(self.font_path, text_size)
+                    else:
+                        # Use default if nothing else works
+                        large_font = ImageFont.load_default()
+                except:
+                    large_font = ImageFont.load_default()
+            
+            # Calculate text position to center it
+            # For very large text, we can approximate
+            text_width = text_size * 0.6  # Approximate width
+            text_height = text_size * 0.8  # Approximate height
+            
+            try:
+                # Try to get actual dimensions if possible
+                bbox = draw.textbbox((0, 0), text, font=large_font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+            except:
+                # Use our approximation if this fails
+                pass
+            
+            # Center position
+            position = ((self.width - text_width) // 2, (self.height - text_height) // 2)
+            
+            # Draw the text with a thick border for visibility
+            border_size = max(4, text_size // 50)  # Thicker border for larger text
+            
+            for dx in range(-border_size, border_size + 1, border_size):
+                for dy in range(-border_size, border_size + 1, border_size):
+                    if dx != 0 or dy != 0:  # Skip the center position
+                        draw.text((position[0] + dx, position[1] + dy), text, fill=(0, 0, 0), font=large_font)
+            
+            # Draw the main text in its color
+            draw.text(position, text, fill=text_color, font=large_font)
+            
+        except Exception as e:
+            # If all attempts at drawing text fail, make a simple text indicator
+            print(f"Font rendering error: {e}")
+            
+            # Create a manual digit as a last resort
+            draw.rectangle(bg_rect, fill=text_color)
+            
+            # Draw the number as a white digit in the center
+            white = (255, 255, 255)
+            text = str(beat_in_pattern)
+            simple_size = rect_size * 0.5
+            
+            # Just draw a huge white digit manually
+            if text == "1":
+                line_points = [(center_x, center_y - simple_size//2), (center_x, center_y + simple_size//2)]
+                draw.line(line_points, fill=white, width=int(simple_size//10))
+            elif text == "2":
+                points = [
+                    (center_x - simple_size//4, center_y - simple_size//4),  # Top
+                    (center_x + simple_size//4, center_y - simple_size//4),  # Right top
+                    (center_x, center_y),  # Middle
+                    (center_x - simple_size//4, center_y + simple_size//4),  # Left bottom
+                    (center_x + simple_size//4, center_y + simple_size//4)   # Right bottom
+                ]
+                draw.line(points, fill=white, width=int(simple_size//10))
+            elif text == "3":
+                # Draw a 3 using lines
+                points = [
+                    (center_x - simple_size//4, center_y - simple_size//4),  # Left top
+                    (center_x + simple_size//4, center_y - simple_size//4),  # Right top
+                    (center_x, center_y),  # Middle
+                    (center_x + simple_size//4, center_y + simple_size//4)   # Right bottom
+                ]
+                draw.line(points, fill=white, width=int(simple_size//10))
+                draw.line([(center_x - simple_size//4, center_y + simple_size//4), 
+                        (center_x + simple_size//4, center_y + simple_size//4)], 
+                        fill=white, width=int(simple_size//10))
+            else:  # text == "4" or other
+                # Draw a simple 4
+                draw.line([(center_x - simple_size//4, center_y - simple_size//4), 
+                        (center_x - simple_size//4, center_y)], 
+                        fill=white, width=int(simple_size//10))
+                draw.line([(center_x - simple_size//4, center_y), 
+                        (center_x + simple_size//4, center_y - simple_size//4)], 
+                        fill=white, width=int(simple_size//10))
+                draw.line([(center_x + simple_size//4, center_y - simple_size//4), 
+                        (center_x + simple_size//4, center_y + simple_size//4)], 
+                        fill=white, width=int(simple_size//10))
+        
+        # Convert PIL Image to numpy array
+        return np.array(img)
+    
+    def create_flash_video(self, audio_file: Union[str, pathlib.Path], 
+                          beat_timestamps: np.ndarray,
+                          output_file: Union[str, pathlib.Path],
+                          flash_duration: float = 0.1) -> str:
+        """
+        Create a video with flashing background on beats.
+        
+        Parameters:
+        -----------
+        audio_file : str or pathlib.Path
+            Path to the input audio file
+        beat_timestamps : numpy.ndarray
+            Array of beat timestamps in seconds
+        output_file : str or pathlib.Path
+            Path to save the output video file
+        flash_duration : float
+            Duration of each flash in seconds
+            
+        Returns:
+        --------
+        str
+            Path to the created video file
+        """
+        # Ensure paths are strings
+        audio_file_str = str(audio_file)
+        output_file_str = str(output_file)
+        
+        # Load audio file
+        audio = AudioFileClip(audio_file_str)
+        
+        # Create a function that returns the frame at time t
+        def make_frame(t):
+            return self.create_flash_frame(t, beat_timestamps, flash_duration)
+        
+        # Create video clip
+        video = VideoClip(make_frame, duration=audio.duration)
+        
+        # Set audio
+        video = video.with_audio(audio)
+        
+        # Write video file
+        video.write_videofile(output_file_str, fps=self.fps, 
+                             codec='libx264', audio_codec='aac')
+        
+        return output_file_str
+    
+    def create_counter_video(self, audio_file: Union[str, pathlib.Path], 
+                            beat_timestamps: np.ndarray,
+                            output_file: Union[str, pathlib.Path],
+                            count_beats: int = 4) -> str:
+        """
+        Create a video with beat counter (1-4).
+        
+        Parameters:
+        -----------
+        audio_file : str or pathlib.Path
+            Path to the input audio file
+        beat_timestamps : numpy.ndarray
+            Array of beat timestamps in seconds
+        output_file : str or pathlib.Path
+            Path to save the output video file
+        count_beats : int
+            Number of beats to count before resetting
+            
+        Returns:
+        --------
+        str
+            Path to the created video file
+        """
+        # Ensure paths are strings
+        audio_file_str = str(audio_file)
+        output_file_str = str(output_file)
+        
+        # Load audio file
+        audio = AudioFileClip(audio_file_str)
+        
+        # Create a function that returns the frame at time t
+        def make_frame(t):
+            return self.create_counter_frame(t, beat_timestamps, count_beats)
+        
+        # Create video clip
+        video = VideoClip(make_frame, duration=audio.duration)
+        
+        # Set audio
+        video = video.with_audio(audio)
+        
+        # Write video file
+        video.write_videofile(output_file_str, fps=self.fps, 
+                             codec='libx264', audio_codec='aac')
+        
+        return output_file_str
