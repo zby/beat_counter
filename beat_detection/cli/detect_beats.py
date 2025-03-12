@@ -31,14 +31,14 @@ def parse_args():
     # Input arguments
     parser.add_argument(
         "input", nargs="?", 
-        help="Input audio file or directory. If not provided, all files in data/original will be processed."
+        help="Input audio file or directory. If not provided, all files in data/input will be processed."
     )
     
     # Output directory
     parser.add_argument(
         "-o", "--output-dir", 
-        default="data/beats",
-        help="Output directory for beat files (default: data/beats)"
+        default="data/output",
+        help="Output directory for beat files (default: data/output)"
     )
     
     # Beat detection options
@@ -72,7 +72,8 @@ def parse_args():
     return parser.parse_args()
 
 
-def process_audio_file(input_file, output_dir, detector, skip_intro=True, verbose=True):
+def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=True, verbose=True,
+                    input_base_dir="data/input", output_base_dir="data/output"):
     """
     Process a single audio file to detect beats.
     
@@ -80,7 +81,7 @@ def process_audio_file(input_file, output_dir, detector, skip_intro=True, verbos
     -----------
     input_file : str or pathlib.Path
         Path to the input audio file
-    output_dir : str or pathlib.Path
+    output_dir : str or pathlib.Path, optional
         Directory to save output files
     detector : BeatDetector
         Beat detector to use
@@ -88,6 +89,10 @@ def process_audio_file(input_file, output_dir, detector, skip_intro=True, verbos
         Whether to detect and skip intro sections
     verbose : bool
         Whether to print progress and statistics
+    input_base_dir : str
+        Base input directory (default: "data/input")
+    output_base_dir : str
+        Base output directory (default: "data/output")
         
     Returns:
     --------
@@ -96,27 +101,20 @@ def process_audio_file(input_file, output_dir, detector, skip_intro=True, verbos
     """
     # Ensure paths are Path objects
     input_path = pathlib.Path(input_file)
-    base_output_dir = pathlib.Path(output_dir)
     
-    # Preserve subdirectory structure if input is in a subdirectory
-    if "data/original" in str(input_path):
-        # Get relative path from data/original
-        rel_path = input_path.relative_to(pathlib.Path("data/original"))
-        # If there's a parent directory, use it in the output path
-        if rel_path.parent != pathlib.Path("."):
-            output_directory = file_utils.ensure_directory(base_output_dir / rel_path.parent)
-        else:
-            output_directory = file_utils.ensure_directory(base_output_dir)
+    # Determine output directory
+    if output_dir is not None:
+        output_directory = file_utils.get_output_directory(input_path, input_base_dir=input_base_dir, output_base_dir=output_dir)
     else:
-        output_directory = file_utils.ensure_directory(base_output_dir)
+        output_directory = file_utils.get_output_directory(input_path, input_base_dir, output_base_dir)
     
     if verbose:
         print(f"\nProcessing: {input_path}")
         print("=" * 80)
     
     # Generate output file paths
-    beats_file = file_utils.get_output_path(input_path, output_directory, suffix='_beats', ext='.txt')
-    stats_file = file_utils.get_output_path(input_path, output_directory, suffix='_beat_stats', ext='.txt')
+    beats_file = file_utils.get_output_path(input_path, suffix='_beats', ext='.txt')
+    stats_file = file_utils.get_output_path(input_path, suffix='_beat_stats', ext='.txt')
     
     # Detect beats and downbeats
     beat_timestamps, stats, irregular_beats, downbeats = detector.detect_beats(
@@ -136,7 +134,7 @@ def process_audio_file(input_file, output_dir, detector, skip_intro=True, verbos
     # Save intervals for debugging
     if len(beat_timestamps) > 1:
         intervals = np.diff(beat_timestamps)
-        intervals_file = file_utils.get_output_path(input_path, output_directory, suffix='_intervals', ext='.txt')
+        intervals_file = file_utils.get_output_path(input_path, suffix='_intervals', ext='.txt')
         with open(intervals_file, 'w') as f:
             f.write("# Beat intervals (seconds)\n")
             f.write("# Format: beat_number interval\n")
@@ -184,15 +182,34 @@ def process_directory(directory, output_dir, detector, extensions=None,
     # Find audio files
     audio_files = file_utils.find_audio_files(directory, extensions)
     
+    if not audio_files:
+        if verbose:
+            print(f"No audio files found in {directory}")
+        return []
+    
+    if verbose:
+        print(f"Found {len(audio_files)} audio files in {directory}")
+    
     # Process each file
-    results = file_utils.batch_process(
-        audio_files,
-        process_func=process_audio_file,
-        verbose=verbose,
-        output_dir=output_dir,
-        detector=detector,
-        skip_intro=skip_intro
-    )
+    results = []
+    
+    for audio_file in audio_files:
+        try:
+            if verbose:
+                print(f"\nProcessing: {audio_file}")
+                print("=" * 80)
+            
+            stats, irregular_beats = process_audio_file(
+                audio_file,
+                output_dir=output_dir,
+                detector=detector,
+                skip_intro=skip_intro,
+                verbose=verbose
+            )
+            results.append((audio_file.name, (stats, irregular_beats)))
+        except Exception as e:
+            print(f"Error processing {audio_file}: {e}")
+            results.append((audio_file.name, None))
     
     # Generate summary if multiple files were processed
     if len(results) > 1:
@@ -218,30 +235,52 @@ def main():
         beats_per_bar=args.beats_per_bar
     )
     
-    # Determine output path
-    output_dir = pathlib.Path(args.output_dir)
+    # Determine base input and output directories
+    input_base_dir = "data/input"
+    output_base_dir = pathlib.Path(args.output_dir)
     
-    # Process input
-    if args.input:
-        file_utils.process_input_path(
-            args.input,
-            default_dir="data/original",
-            process_file_func=process_audio_file,
-            process_dir_func=process_directory,
-            output_dir=output_dir,
-            detector=detector,
-            skip_intro=not args.no_skip_intro,
-            verbose=not args.quiet
-        )
-    else:
-        # Default: process all files in data/original
-        process_directory(
-            "data/original",
-            output_dir,
-            detector,
-            skip_intro=not args.no_skip_intro,
-            verbose=not args.quiet
-        )
+    # Get input paths to process
+    input_path = args.input if args.input else input_base_dir
+    
+    # Find audio files to process
+    audio_files = file_utils.find_audio_files(input_path)
+    
+    if not audio_files:
+        print(f"No audio files found in {input_path}")
+        return
+    
+    if not args.quiet:
+        print(f"Found {len(audio_files)} audio files to process")
+    
+    # Process all audio files
+    results = []
+    
+    for audio_file in audio_files:
+        try:
+            if not args.quiet:
+                print(f"\nProcessing: {audio_file}")
+                print("=" * 80)
+            
+            stats, irregular_beats = process_audio_file(
+                audio_file,
+                output_dir=output_base_dir,
+                detector=detector,
+                skip_intro=not args.no_skip_intro,
+                verbose=not args.quiet,
+                input_base_dir=input_base_dir,
+                output_base_dir=output_base_dir
+            )
+            results.append((audio_file.name, (stats, irregular_beats)))
+        except Exception as e:
+            print(f"Error processing {audio_file}: {e}")
+            results.append((audio_file.name, None))
+    
+    # Generate summary if multiple files were processed
+    if len(results) > 1 and not args.quiet:
+        summary_file = output_base_dir / "batch_summary.txt"
+        reporting.save_batch_summary(results, summary_file)
+        reporting.print_batch_summary(results)
+        print(f"Summary statistics saved to: {summary_file}")
 
 
 if __name__ == "__main__":

@@ -9,34 +9,15 @@ from typing import List, Optional, Union, Tuple, Callable
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
 
 
-def ensure_directory(directory: Union[str, pathlib.Path]) -> pathlib.Path:
-    """
-    Ensure a directory exists, creating it if necessary.
-    
-    Parameters:
-    -----------
-    directory : str or pathlib.Path
-        Directory path to ensure exists
-    
-    Returns:
-    --------
-    pathlib.Path
-        Path object for the directory
-    """
-    path = pathlib.Path(directory)
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def find_audio_files(directory: Union[str, pathlib.Path], 
+def find_audio_files(paths: Union[str, pathlib.Path, List[Union[str, pathlib.Path]]], 
                      extensions: List[str] = None) -> List[pathlib.Path]:
     """
-    Find audio files in a directory, recursively searching subdirectories.
+    Find audio files in a list of files/directories, recursively searching subdirectories.
     
     Parameters:
     -----------
-    directory : str or pathlib.Path
-        Directory to search for audio files
+    paths : str, pathlib.Path, or list of str/pathlib.Path
+        File or directory paths to search for audio files
     extensions : list of str, optional
         List of file extensions to include. If None, uses all supported audio extensions.
     
@@ -45,17 +26,94 @@ def find_audio_files(directory: Union[str, pathlib.Path],
     list of pathlib.Path
         List of audio file paths
     """
-    path = pathlib.Path(directory)
+    # Convert single path to list for uniform processing
+    if not isinstance(paths, list):
+        paths = [paths]
+    
     audio_files = []
     
     # Use the global constant if no extensions are provided
     ext_list = extensions if extensions is not None else AUDIO_EXTENSIONS
     
-    for ext in ext_list:
-        # Use rglob for recursive search into subdirectories
-        audio_files.extend(list(path.rglob(f'*{ext}')))
+    for path in paths:
+        path = pathlib.Path(path)
+        
+        # If it's a file, check if it has a valid audio extension
+        if path.is_file():
+            if any(str(path).lower().endswith(ext.lower()) for ext in ext_list):
+                audio_files.append(path)
+        # If it's a directory, search recursively
+        elif path.is_dir():
+            for ext in ext_list:
+                # Use rglob for recursive search into subdirectories
+                audio_files.extend(list(path.rglob(f'*{ext}')))
     
     return sorted(audio_files)
+
+def get_input_files(input_path: Union[str, pathlib.Path], 
+                   default_dir: str = "data/input",
+                   file_pattern: str = "*",
+                   extensions: List[str] = None) -> List[pathlib.Path]:
+    """
+    Get a list of input files based on input path, returning either a single file or
+    a list of files from a directory.
+    
+    Parameters:
+    -----------
+    input_path : str or pathlib.Path
+        Path to file or directory to process
+    default_dir : str
+        Default directory to use if input path is not found (default: "data/input")
+    file_pattern : str
+        Glob pattern to match in directories (default: "*")
+    extensions : list of str, optional
+        List of file extensions to include. If None and searching audio files, 
+        uses all supported audio extensions.
+    
+    Returns:
+    --------
+    list of pathlib.Path
+        List of input file paths to process
+    """
+    path = pathlib.Path(input_path)
+    input_files = []
+    
+    if path.is_dir():
+        # Check if we're looking for audio files specifically
+        if extensions is None and file_pattern == "*":
+            # This is likely an audio file search
+            input_files = find_audio_files(path, extensions=AUDIO_EXTENSIONS)
+        else:
+            # Use specified pattern and extensions
+            if extensions:
+                for ext in extensions:
+                    input_files.extend(list(path.rglob(f"{file_pattern}{ext}")))
+            else:
+                input_files.extend(list(path.rglob(file_pattern)))
+    elif path.is_file():
+        # Just a single file
+        input_files = [path]
+    else:
+        # Try to find file in default directory
+        default_input = pathlib.Path(default_dir) / path
+        if default_input.is_file():
+            input_files = [default_input]
+        elif default_input.is_dir():
+            # Check if we're looking for audio files specifically
+            if extensions is None and file_pattern == "*":
+                # This is likely an audio file search
+                input_files = find_audio_files(default_input, extensions=AUDIO_EXTENSIONS)
+            else:
+                # Use specified pattern and extensions
+                if extensions:
+                    for ext in extensions:
+                        input_files.extend(list(default_input.rglob(f"{file_pattern}{ext}")))
+                else:
+                    input_files.extend(list(default_input.rglob(file_pattern)))
+        else:
+            print(f"Warning: Input path '{input_path}' not found")
+    
+    return sorted(input_files)
 
 
 def find_files_by_pattern(directory: Union[str, pathlib.Path], pattern: str) -> List[pathlib.Path]:
@@ -105,71 +163,55 @@ def resolve_input_path(filename: str, input_dir: Optional[Union[str, pathlib.Pat
     return path.absolute()
 
 
-def find_related_file(base_name: Union[str, pathlib.Path], 
-                      target_dir: Union[str, pathlib.Path],
-                      extensions: List[str] = None,
-                      suffix: str = None,
-                      prefix: str = None,
-                      remove_suffix: str = None) -> Optional[pathlib.Path]:
+def get_output_directory(input_file: Union[str, pathlib.Path], 
+                        input_base_dir: str = "data/input",
+                        output_base_dir: str = "data/output") -> pathlib.Path:
     """
-    Find a related file in a target directory.
+    Compute the output directory for a given input file, preserving subdirectory structure.
     
     Parameters:
     -----------
-    base_name : str or pathlib.Path
-        Base name to search for (with or without extension)
-    target_dir : str or pathlib.Path
-        Directory to search in
-    extensions : list of str, optional
-        List of file extensions to search for (e.g., ['.mp3', '.wav'])
-    suffix : str, optional
-        Suffix to add to the base name (e.g., '_beats')
-    prefix : str, optional
-        Prefix to add to the base name
-    remove_suffix : str, optional
-        Suffix to remove from the base name if present
+    input_file : str or pathlib.Path
+        Path to the input file or directory
+    input_base_dir : str
+        Base input directory (default: "data/input")
+    output_base_dir : str
+        Base output directory (default: "data/output")
     
     Returns:
     --------
-    pathlib.Path or None
-        Path to the related file if found, or None if not found
+    pathlib.Path
+        Output directory path
     """
-    # Convert to Path object and get stem (filename without extension)
-    base_path = pathlib.Path(base_name)
-    base_stem = base_path.stem
+    input_path = pathlib.Path(input_file)
+    input_base = pathlib.Path(input_base_dir)
+    output_base = pathlib.Path(output_base_dir)
     
-    # Remove any existing suffixes from the stem
-    if remove_suffix and base_stem.endswith(remove_suffix):
-        base_stem = base_stem[:-len(remove_suffix)]
+    # Try to determine if input_file is within the input_base_dir structure
+    try:
+        # Get the relative path from input_base_dir
+        rel_path = input_path.relative_to(input_base)
+        
+        # If input_path is a file, we want the parent directory's structure
+        if input_path.is_file():
+            output_dir = output_base / rel_path.parent
+        else:
+            # Input is a directory, preserve its structure
+            output_dir = output_base / rel_path
+    except ValueError:
+        # File is not in input_base_dir, just use the output_base_dir
+        output_dir = output_base
     
-    # Build the search pattern
-    target_dir = pathlib.Path(target_dir)
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
     
-    if prefix:
-        base_stem = f"{prefix}{base_stem}"
-    
-    if suffix:
-        base_stem = f"{base_stem}{suffix}"
-    
-    # Search for files with the specified extensions
-    if extensions:
-        for ext in extensions:
-            pattern = f"{base_stem}{ext}"
-            matches = list(target_dir.glob(pattern))
-            if matches:
-                return matches[0]
-    else:
-        # If no extensions specified, search for any extension
-        pattern = f"{base_stem}.*"
-        matches = list(target_dir.glob(pattern))
-        if matches:
-            return matches[0]
-    
-    return None
+    return output_dir
 
-
-def get_output_path(input_file: pathlib.Path, output_dir: pathlib.Path, 
-                   suffix: str = '_with_metronome', ext: str = '.wav') -> pathlib.Path:
+def get_output_path(input_file: Union[str, pathlib.Path], 
+                   suffix: str,
+                   ext: str,
+                   input_base_dir: str = "data/input",
+                   output_base_dir: str = "data/output") -> pathlib.Path:
     """
     Generate an output file path based on input file.
     
@@ -177,76 +219,49 @@ def get_output_path(input_file: pathlib.Path, output_dir: pathlib.Path,
     -----------
     input_file : pathlib.Path
         Input file path
-    output_dir : pathlib.Path
-        Output directory
     suffix : str
         Suffix to add to the output filename
     ext : str
         File extension for the output file
+    input_base_dir : str
+        Base input directory (default: "data/input")
+    output_base_dir : str
+        Base output directory (default: "data/output")
     
     Returns:
     --------
     pathlib.Path
         Output file path
     """
-    return output_dir / f"{input_file.stem}{suffix}{ext}"
-
-
-def process_input_path(input_path: Union[str, pathlib.Path], 
-                       default_dir: Union[str, pathlib.Path],
-                       process_file_func: Callable,
-                       process_dir_func: Callable,
-                       **kwargs) -> None:
-    """
-    Process an input path that could be a file or directory.
+    input_path = pathlib.Path(input_file)
     
-    This function handles the common pattern of:
-    1. Checking if input_path is a file or directory
-    2. Calling the appropriate processing function
-    3. Falling back to default directory if path not found
+    # Compute output directory based on input path
+    output_dir = get_output_directory(input_path, input_base_dir, output_base_dir)
     
-    Parameters:
-    -----------
-    input_path : str or pathlib.Path
-        Input path to process
-    default_dir : str or pathlib.Path
-        Default directory to use if input path not specified or found
-    process_file_func : callable
-        Function to call for processing a single file
-    process_dir_func : callable
-        Function to call for processing a directory
-    **kwargs : dict
-        Additional keyword arguments to pass to processing functions
-    """
-    path = pathlib.Path(input_path)
+    # Ensure extension has a dot prefix
+    if ext and not ext.startswith('.'):
+        ext = '.' + ext
     
-    if path.is_dir():
-        # Process directory
-        process_dir_func(path, **kwargs)
-    elif path.is_file():
-        # Process single file
-        process_file_func(path, **kwargs)
-    else:
-        # Try to find file in default directory
-        default_input = pathlib.Path(default_dir) / path
-        if default_input.is_file():
-            process_file_func(default_input, **kwargs)
-        else:
-            print(f"Error: Input file or directory '{input_path}' not found")
+    return output_dir / f"{input_path.stem}{suffix}{ext}"
 
 
-def find_beats_file_for_audio(audio_file: Union[str, pathlib.Path]) -> Optional[pathlib.Path]:
+def find_beats_file_for_audio(audio_file: Union[str, pathlib.Path], 
+                               input_base_dir: str = "data/input",
+                               output_base_dir: str = "data/output") -> Optional[pathlib.Path]:
     """
     Find the beats file for a given audio file.
     
-    This function looks for a beats file in the data/beats directory that matches the audio file.
-    It first tries to find the beats file in the same subdirectory structure as the audio file,
-    and if not found, it searches in all subdirectories.
+    This function looks for a beats file in the output directory that matches the audio file.
+    It preserves the subdirectory structure from input to output directories.
     
     Parameters:
     -----------
     audio_file : str or pathlib.Path
         Path to the audio file
+    input_base_dir : str
+        Base input directory (default: "data/input")
+    output_base_dir : str
+        Base output directory (default: "data/output")
     
     Returns:
     --------
@@ -255,29 +270,16 @@ def find_beats_file_for_audio(audio_file: Union[str, pathlib.Path]) -> Optional[
     """
     audio_path = pathlib.Path(audio_file)
     
-    # Determine the beats directory based on the audio file location
-    if "data/original" in str(audio_path):
-        # Get the subdirectory structure, if any
-        rel_path = audio_path.relative_to(pathlib.Path("data/original"))
-        if rel_path.parent != pathlib.Path("."):
-            # There is a subdirectory - look in the corresponding beats subdirectory
-            beats_dir = pathlib.Path("data/beats") / rel_path.parent
-        else:
-            beats_dir = pathlib.Path("data/beats")
-    else:
-        beats_dir = pathlib.Path("data/beats")
+    # Get the appropriate output directory
+    beats_dir = get_output_directory(audio_path, input_base_dir, output_base_dir)
     
     # First try to find the beats file in the expected directory
-    beats_file = find_related_file(
-        audio_path.stem, 
-        beats_dir,
-        suffix='_beats',
-        extensions=['.txt']
-    )
+    beats_file_path = beats_dir / f"{audio_path.stem}_beats.txt"
+    beats_file = beats_file_path if beats_file_path.is_file() else None
     
     # If not found, search recursively in all subdirectories
     if beats_file is None:
-        for match in pathlib.Path("data/beats").rglob(f"{audio_path.stem}_beats.txt"):
+        for match in pathlib.Path(output_base_dir).rglob(f"{audio_path.stem}_beats.txt"):
             beats_file = match
             break
     

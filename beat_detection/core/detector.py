@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
 from madmom.features.beats import RNNBeatProcessor, BeatTrackingProcessor
 from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
+from madmom.features.tempo import CombFilterTempoHistogramProcessor
 
 
 @dataclass
@@ -94,10 +95,18 @@ class BeatDetector:
         # Detect beats
         beat_activations = self.beat_processor(audio_file)
         
-        beat_tracking = BeatTrackingProcessor(
+        # Create a dedicated TempoHistogramProcessor instance to avoid deprecation warning
+        tempo_histogram_processor = CombFilterTempoHistogramProcessor(
             min_bpm=self.min_bpm,
             max_bpm=self.max_bpm,
             fps=self.fps
+        )
+        
+        beat_tracking = BeatTrackingProcessor(
+            min_bpm=self.min_bpm,
+            max_bpm=self.max_bpm,
+            fps=self.fps,
+            histogram_processor=tempo_histogram_processor
         )
         
         beats = beat_tracking(beat_activations)

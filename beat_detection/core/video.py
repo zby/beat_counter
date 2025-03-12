@@ -19,8 +19,6 @@ class BeatVideoGenerator:
     def __init__(self, 
                  resolution: Tuple[int, int] = (1280, 720),
                  bg_color: Tuple[int, int, int] = (0, 0, 0),
-                 flash_color: Tuple[int, int, int] = (255, 255, 255),
-                 downbeat_flash_color: Tuple[int, int, int] = (255, 100, 100),
                  count_colors: List[Tuple[int, int, int]] = None,
                  downbeat_color: Tuple[int, int, int] = (255, 0, 0),
                  font_path: Optional[str] = None,
@@ -36,10 +34,6 @@ class BeatVideoGenerator:
             Video resolution in pixels
         bg_color : tuple of (r, g, b)
             Background color
-        flash_color : tuple of (r, g, b)
-            Color for regular beat flash
-        downbeat_flash_color : tuple of (r, g, b)
-            Color for downbeat flash (first beat of measure)
         count_colors : list of (r, g, b) tuples
             Colors for each beat count (1, 2, 3, 4) or None for default
         downbeat_color : tuple of (r, g, b)
@@ -55,8 +49,6 @@ class BeatVideoGenerator:
         """
         self.width, self.height = resolution
         self.bg_color = bg_color
-        self.flash_color = flash_color
-        self.downbeat_flash_color = downbeat_flash_color
         self.meter = meter
         self.downbeat_color = downbeat_color
         
@@ -194,69 +186,7 @@ class BeatVideoGenerator:
                      (center_x + simple_size//4, center_y + simple_size//4)], 
                      fill=white, width=line_width)
     
-    def create_flash_frame(self, t: float, beat_timestamps: np.ndarray, 
-                           downbeats: np.ndarray,
-                           flash_duration: float = 0.1) -> np.ndarray:
-        """
-        Create a frame with flash effect for a given time.
-        
-        Parameters:
-        -----------
-        t : float
-            Time in seconds
-        beat_timestamps : numpy.ndarray
-            Array of beat timestamps in seconds
-        downbeats : numpy.ndarray
-            Array of indices that correspond to downbeats (required)
-        flash_duration : float
-            Duration of each flash in seconds
-            
-        Returns:
-        --------
-        numpy.ndarray
-            Frame with flash effect
-        """
-        # Get current beat information with downbeat detection
-        current_beat_idx, _, time_since_beat, is_downbeat = self.get_current_beat_info(
-            t, beat_timestamps, downbeats
-        )
-        
-        # If we have no beats or are before the first beat
-        if current_beat_idx < 0:
-            return np.tile(np.array(self.bg_color, dtype=np.uint8), 
-                          (self.height, self.width, 1))
-        
-        # Determine if we should show a flash
-        if 0 <= time_since_beat < flash_duration:
-            # Calculate flash intensity (1.0 at beat, fading to 0.0)
-            intensity = 1.0 - (time_since_beat / flash_duration)
-            
-            # Choose flash color based on whether it's a downbeat
-            if is_downbeat:
-                flash_color = self.downbeat_flash_color
-                beat_type = "DOWNBEAT"
-            else:
-                flash_color = self.flash_color
-                beat_type = "beat"
-            
-            # Create the frame with flash
-            r = int(self.bg_color[0] + intensity * (flash_color[0] - self.bg_color[0]))
-            g = int(self.bg_color[1] + intensity * (flash_color[1] - self.bg_color[1]))
-            b = int(self.bg_color[2] + intensity * (flash_color[2] - self.bg_color[2]))
-            
-            # Debug print
-            if time_since_beat < 0.01:  # Just at the beat
-                print(f"Flash at time {t:.2f}s ({beat_type} {current_beat_idx+1}), intensity: {intensity:.2f}")
-            
-            # Create the frame ensuring correct shape
-            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-            frame[:, :] = [r, g, b]
-            return frame
-        else:
-            # Return background color with correct shape
-            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-            frame[:, :] = self.bg_color
-            return frame
+
     
     def get_current_beat_info(self, t: float, beat_timestamps: np.ndarray, 
                                downbeats: np.ndarray) -> Tuple[int, int, float, bool]:
@@ -407,58 +337,11 @@ class BeatVideoGenerator:
         # Convert PIL Image to numpy array
         return np.array(img)
     
-    def create_flash_video(self, audio_file: Union[str, pathlib.Path], 
-                          beat_timestamps: np.ndarray,
-                          output_file: Union[str, pathlib.Path],
-                          downbeats: np.ndarray,
-                          flash_duration: float = 0.1) -> str:
-        """
-        Create a video with flashing background on beats.
-        
-        Parameters:
-        -----------
-        audio_file : str or pathlib.Path
-            Path to the input audio file
-        beat_timestamps : numpy.ndarray
-            Array of beat timestamps in seconds
-        output_file : str or pathlib.Path
-            Path to save the output video file
-        downbeats : numpy.ndarray
-            Array of indices that correspond to downbeats (required)
-        flash_duration : float
-            Duration of each flash in seconds
-            
-        Returns:
-        --------
-        str
-            Path to the created video file
-        """
-        # Ensure paths are strings
-        audio_file_str = str(audio_file)
-        output_file_str = str(output_file)
-        
-        # Load audio file
-        audio = AudioFileClip(audio_file_str)
-        
-        # Create a function that returns the frame at time t
-        def make_frame(t):
-            return self.create_flash_frame(t, beat_timestamps, downbeats, flash_duration)
-        
-        # Create video clip
-        video = VideoClip(make_frame, duration=audio.duration)
-        
-        # Set audio
-        video = video.with_audio(audio)
-        
-        # Write video file
-        video.write_videofile(output_file_str, fps=self.fps, 
-                             codec='libx264', audio_codec='aac')
-        
-        return output_file_str
+
     
     def create_counter_video(self, audio_file: Union[str, pathlib.Path], 
-                            beat_timestamps: np.ndarray,
                             output_file: Union[str, pathlib.Path],
+                            beat_timestamps: np.ndarray,
                             downbeats: np.ndarray,
                             meter: Optional[int] = None) -> str:
         """
@@ -468,12 +351,12 @@ class BeatVideoGenerator:
         -----------
         audio_file : str or pathlib.Path
             Path to the input audio file
-        beat_timestamps : numpy.ndarray
-            Array of beat timestamps in seconds
         output_file : str or pathlib.Path
             Path to save the output video file
+        beat_timestamps : numpy.ndarray
+            Array of beat timestamps in seconds
         downbeats : numpy.ndarray
-            Array of indices that correspond to downbeats (required)
+            Array of indices that correspond to downbeats
         meter : int, optional
             Number of beats per measure, overrides object's meter if provided
             
