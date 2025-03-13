@@ -41,7 +41,7 @@ class BeatDetector:
     
     def __init__(self, min_bpm: int = 60, max_bpm: int = 240, fps: int = 100, 
                  tolerance_percent: float = 10.0, min_consistent_beats: int = 8,
-                 beats_per_bar: int = 4):
+                 beats_per_bar: Optional[int] = None):
         """
         Initialize the beat detector.
         
@@ -57,8 +57,9 @@ class BeatDetector:
             Percentage tolerance for beat intervals
         min_consistent_beats : int
             Minimum number of consistent beats to consider a stable section
-        beats_per_bar : int
-            Number of beats per bar to use for downbeat alignment (default: 4)
+        beats_per_bar : Optional[int]
+            Number of beats per bar to use for downbeat alignment. If None, will try all supported meters (2, 3, 4).
+            Default: None
         """
         self.min_bpm = min_bpm
         self.max_bpm = max_bpm
@@ -268,8 +269,9 @@ class BeatDetector:
         downbeat_activations = self.downbeat_processor(audio_file)
         
         # Process with DBN downbeat tracker
+        beats_per_bar_param = [self.beats_per_bar] if self.beats_per_bar is not None else SUPPORTED_METERS
         downbeat_tracker = DBNDownBeatTrackingProcessor(
-            beats_per_bar=[self.beats_per_bar], 
+            beats_per_bar=beats_per_bar_param, 
             fps=self.fps
         )
         

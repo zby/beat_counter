@@ -63,8 +63,8 @@ def parse_args():
         help="Don't attempt to detect and skip ending sections"
     )
     parser.add_argument(
-        "--beats-per-bar", type=int, default=4,
-        help="Number of beats per bar for downbeat detection (default: 4)"
+        "--beats-per-bar", type=int, default=None,
+        help="Number of beats per bar for downbeat detection (default: None, will try all supported meters)"
     )
     
     # Output options
@@ -113,10 +113,6 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
         output_directory = file_utils.get_output_directory(input_path, input_base_dir=input_base_dir, output_base_dir=output_dir)
     else:
         output_directory = file_utils.get_output_directory(input_path, input_base_dir, output_base_dir)
-    
-    if verbose:
-        print(f"\nProcessing: {input_path}")
-        print("=" * 80)
     
     # Generate output file paths
     beats_file = file_utils.get_output_path(input_path, suffix='_beats', ext='.txt')
