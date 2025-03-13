@@ -5,7 +5,7 @@ Core beat detection functionality.
 import numpy as np
 import warnings
 from dataclasses import dataclass
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Callable
 from madmom.features.beats import RNNBeatProcessor, BeatTrackingProcessor
 from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
 from madmom.features.tempo import CombFilterTempoHistogramProcessor
@@ -41,7 +41,8 @@ class BeatDetector:
     
     def __init__(self, min_bpm: int = 60, max_bpm: int = 240, fps: int = 100, 
                  tolerance_percent: float = 10.0, min_consistent_beats: int = 8,
-                 beats_per_bar: Optional[int] = None):
+                 beats_per_bar: Optional[int] = None,
+                 progress_callback: Optional[Callable[[str, float], None]] = None):
         """
         Initialize the beat detector.
         
@@ -67,12 +68,14 @@ class BeatDetector:
         self.tolerance_percent = tolerance_percent
         self.min_consistent_beats = min_consistent_beats
         self.beats_per_bar = beats_per_bar
+        self.progress_callback = progress_callback
         
         # Initialize processors
         self.beat_processor = RNNBeatProcessor()
         self.downbeat_processor = RNNDownBeatProcessor()
     
-    def detect_beats(self, audio_file: str, skip_intro: bool = True, skip_ending: bool = True) -> Tuple[np.ndarray, BeatStatistics, List[int], np.ndarray, int, int, int]:
+    def detect_beats(self, audio_file: str, skip_intro: bool = True, skip_ending: bool = True, 
+                  progress_callback: Optional[Callable[[str, float], None]] = None) -> Tuple[np.ndarray, BeatStatistics, List[int], np.ndarray, int, int, int]:
         """
         Detect beat timestamps and downbeats in an audio file.
         
@@ -102,8 +105,15 @@ class BeatDetector:
         int
             Detected meter (time signature numerator, typically 3 or 4)
         """
+        # Use provided callback or instance callback
+        callback = progress_callback or self.progress_callback
+        
         # Detect beats
+        if callback:
+            callback("Loading audio file", 0.0)
         beat_activations = self.beat_processor(audio_file)
+        if callback:
+            callback("Detecting beats", 0.1)
         
         # Create a dedicated TempoHistogramProcessor instance to avoid deprecation warning
         tempo_histogram_processor = CombFilterTempoHistogramProcessor(
@@ -120,12 +130,16 @@ class BeatDetector:
         )
         
         original_beats = beat_tracking(beat_activations)
+        if callback:
+            callback("Analyzing beat patterns", 0.3)
         
         # Store the original beats for returning intro/ending indices
         all_beats = np.copy(original_beats)
         
         # Analyze the beats to find irregularities
         stats, irregular_beats = self._analyze_beat_intervals(original_beats)
+        if callback:
+            callback("Analyzing beat intervals", 0.4)
         
         # Initialize intro and ending indices
         intro_end_idx = 0
@@ -133,6 +147,8 @@ class BeatDetector:
         
         # Detect intro if requested
         if skip_intro:
+            if callback:
+                callback("Detecting intro section", 0.5)
             intro_end_idx = self._detect_intro_end(original_beats, stats)
             
             if intro_end_idx > 0:
@@ -142,6 +158,8 @@ class BeatDetector:
         
         # Detect ending if requested
         if skip_ending and len(original_beats) > self.min_consistent_beats:
+            if callback:
+                callback("Detecting ending section", 0.6)
             ending_idx = self._detect_ending_start(original_beats, stats)
             
             if ending_idx < len(original_beats) and ending_idx > 0:
@@ -161,15 +179,22 @@ class BeatDetector:
             warnings.warn(f"Found {len(irregular_beats)} irregular beats out of {len(original_beats)-1} intervals")
         
         # Detect downbeats
-        downbeats = self._detect_downbeats(audio_file, original_beats)
+        if callback:
+            callback("Detecting downbeats", 0.7)
+        downbeats = self._detect_downbeats(audio_file, original_beats, callback=callback)
         
         # Detect meter (time signature) based on beat patterns
+        if callback:
+            callback("Detecting time signature", 0.9)
         detected_meter = self._detect_meter(original_beats, downbeats)
         
         # If meter detection failed, raise an exception
         if detected_meter == -1:
             raise ValueError("Failed to detect a consistent time signature. The audio may have irregular beats, mixed time signatures, or not enough data.")
         
+        if callback:
+            callback("Beat detection complete", 1.0)
+            
         return original_beats, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx, detected_meter
     
     def _detect_meter(self, beats: np.ndarray, downbeats: np.ndarray) -> int:
@@ -249,7 +274,7 @@ class BeatDetector:
         print("Error: No clear time signature detected")
         return -1
     
-    def _detect_downbeats(self, audio_file: str, beats: np.ndarray) -> np.ndarray:
+    def _detect_downbeats(self, audio_file: str, beats: np.ndarray, callback: Optional[Callable[[str, float], None]] = None) -> np.ndarray:
         """
         Detect downbeats in the audio file and align them with detected beats.
         
@@ -266,6 +291,8 @@ class BeatDetector:
             Array of indices in the beats array that correspond to downbeats
         """
         # Run the downbeat processor
+        if callback:
+            callback("Processing downbeat activations", 0.75)
         downbeat_activations = self.downbeat_processor(audio_file)
         
         # Process with DBN downbeat tracker
@@ -276,6 +303,8 @@ class BeatDetector:
         )
         
         # Get downbeats with their beat positions (1.0 means downbeat)
+        if callback:
+            callback("Tracking downbeats", 0.8)
         beats_with_positions = downbeat_tracker(downbeat_activations)
         
         if len(beats_with_positions) == 0:

@@ -16,6 +16,7 @@ import sys
 import pathlib
 import argparse
 import numpy as np
+from tqdm import tqdm
 
 from beat_detection.core.detector import BeatDetector
 from beat_detection.utils import file_utils, reporting
@@ -72,12 +73,16 @@ def parse_args():
         "--quiet", action="store_true",
         help="Reduce output verbosity"
     )
+    parser.add_argument(
+        "--no-progress", action="store_true",
+        help="Don't show progress bar"
+    )
     
     return parser.parse_args()
 
 
 def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=True, skip_ending=True, verbose=True,
-                    input_base_dir="data/input", output_base_dir="data/output"):
+                    input_base_dir="data/input", output_base_dir="data/output", show_progress=True):
     """
     Process a single audio file to detect beats.
     
@@ -118,10 +123,29 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
     beats_file = file_utils.get_output_path(input_path, suffix='_beats', ext='.txt')
     stats_file = file_utils.get_output_path(input_path, suffix='_beat_stats', ext='.txt')
     
+    # Setup progress bar
+    progress_bar = None
+    progress_callback = None
+    
+    if show_progress:
+        progress_bar = tqdm(total=100, desc="Detecting beats", bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+        
+        def update_progress(status, progress):
+            progress_bar.set_description(status)
+            # Convert progress from 0-1 to 0-100 and calculate the difference to update
+            new_progress = int(progress * 100)
+            progress_bar.update(new_progress - progress_bar.n)
+        
+        progress_callback = update_progress
+    
     # Detect beats and downbeats
     beat_timestamps, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx, detected_meter = detector.detect_beats(
-        str(input_path), skip_intro=skip_intro, skip_ending=skip_ending
+        str(input_path), skip_intro=skip_intro, skip_ending=skip_ending, progress_callback=progress_callback
     )
+    
+    # Close progress bar
+    if progress_bar:
+        progress_bar.close()
     
     if verbose:
         reporting.print_beat_timestamps(beat_timestamps, irregular_beats, downbeats)
@@ -164,7 +188,7 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
 
 
 def process_directory(directory, output_dir, detector, extensions=None, 
-                     skip_intro=True, skip_ending=True, verbose=True):
+                     skip_intro=True, skip_ending=True, verbose=True, show_progress=True):
     """
     Process all audio files in a directory.
     
@@ -214,7 +238,8 @@ def process_directory(directory, output_dir, detector, extensions=None,
                 detector=detector,
                 skip_intro=skip_intro,
                 skip_ending=skip_ending,
-                verbose=verbose
+                verbose=verbose,
+                show_progress=show_progress
             )
             results.append((audio_file.name, (stats, irregular_beats)))
         except Exception as e:
@@ -283,7 +308,8 @@ def main():
                 skip_ending=skip_ending,
                 verbose=not args.quiet,
                 input_base_dir=input_base_dir,
-                output_base_dir=output_base_dir
+                output_base_dir=output_base_dir,
+                show_progress=not args.no_progress
             )
             results.append((audio_file.name, (stats, irregular_beats)))
         except Exception as e:

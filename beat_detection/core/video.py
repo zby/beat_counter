@@ -5,6 +5,7 @@ Video generation with beat visualizations.
 import os
 import numpy as np
 import pathlib
+import time
 from typing import List, Tuple, Optional, Union, Callable
 from PIL import Image, ImageDraw, ImageFont
 from moviepy import (
@@ -26,8 +27,8 @@ DEFAULT_REGULAR_BEAT_COLOR = (128, 128, 128)  # Medium gray for regular beats
 DEFAULT_DOWNBEAT_BG_COLOR = (200, 200, 220)  # Light blue-gray for downbeat backgrounds
 DEFAULT_REGULAR_BEAT_BG_COLOR = (220, 220, 220)  # Light gray for regular beat backgrounds
 
-#CODEC = 'libx264'
-CODEC = 'mpeg4'
+CODEC = 'libx264'
+#CODEC = 'mpeg4'
 AUDIO_CODEC = 'aac'
 
 class BeatVideoGenerator:
@@ -452,7 +453,8 @@ class BeatVideoGenerator:
                             beat_timestamps: np.ndarray,
                             downbeats: np.ndarray,
                             meter: Optional[int] = None,
-                            sample_beats: Optional[int] = None) -> str:
+                            sample_beats: Optional[int] = None,
+                            progress_callback: Optional[Callable[[str, float], None]] = None) -> str:
         """
         Create a video with beat counter (1-N based on meter).
         
@@ -494,6 +496,11 @@ class BeatVideoGenerator:
         else:
             max_time = None  # Use the full audio duration
         
+        # Report progress - starting audio loading
+        if progress_callback:
+            print("DEBUG: Calling progress callback - Loading audio file")
+            progress_callback("Loading audio file", 0.05)
+            
         # Load audio file
         audio = AudioFileClip(audio_file_str)
         
@@ -506,21 +513,75 @@ class BeatVideoGenerator:
                 # Use the clip's duration property directly
                 audio.duration = max_time
         
+        # Report progress - preparing frames
+        if progress_callback:
+            print("DEBUG: Calling progress callback - Preparing video frames")
+            progress_callback("Preparing video frames", 0.15)
+            
         # Fill the frame cache with all possible frames
         self._fill_frame_cache(meter_value)
         
+        # Store the last reported beat index and time to avoid duplicate updates
+        last_reported = {"beat": -1, "time": 0}  # Using a dict for mutable reference
+        
         # Create a function that returns the frame at time t
         def make_frame(t):
+            # Calculate approximate progress based on current time position
+            if progress_callback and audio.duration > 0:
+                # Map time to progress between 30% and 80%
+                progress = 0.3 + (t / audio.duration) * 0.5
+                
+                # Find which beat we're currently processing
+                beat_idx = len(beat_timestamps) - 1  # Default to last beat
+                for i, beat_time in enumerate(beat_timestamps):
+                    if t <= beat_time:
+                        beat_idx = max(0, i)  # Ensure we don't go below 0
+                        break
+                
+                # Report progress in two cases:
+                # 1. When we move to a new beat
+                # 2. When significant time has passed (at least 1 second) since last update
+                current_time = time.time()
+                time_since_last_update = current_time - last_reported["time"]
+                
+                if ((beat_idx != last_reported["beat"]) or (time_since_last_update >= 1.0)) and beat_idx < len(beat_timestamps):
+                    # Update last reported beat and time
+                    last_reported["beat"] = beat_idx
+                    last_reported["time"] = current_time
+                    
+                    # Calculate progress percentage (30% to 80%)
+                    beat_progress = (beat_idx + 1) / len(beat_timestamps)
+                    progress = 0.3 + (beat_progress * 0.5)
+                    
+                    print(f"DEBUG: Calling progress callback - Processing beat {beat_idx+1}/{len(beat_timestamps)} at time {t:.2f}")
+                    progress_callback(f"Processing beat {beat_idx+1}/{len(beat_timestamps)}", progress)
+            
             return self.create_counter_frame(t, beat_timestamps, downbeats, meter_value)
         
+        # Report progress - creating video
+        if progress_callback:
+            print("DEBUG: Calling progress callback - Creating video clip")
+            progress_callback("Creating video clip", 0.3)
+            
         # Create video clip
         video = VideoClip(make_frame, duration=audio.duration)
         
         # Set audio
         video = video.with_audio(audio)
         
-        # Write video file
-        video.write_videofile(output_file_str, fps=self.fps, 
-                             codec=CODEC, audio_codec=AUDIO_CODEC)
+        # Report progress - writing video file
+        if progress_callback:
+            print("DEBUG: Calling progress callback - Writing video file")
+            progress_callback("Writing video file", 0.8)
         
+        # Write video file without callback
+        video.write_videofile(output_file_str, fps=self.fps, 
+                             codec=CODEC, audio_codec=AUDIO_CODEC,
+                             logger='bar')
+        
+        # Report progress - completed
+        if progress_callback:
+            print("DEBUG: Calling progress callback - Video generation complete")
+            progress_callback("Video generation complete", 1.0)
+            
         return output_file_str

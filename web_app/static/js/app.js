@@ -131,6 +131,9 @@ function uploadFile() {
     // Upload file
     fetch('/upload', {
         method: 'POST',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        },
         body: formData
     })
     .then(response => {
@@ -175,7 +178,10 @@ function analyzeAudio() {
     
     // Start analysis
     fetch(`/analyze/${currentFileId}`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
     })
     .then(response => {
         if (!response.ok) {
@@ -204,8 +210,10 @@ function startStatusPolling() {
     const warningElements = document.querySelectorAll('.warning-text');
     warningElements.forEach(el => el.remove());
     
-    let progress = 10;
+    // Update URL to reflect we're in the analysis stage
+    updateUrlForStage('analyzing', currentFileId);
     
+    // Poll for status updates every 500ms to catch all progress updates
     statusCheckInterval = setInterval(() => {
         fetch(`/status/${currentFileId}`)
             .then(response => {
@@ -215,17 +223,23 @@ function startStatusPolling() {
                 return response.json();
             })
             .then(data => {
-                // Update progress based on status
+                // Update progress based on status and progress information
                 switch (data.status) {
                     case 'analyzing':
-                        // Simulate progress while analyzing
-                        progress = Math.min(progress + 5, 90);
-                        setProgress(analysisProgress, progress);
+                        // Show real progress from backend if available
+                        if (data.progress) {
+                            setProgress(analysisProgress, data.progress.percent);
+                            // Update progress status text if available
+                            updateProgressStatus(analysisProgress, data.progress.status);
+                        }
                         break;
                         
                     case 'analyzed':
                         // Analysis complete, show results
                         setProgress(analysisProgress, 100);
+                        updateProgressStatus(analysisProgress, 'Analysis complete');
+                        // Update URL to reflect analysis is complete
+                        updateUrlForStage('analyzed', currentFileId);
                         setTimeout(() => {
                             analysisProgress.classList.add('hidden');
                             analysisResults.classList.remove('hidden');
@@ -235,14 +249,48 @@ function startStatusPolling() {
                         break;
                         
                     case 'generating_video':
-                        // Video generation in progress
-                        progress = Math.min(progress + 5, 90);
-                        setProgress(videoProgress, progress);
+                        // Show real progress from backend if available
+                        console.log('Received generating_video status update');
+                        console.log('Full response data:', data);
+                        
+                        // Update URL to reflect we're in the video generation stage
+                        updateUrlForStage('video_generation', currentFileId);
+                        
+                        if (data.progress) {
+                            console.log(`Video progress update: ${data.progress.status} - ${data.progress.percent}%`);
+                            
+                            // Log the current progress bar state before updating
+                            const progressFill = videoProgress.querySelector('.progress-fill');
+                            const currentWidth = progressFill.style.width;
+                            console.log(`Current progress bar width: ${currentWidth}`);
+                            
+                            // Force a reflow before updating the progress bar
+                            // This helps ensure the CSS transition is triggered
+                            void progressFill.offsetWidth;
+                            
+                            // Update the progress bar with a small delay to ensure it's rendered
+                            setTimeout(() => {
+                                // Update the progress bar
+                                setProgress(videoProgress, data.progress.percent);
+                                
+                                // Update progress status text if available
+                                updateProgressStatus(videoProgress, data.progress.status);
+                                
+                                // Log the progress bar state after updating
+                                const newWidth = progressFill.style.width;
+                                console.log(`New progress bar width: ${newWidth}`);
+                            }, 10);
+                        } else {
+                            console.log('Video progress data not available in response');
+                        }
                         break;
                         
                     case 'completed':
                         // Video generation complete
                         setProgress(videoProgress, 100);
+                        updateProgressStatus(videoProgress, 'Video generation complete');
+                        // Update URL to reflect video generation is complete
+                        updateUrlForStage('completed', currentFileId);
                         setTimeout(() => {
                             videoProgress.classList.add('hidden');
                             videoResults.classList.remove('hidden');
@@ -253,7 +301,11 @@ function startStatusPolling() {
                         
                     case 'error':
                         // Error occurred
-                        alert(`Error: ${data.error}`);
+                        if (data.progress && data.progress.status) {
+                            alert(`Error: ${data.progress.status}`);
+                        } else {
+                            alert(`Error: ${data.error}`);
+                        }
                         resetToUpload();
                         clearInterval(statusCheckInterval);
                         break;
@@ -263,7 +315,7 @@ function startStatusPolling() {
                 console.error('Error checking status:', error);
                 clearInterval(statusCheckInterval);
             });
-    }, 1000);
+    }, 500);  // Poll more frequently (every 500ms) to catch all updates
 }
 
 // Display analysis results
@@ -373,7 +425,10 @@ function confirmAnalysis() {
     
     // Start video generation
     fetch(`/confirm/${currentFileId}`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
     })
     .then(response => {
         if (!response.ok) {
@@ -442,6 +497,9 @@ function resetToUpload() {
     setProgress(analysisProgress, 0);
     setProgress(videoProgress, 0);
     
+    // Reset URL to base
+    window.history.pushState({}, '', '/');
+    
     // Clear status check interval
     if (statusCheckInterval) {
         clearInterval(statusCheckInterval);
@@ -455,7 +513,27 @@ function resetToUpload() {
 // Set progress bar value
 function setProgress(progressElement, value) {
     const progressFill = progressElement.querySelector('.progress-fill');
-    progressFill.style.width = `${value}%`;
+    
+    // Ensure value is a number and between 0-100
+    const safeValue = Math.min(Math.max(parseFloat(value) || 0, 0), 100);
+    
+    // Log the progress update
+    console.log(`Setting progress to ${safeValue}%`);
+    
+    // Apply the width change
+    progressFill.style.width = `${safeValue}%`;
+}
+
+// Update progress status text
+function updateProgressStatus(progressElement, statusText) {
+    // Check if status text element exists, if not create it
+    let statusElement = progressElement.querySelector('.progress-status');
+    if (!statusElement) {
+        statusElement = document.createElement('div');
+        statusElement.className = 'progress-status text-center mt-2';
+        progressElement.appendChild(statusElement);
+    }
+    statusElement.textContent = statusText;
 }
 
 // Format time in seconds to MM:SS format
@@ -464,6 +542,24 @@ function formatTime(seconds) {
     const secs = Math.floor(seconds % 60);
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
+
+// Update the URL based on the current processing stage
+function updateUrlForStage(stage, fileId) {
+    if (!fileId) return;
+    
+    // Update the URL without reloading the page
+    const newUrl = `/${stage}/${fileId}`;
+    window.history.pushState({ stage, fileId }, '', newUrl);
+    console.log(`URL updated to: ${newUrl}`);
+}
+
+// Handle browser back/forward navigation
+window.addEventListener('popstate', (event) => {
+    // If we have state data and we're going back to the root
+    if (window.location.pathname === '/' && currentFileId) {
+        resetToUpload();
+    }
+});
 
 // Initialize the application when the DOM is loaded
 document.addEventListener('DOMContentLoaded', init);

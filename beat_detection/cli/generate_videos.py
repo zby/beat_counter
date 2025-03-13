@@ -17,7 +17,7 @@ If nothing is provided, processes all audio files in data/input/.
 import pathlib
 import argparse
 import numpy as np
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Tuple, Callable
 
 from beat_detection.core.video import BeatVideoGenerator, DEFAULT_VIDEO_RESOLUTION, DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT, DEFAULT_FPS
 from beat_detection.utils import file_utils
@@ -158,7 +158,8 @@ def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
                         beat_timestamps: np.ndarray, downbeats: np.ndarray,
                         intro_end_idx: int = 0, ending_start_idx: Optional[int] = None,
                         resolution=DEFAULT_VIDEO_RESOLUTION, fps=30, meter=4, 
-                        sample_beats=None, verbose=True) -> bool:
+                        sample_beats=None, verbose=True,
+                        progress_callback: Optional[Callable[[str, float], None]] = None) -> bool:
     """Generate a counter video for a given audio file with beat timestamps.
     
     Parameters:
@@ -246,7 +247,8 @@ def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
                 beat_timestamps=filtered_beat_timestamps,
                 downbeats=filtered_downbeats,
                 meter=meter,
-                sample_beats=sample_beats
+                sample_beats=sample_beats,
+                progress_callback=progress_callback
             )
         except Exception as inner_e:
             # Try to recover from specific errors
