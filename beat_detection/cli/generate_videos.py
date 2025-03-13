@@ -19,7 +19,7 @@ import argparse
 import numpy as np
 from typing import Optional, Union, Tuple
 
-from beat_detection.core.video import BeatVideoGenerator
+from beat_detection.core.video import BeatVideoGenerator, DEFAULT_VIDEO_RESOLUTION, DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT
 from beat_detection.utils import file_utils
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
 
@@ -49,12 +49,16 @@ def parse_args():
         help="Number of beats per measure (time signature numerator, default: 4)"
     )
     parser.add_argument(
-        "--resolution", type=str, default="1280x720",
-        help="Video resolution in format WIDTHxHEIGHT (default: 1280x720)"
+        "--resolution", type=str, default=f"{DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT}",
+        help=f"Video resolution in format WIDTHxHEIGHT (default: {DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT})"
     )
     parser.add_argument(
         "--fps", type=int, default=30,
         help="Frames per second for output videos (default: 30)"
+    )
+    parser.add_argument(
+        "--sample", type=int, default=None, metavar="N",
+        help="Generate a sample video with only the first N beats (default: None, process all beats)"
     )
     
     # Output options
@@ -150,7 +154,8 @@ def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.nda
 def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
                         beat_timestamps: np.ndarray, downbeats: np.ndarray,
                         intro_end_idx: int = 0, ending_start_idx: Optional[int] = None,
-                        resolution=(1280, 720), fps=30, meter=4, verbose=True) -> bool:
+                        resolution=DEFAULT_VIDEO_RESOLUTION, fps=30, meter=4, 
+                        sample_beats=None, verbose=True) -> bool:
     """Generate a counter video for a given audio file with beat timestamps.
     
     Parameters:
@@ -177,12 +182,11 @@ def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
     bool
         True if video was successfully generated, False otherwise
     """
-    # Create video generator with meter and color settings
+    # Create video generator with meter settings
     video_generator = BeatVideoGenerator(
         resolution=resolution,
         fps=fps,
-        meter=meter,
-        downbeat_color=(255, 0, 0)  # Red for downbeats
+        meter=meter
     )
     
     if verbose:
@@ -217,7 +221,8 @@ def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
             output_file=str(output_file),
             beat_timestamps=filtered_beat_timestamps,
             downbeats=filtered_downbeats,
-            meter=meter
+            meter=meter,
+            sample_beats=sample_beats
         )
         if verbose:
             print(f"Counter video saved: {output_file}")
@@ -227,8 +232,8 @@ def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
             print(f"Error generating counter video: {e}")
         return False
 
-def process_audio_file(audio_file, output_dir=None, resolution=(1280, 720), fps=30, 
-                      meter=4, verbose=True, 
+def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RESOLUTION, fps=30, 
+                      meter=4, sample_beats=None, verbose=True, 
                       input_base_dir="data/input", output_base_dir="data/output"):
     """
     Process an audio file to generate a beat visualization video.
@@ -313,14 +318,15 @@ def process_audio_file(audio_file, output_dir=None, resolution=(1280, 720), fps=
         resolution=resolution,
         fps=fps,
         meter=meter,
+        sample_beats=sample_beats,
         verbose=verbose
     )
     
     return success
 
 
-def process_directory(directory, output_dir, resolution, fps, 
-                      meter, verbose=True):
+def process_directory(directory, output_dir, resolution=DEFAULT_VIDEO_RESOLUTION, fps=30, 
+                      meter=4, sample_beats=None, verbose=True):
     """
     Process all audio files in a directory to generate beat visualization videos.
     
@@ -373,6 +379,7 @@ def process_directory(directory, output_dir, resolution, fps,
                 resolution=resolution,
                 fps=fps,
                 meter=meter,
+                sample_beats=sample_beats,
                 verbose=verbose
             )
             results.append((audio_file.name, success))
@@ -403,8 +410,8 @@ def main():
         width, height = map(int, args.resolution.split('x'))
         resolution = (width, height)
     except ValueError:
-        print(f"Invalid resolution format: {args.resolution}. Using default 1280x720.")
-        resolution = (1280, 720)
+        print(f"Invalid resolution format: {args.resolution}. Using default {DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT}.")
+        resolution = DEFAULT_VIDEO_RESOLUTION
     
     # Base directories
     input_base_dir = "data/input"
@@ -432,6 +439,7 @@ def main():
                 resolution=resolution,
                 fps=args.fps,
                 meter=args.meter,
+                sample_beats=args.sample,
                 verbose=not args.quiet,
                 input_base_dir=input_base_dir,
                 output_base_dir=output_base_dir
