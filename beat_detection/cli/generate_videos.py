@@ -19,7 +19,7 @@ import argparse
 import numpy as np
 from typing import Optional, Union, Tuple
 
-from beat_detection.core.video import BeatVideoGenerator, DEFAULT_VIDEO_RESOLUTION, DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT
+from beat_detection.core.video import BeatVideoGenerator, DEFAULT_VIDEO_RESOLUTION, DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT, DEFAULT_FPS
 from beat_detection.utils import file_utils
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
 
@@ -53,8 +53,8 @@ def parse_args():
         help=f"Video resolution in format WIDTHxHEIGHT (default: {DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT})"
     )
     parser.add_argument(
-        "--fps", type=int, default=30,
-        help="Frames per second for output videos (default: 30)"
+        "--fps", type=int, default=DEFAULT_FPS,
+        help=f"Frames per second for output videos (default: {DEFAULT_FPS})"
     )
     parser.add_argument(
         "--sample", type=int, default=None, metavar="N",
@@ -318,8 +318,8 @@ def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RES
         resolution=resolution,
         fps=fps,
         meter=meter,
-        sample_beats=sample_beats,
-        verbose=verbose
+        verbose=verbose,
+        sample_beats=sample_beats
     )
     
     return success
@@ -347,8 +347,8 @@ def process_directory(directory, output_dir, resolution=DEFAULT_VIDEO_RESOLUTION
         Frames per second for the video
     meter : int
         Number of beats to count before resetting
-    no_counter : bool
-        Whether to skip generating the counter video
+    sample_beats : int or None
+        Number of beats to sample from each audio file
     verbose : bool
         Whether to print progress
         
