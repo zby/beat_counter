@@ -9,6 +9,7 @@ from typing import List, Dict, Tuple, Optional
 from madmom.features.beats import RNNBeatProcessor, BeatTrackingProcessor
 from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
 from madmom.features.tempo import CombFilterTempoHistogramProcessor
+from beat_detection.utils.constants import SUPPORTED_METERS
 
 
 @dataclass
@@ -70,7 +71,7 @@ class BeatDetector:
         self.beat_processor = RNNBeatProcessor()
         self.downbeat_processor = RNNDownBeatProcessor()
     
-    def detect_beats(self, audio_file: str, skip_intro: bool = True, skip_ending: bool = True) -> Tuple[np.ndarray, BeatStatistics, List[int], np.ndarray, int, int]:
+    def detect_beats(self, audio_file: str, skip_intro: bool = True, skip_ending: bool = True) -> Tuple[np.ndarray, BeatStatistics, List[int], np.ndarray, int, int, int]:
         """
         Detect beat timestamps and downbeats in an audio file.
         
@@ -97,6 +98,8 @@ class BeatDetector:
             Index where the intro ends (0 if no intro detected or skip_intro is False)
         int
             Index where the ending begins (len(beats) if no ending detected or skip_ending is False)
+        int
+            Detected meter (time signature numerator, typically 3 or 4)
         """
         # Detect beats
         beat_activations = self.beat_processor(audio_file)
@@ -159,7 +162,91 @@ class BeatDetector:
         # Detect downbeats
         downbeats = self._detect_downbeats(audio_file, original_beats)
         
-        return original_beats, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx
+        # Detect meter (time signature) based on beat patterns
+        detected_meter = self._detect_meter(original_beats, downbeats)
+        
+        # If meter detection failed, raise an exception
+        if detected_meter == -1:
+            raise ValueError("Failed to detect a consistent time signature. The audio may have irregular beats, mixed time signatures, or not enough data.")
+        
+        return original_beats, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx, detected_meter
+    
+    def _detect_meter(self, beats: np.ndarray, downbeats: np.ndarray) -> int:
+        """
+        Detect the most likely meter (time signature numerator) based on beat patterns.
+        
+        Parameters:
+        -----------
+        beats : numpy.ndarray
+            Array of beat timestamps in seconds
+        downbeats : numpy.ndarray
+            Array of indices that correspond to downbeats
+            
+        Returns:
+        --------
+        int
+            Detected meter (2, 3, or 4)
+            Returns -1 if the meter cannot be reliably determined
+        """
+        if len(beats) < 12 or len(downbeats) < 3:
+            # Not enough data to make a reliable determination
+            print("Error: Not enough beats or downbeats to determine time signature")
+            return -1
+        
+        # Calculate the number of beats between consecutive downbeats
+        beat_counts = []
+        for i in range(1, len(downbeats)):
+            beat_counts.append(downbeats[i] - downbeats[i-1])
+        
+        # Count occurrences of each beat count
+        meter_counts = {}
+        for meter in SUPPORTED_METERS:
+            lower_bound = meter - 0.5
+            upper_bound = meter + 0.5
+            meter_counts[meter] = sum(1 for count in beat_counts if lower_bound <= count <= upper_bound)
+        
+        # Calculate irregular count (beats that don't match any supported meter)
+        irregular_count = len(beat_counts) - sum(meter_counts.values())
+        
+        # Calculate the percentage of each meter
+        total_measures = len(beat_counts)
+        meter_percentages = {}
+        for meter in SUPPORTED_METERS:
+            meter_percentages[meter] = (meter_counts[meter] / total_measures) * 100 if total_measures > 0 else 0
+        
+        percent_irregular = (irregular_count / total_measures) * 100 if total_measures > 0 else 0
+        
+        # Log the results
+        meter_log = ", ".join([f"{meter}/4: {meter_percentages[meter]:.1f}%" for meter in SUPPORTED_METERS])
+        print(f"Time signature analysis: {meter_log}, Irregular: {percent_irregular:.1f}%")
+        
+        # Check if there are too many irregular measures
+        if percent_irregular > 30:
+            print("Error: Too many irregular measures detected")
+            return -1
+        
+        # Check if there's a mix of time signatures with no clear winner
+        mixed_signatures = False
+        for i, meter1 in enumerate(SUPPORTED_METERS):
+            for meter2 in SUPPORTED_METERS[i+1:]:
+                if meter_percentages[meter1] >= 30 and meter_percentages[meter2] >= 30:
+                    mixed_signatures = True
+                    break
+            if mixed_signatures:
+                break
+                
+        if mixed_signatures:
+            print("Error: Mixed time signatures detected")
+            return -1
+        
+        # Determine the most likely meter
+        for meter in SUPPORTED_METERS:
+            if meter_percentages[meter] > 50:
+                return meter
+                
+        # If no clear winner
+        print("Error: No clear time signature detected")
+        return -1
     
     def _detect_downbeats(self, audio_file: str, beats: np.ndarray) -> np.ndarray:
         """

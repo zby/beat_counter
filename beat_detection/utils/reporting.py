@@ -11,9 +11,10 @@ from ..core.detector import BeatStatistics
 def save_beat_timestamps(timestamps: np.ndarray, output_file: Union[str, pathlib.Path], 
                       downbeats: Optional[np.ndarray] = None,
                       intro_end_idx: int = 0,
-                      ending_start_idx: Optional[int] = None) -> None:
+                      ending_start_idx: Optional[int] = None,
+                      detected_meter: Optional[int] = None) -> None:
     """
-    Save beat timestamps to a text file, including downbeat, intro, and ending information.
+    Save beat timestamps to a text file, including downbeat, intro, ending, and meter information.
     
     Parameters:
     -----------
@@ -27,17 +28,21 @@ def save_beat_timestamps(timestamps: np.ndarray, output_file: Union[str, pathlib
         Index where the intro ends (0 if no intro detected)
     ending_start_idx : int, optional
         Index where the ending begins (len(timestamps) if no ending detected)
+    detected_meter : int, optional
+        Detected meter (time signature numerator, typically 2, 3, or 4)
     """
     # Set default ending_start_idx if not provided
     if ending_start_idx is None:
         ending_start_idx = len(timestamps)
     
     if downbeats is None:
-        # Create a simple header with intro and ending information
+        # Create a simple header with intro, ending, and meter information
         with open(output_file, 'w') as f:
             f.write(f"# Beat timestamps in seconds\n")
             f.write(f"# INTRO_END_IDX={intro_end_idx}\n")
             f.write(f"# ENDING_START_IDX={ending_start_idx}\n")
+            if detected_meter is not None:
+                f.write(f"# DETECTED_METER={detected_meter}\n")
             np.savetxt(f, timestamps, fmt='%.3f')
     else:
         # Create a 2-column array with beat timestamps and downbeat flags
@@ -48,12 +53,14 @@ def save_beat_timestamps(timestamps: np.ndarray, output_file: Union[str, pathlib
         # Combine into a single array
         beat_data = np.column_stack((timestamps, downbeat_flags))
         
-        # Save with a header that includes intro and ending information
+        # Save with a header that includes intro, ending, and meter information
         with open(output_file, 'w') as f:
             f.write("# Beat timestamps in seconds with downbeat flags\n")
             f.write("# Format: timestamp downbeat_flag(1=yes,0=no)\n")
             f.write(f"# INTRO_END_IDX={intro_end_idx}\n")
             f.write(f"# ENDING_START_IDX={ending_start_idx}\n")
+            if detected_meter is not None:
+                f.write(f"# DETECTED_METER={detected_meter}\n")
             np.savetxt(f, beat_data, fmt=['%.3f', '%d'])
 
 

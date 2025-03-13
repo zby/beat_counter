@@ -123,7 +123,7 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
     stats_file = file_utils.get_output_path(input_path, suffix='_beat_stats', ext='.txt')
     
     # Detect beats and downbeats
-    beat_timestamps, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx = detector.detect_beats(
+    beat_timestamps, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx, detected_meter = detector.detect_beats(
         str(input_path), skip_intro=skip_intro, skip_ending=skip_ending
     )
     
@@ -131,6 +131,7 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
         reporting.print_beat_timestamps(beat_timestamps, irregular_beats, downbeats)
         reporting.print_statistics(stats, irregular_beats)
         print(f"\nDetected {len(downbeats)} downbeats")
+        print(f"Detected meter: {detected_meter}/4 time signature")
         if intro_end_idx > 0:
             print(f"Detected intro section: skipped first {intro_end_idx} beats")
         if ending_start_idx < len(beat_timestamps):
@@ -138,7 +139,8 @@ def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=Tr
     
     # Save beat timestamps and statistics
     reporting.save_beat_timestamps(beat_timestamps, beats_file, downbeats, 
-                                intro_end_idx=intro_end_idx, ending_start_idx=ending_start_idx)
+                                intro_end_idx=intro_end_idx, ending_start_idx=ending_start_idx,
+                                detected_meter=detected_meter)
     reporting.save_beat_statistics(stats, irregular_beats, stats_file, 
                                   filename=input_path.name)
     

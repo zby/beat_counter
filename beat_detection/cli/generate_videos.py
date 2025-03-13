@@ -45,10 +45,6 @@ def parse_args():
     
     # Video options
     parser.add_argument(
-        "--meter", type=int, default=4,
-        help="Number of beats per measure (time signature numerator, default: 4)"
-    )
-    parser.add_argument(
         "--resolution", type=str, default=f"{DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT}",
         help=f"Video resolution in format WIDTHxHEIGHT (default: {DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT})"
     )
@@ -70,9 +66,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.ndarray], int, int]:
+def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.ndarray], int, int, int]:
     """
-    Load beat timestamps, downbeat information, and intro/ending indices from a file.
+    Load beat timestamps, downbeat information, intro/ending indices, and detected meter from a file.
     
     Parameters:
     -----------
@@ -82,31 +78,45 @@ def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.nda
     Returns:
     --------
     tuple
-        (beat_timestamps, downbeats, intro_end_idx, ending_start_idx) where:
+        (beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter) where:
         - beat_timestamps: Array of beat timestamps in seconds
         - downbeats: Array of indices that correspond to downbeats, or None if not available
         - intro_end_idx: Index where the intro ends (0 if no intro detected)
         - ending_start_idx: Index where the ending begins (len(beat_timestamps) if no ending detected)
+        - detected_meter: Detected meter (time signature numerator, typically 3 or 4)
     """
     try:
         # Initialize default values for intro and ending indices
         intro_end_idx = 0
         ending_start_idx = -1  # Will be set to len(beat_timestamps) if not found
+        detected_meter = 4  # Default meter is 4/4 time
+        meter_found_in_header = False  # Flag to track if meter was found in the header
         
         # Read the file content to extract header information
         with open(beat_file, 'r') as f:
             lines = f.readlines()
             
-            # Look for intro and ending information in the header comments
+            # Look for intro, ending, and meter information in the header comments
             for line in lines:
                 if line.startswith('#'):
                     if 'INTRO_END_IDX=' in line:
                         intro_end_idx = int(line.split('=')[1].strip())
                     elif 'ENDING_START_IDX=' in line:
                         ending_start_idx = int(line.split('=')[1].strip())
+                    elif 'DETECTED_METER=' in line:
+                        detected_meter = int(line.split('=')[1].strip())
+                        meter_found_in_header = True
         
         # Now load the actual data
         data = np.loadtxt(beat_file, comments='#')
+        
+        # Check if we have any data at all
+        if data.size == 0:
+            raise ValueError(f"No beat timestamps found in {beat_file}")
+            
+        # Check if detected_meter was found in the header
+        if not meter_found_in_header:
+            raise ValueError(f"No detected meter information found in {beat_file}. Please ensure the file has a '# DETECTED_METER=X' header.")
         
         # Check if we have downbeat information (2 columns)
         if data.ndim == 2 and data.shape[1] == 2:
@@ -119,6 +129,10 @@ def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.nda
             # Get indices of downbeats
             downbeats = np.where(downbeat_flags == 1)[0]
             
+            # Check if we have any downbeats
+            if len(downbeats) == 0:
+                raise ValueError(f"No downbeat information found in {beat_file}. Please ensure the file has at least one downbeat marked.")
+            
             # If ending_start_idx wasn't set in the header, set it to the length of beat_timestamps
             if ending_start_idx == -1:
                 ending_start_idx = len(beat_timestamps)
@@ -128,27 +142,16 @@ def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.nda
                 print(f"Intro section ends at beat {intro_end_idx}")
             if ending_start_idx < len(beat_timestamps):
                 print(f"Ending section starts at beat {ending_start_idx}")
+            print(f"Detected meter: {detected_meter}/4 time signature")
                 
-            return beat_timestamps, downbeats, intro_end_idx, ending_start_idx
+            return beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter
         else:
-            # No downbeat information, just timestamps
-            beat_timestamps = data if data.ndim == 1 else data[:, 0]
-            
-            # If ending_start_idx wasn't set in the header, set it to the length of beat_timestamps
-            if ending_start_idx == -1:
-                ending_start_idx = len(beat_timestamps)
-                
-            print(f"Loaded {len(beat_timestamps)} beats (no downbeat information)")
-            if intro_end_idx > 0:
-                print(f"Intro section ends at beat {intro_end_idx}")
-            if ending_start_idx < len(beat_timestamps):
-                print(f"Ending section starts at beat {ending_start_idx}")
-                
-            return beat_timestamps, None, intro_end_idx, ending_start_idx
+            # No downbeat information in the data
+            raise ValueError(f"No downbeat information found in {beat_file}. The file must have two columns: timestamps and downbeat flags.")
             
     except Exception as e:
         print(f"Error loading beats from {beat_file}: {e}")
-        return np.array([]), None, 0, 0
+        raise ValueError(f"Failed to load beat data from {beat_file}: {e}")
 
 
 def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
@@ -253,8 +256,7 @@ def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RES
         Video resolution as (width, height)
     fps : int
         Frames per second for the video
-    meter : int
-        Number of beats per measure (time signature numerator)
+
     verbose : bool
         Whether to print progress
     input_base_dir : str
@@ -289,9 +291,14 @@ def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RES
     if beats_file is not None and beats_file.exists():
         if verbose:
             print(f"Found corresponding beats file: {beats_file}")
-        beat_timestamps, downbeats, intro_end_idx, ending_start_idx = load_beat_data(beats_file)
+        beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = load_beat_data(beats_file)
         if len(beat_timestamps) == 0:
             raise ValueError(f"No beats found in {beats_file}. Please generate beat data first using the beat detection tool.")
+        
+        # Use the detected meter from the beat file
+        meter = detected_meter
+        if verbose:
+            print(f"Using detected meter {meter}/4 from beats file")
     else:
         raise FileNotFoundError(f"No beats file found for {audio_path.name}. Please generate beat data first using the beat detection tool.")
     
@@ -326,7 +333,7 @@ def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RES
 
 
 def process_directory(directory, output_dir, resolution=DEFAULT_VIDEO_RESOLUTION, fps=30, 
-                      meter=4, sample_beats=None, verbose=True):
+                      sample_beats=None, verbose=True):
     """
     Process all audio files in a directory to generate beat visualization videos.
     
@@ -345,8 +352,7 @@ def process_directory(directory, output_dir, resolution=DEFAULT_VIDEO_RESOLUTION
         Video resolution as (width, height)
     fps : int
         Frames per second for the video
-    meter : int
-        Number of beats to count before resetting
+
     sample_beats : int or None
         Number of beats to sample from each audio file
     verbose : bool
@@ -378,7 +384,6 @@ def process_directory(directory, output_dir, resolution=DEFAULT_VIDEO_RESOLUTION
                 output_dir=output_dir,
                 resolution=resolution,
                 fps=fps,
-                meter=meter,
                 sample_beats=sample_beats,
                 verbose=verbose
             )
@@ -438,7 +443,6 @@ def main():
                 output_dir=output_base_dir,
                 resolution=resolution,
                 fps=args.fps,
-                meter=args.meter,
                 sample_beats=args.sample,
                 verbose=not args.quiet,
                 input_base_dir=input_base_dir,
