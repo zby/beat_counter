@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beat Detection App</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Beat Detection & Video Generator</h1>
+            <p>Upload an audio file to detect beats and generate a visualization video</p>
+        </header>
+
+        <main>
+            <section id="upload-section" class="card">
+                <h2>Upload Audio</h2>
+                <p>Supported formats: MP3, WAV, FLAC, M4A, OGG</p>
+                
+                <div class="upload-area" id="drop-area">
+                    <form id="upload-form">
+                        <input type="file" id="file-input" accept=".mp3,.wav,.flac,.m4a,.ogg" hidden>
+                        <label for="file-input" class="upload-button">Choose File</label>
+                        <p>or drag and drop file here</p>
+                    </form>
+                    <div id="file-info" class="hidden">
+                        <p>Selected file: <span id="file-name"></span></p>
+                        <button id="upload-button" class="primary-button">Upload</button>
+                    </div>
+                </div>
+                
+                <div id="upload-progress" class="progress-container hidden">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <p class="progress-text">Uploading...</p>
+                </div>
+            </section>
+
+            <section id="analysis-section" class="card hidden">
+                <h2>Beat Analysis</h2>
+                <div id="analysis-progress" class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <p class="progress-text">Analyzing beats...</p>
+                </div>
+                
+                <div id="analysis-results" class="hidden">
+                    <div class="results-grid">
+                        <div class="result-item">
+                            <h3>BPM</h3>
+                            <p id="result-bpm" class="result-value">--</p>
+                        </div>
+                        <div class="result-item">
+                            <h3>Total Beats</h3>
+                            <p id="result-total-beats" class="result-value">--</p>
+                        </div>
+                        <div class="result-item">
+                            <h3>Duration</h3>
+                            <p id="result-duration" class="result-value">--</p>
+                        </div>
+                        <div class="result-item">
+                            <h3>Time Signature</h3>
+                            <p id="result-meter" class="result-value">--</p>
+                        </div>
+                    </div>
+                    
+                    <div class="chart-container">
+                        <canvas id="beat-chart"></canvas>
+                    </div>
+                    
+                    <p class="verification-text">Do these results look correct?</p>
+                    <div class="button-group">
+                        <button id="confirm-button" class="primary-button">Yes, Generate Video</button>
+                        <button id="cancel-button" class="secondary-button">No, Upload Another File</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="video-section" class="card hidden">
+                <h2>Video Generation</h2>
+                <div id="video-progress" class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <p class="progress-text">Generating video...</p>
+                </div>
+                
+                <div id="video-results" class="hidden">
+                    <div class="video-container">
+                        <video id="result-video" controls>
+                            Your browser does not support the video tag.
+                        </video>
+                    </div>
+                    
+                    <div class="button-group">
+                        <button id="download-button" class="primary-button">Download Video</button>
+                        <button id="restart-button" class="secondary-button">Process Another File</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Beat Detection App | Powered by FastAPI</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', path='/js/app.js') }}"></script>
+</body>
+</html>

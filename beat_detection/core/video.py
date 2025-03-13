@@ -99,6 +99,7 @@ class BeatVideoGenerator:
         Parameters:
         -----------
         meter_value : int
+            Number of beats per measure (time signature numerator)
             Number of beats per measure
         """
         print("Pre-generating frames for caching...")
@@ -429,7 +430,12 @@ class BeatVideoGenerator:
         if beat_count == 1 and not is_downbeat:
             cache_key = "not_accented_first"
         else:
-            cache_key = beat_count
+            # Handle beat counts that exceed the meter value
+            if beat_count > meter_value:
+                print(f"Warning: Beat count {beat_count} exceeds meter value {meter_value}, using modulo")
+                cache_key = (beat_count - 1) % meter_value + 1
+            else:
+                cache_key = beat_count
         
         # Debug print but only at beat transitions to reduce output
         if time_since_beat < 0.5 / self.fps:  # Just at the start of a beat

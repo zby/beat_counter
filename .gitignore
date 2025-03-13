@@ -177,3 +177,6 @@ cython_debug/
 
 /tmp/
 /data/
+/web_app/uploads/
+/web_app/output/
+

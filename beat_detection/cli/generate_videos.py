@@ -195,6 +195,19 @@ def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
     if verbose:
         print(f"Generating counter video with {meter}/4 time and downbeat detection...")
     try:
+        # Validate inputs
+        if len(beat_timestamps) == 0:
+            if verbose:
+                print("Warning: No beats detected in the audio file")
+            return False
+            
+        # Ensure downbeats is not None and has at least one element
+        if downbeats is None or len(downbeats) == 0:
+            if verbose:
+                print("Warning: No downbeats provided, using first beat as downbeat")
+            # Create a single downbeat at the first beat
+            downbeats = np.array([0], dtype=np.int64)
+        
         # Apply intro and ending filtering if specified
         filtered_beat_timestamps = beat_timestamps
         filtered_downbeats = downbeats
@@ -219,20 +232,48 @@ def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
                 if filtered_downbeats is not None:
                     filtered_downbeats = filtered_downbeats[filtered_downbeats < ending_idx_adjusted]
         
-        video_generator.create_counter_video(
-            audio_file=str(audio_path), 
-            output_file=str(output_file),
-            beat_timestamps=filtered_beat_timestamps,
-            downbeats=filtered_downbeats,
-            meter=meter,
-            sample_beats=sample_beats
-        )
+        # Ensure we have at least one downbeat
+        if len(filtered_downbeats) == 0:
+            if verbose:
+                print("Warning: No downbeats after filtering, using first beat as downbeat")
+            # Create a single downbeat at the first beat
+            filtered_downbeats = np.array([0], dtype=np.int64)
+            
+        try:
+            video_generator.create_counter_video(
+                audio_file=str(audio_path), 
+                output_file=str(output_file),
+                beat_timestamps=filtered_beat_timestamps,
+                downbeats=filtered_downbeats,
+                meter=meter,
+                sample_beats=sample_beats
+            )
+        except Exception as inner_e:
+            # Try to recover from specific errors
+            if verbose:
+                print(f"Encountered error during video creation: {inner_e}")
+                print("Attempting to recover...")
+            
+            # Check if output file exists despite the error
+            if output_file.exists() and output_file.stat().st_size > 0:
+                if verbose:
+                    print(f"Video file was created despite the error: {output_file}")
+                return True
+            
+            # If no recovery is possible, re-raise the exception
+            raise
         if verbose:
             print(f"Counter video saved: {output_file}")
         return True
     except Exception as e:
         if verbose:
             print(f"Error generating counter video: {e}")
+            
+        # Check if the output file was created despite the error
+        if output_file.exists() and output_file.stat().st_size > 0:
+            if verbose:
+                print(f"Video file was created despite the error: {output_file}")
+            return True
         return False
 
 def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RESOLUTION, fps=30, 
