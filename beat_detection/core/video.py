@@ -26,6 +26,9 @@ DEFAULT_REGULAR_BEAT_COLOR = (128, 128, 128)  # Medium gray for regular beats
 DEFAULT_DOWNBEAT_BG_COLOR = (200, 200, 220)  # Light blue-gray for downbeat backgrounds
 DEFAULT_REGULAR_BEAT_BG_COLOR = (220, 220, 220)  # Light gray for regular beat backgrounds
 
+#CODEC = 'libx264'
+CODEC = 'mpeg4'
+AUDIO_CODEC = 'aac'
 
 class BeatVideoGenerator:
     """Generate videos with visual beat indicators."""
@@ -516,6 +519,6 @@ class BeatVideoGenerator:
         
         # Write video file
         video.write_videofile(output_file_str, fps=self.fps, 
-                             codec='libx264', audio_codec='aac')
+                             codec=CODEC, audio_codec=AUDIO_CODEC)
         
         return output_file_str
