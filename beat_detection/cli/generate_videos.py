@@ -66,6 +66,8 @@ def parse_args():
     return parser.parse_args()
 
 
+from ..utils.beat_file import load_beat_data as base_load_beat_data
+
 def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.ndarray], int, int, int]:
     """
     Load beat timestamps, downbeat information, intro/ending indices, and detected meter from a file.
@@ -86,69 +88,34 @@ def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.nda
         - detected_meter: Detected meter (time signature numerator, typically 3 or 4)
     """
     try:
-        # Initialize default values for intro and ending indices
-        intro_end_idx = 0
-        ending_start_idx = -1  # Will be set to len(beat_timestamps) if not found
-        detected_meter = 4  # Default meter is 4/4 time
-        meter_found_in_header = False  # Flag to track if meter was found in the header
-        
-        # Read the file content to extract header information
-        with open(beat_file, 'r') as f:
-            lines = f.readlines()
-            
-            # Look for intro, ending, and meter information in the header comments
-            for line in lines:
-                if line.startswith('#'):
-                    if 'INTRO_END_IDX=' in line:
-                        intro_end_idx = int(line.split('=')[1].strip())
-                    elif 'ENDING_START_IDX=' in line:
-                        ending_start_idx = int(line.split('=')[1].strip())
-                    elif 'DETECTED_METER=' in line:
-                        detected_meter = int(line.split('=')[1].strip())
-                        meter_found_in_header = True
-        
-        # Now load the actual data
-        data = np.loadtxt(beat_file, comments='#')
+        # Use the base load_beat_data function from the beat_file module
+        beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = base_load_beat_data(str(beat_file))
         
         # Check if we have any data at all
-        if data.size == 0:
+        if len(beat_timestamps) == 0:
             raise ValueError(f"No beat timestamps found in {beat_file}")
             
         # Check if detected_meter was found in the header
-        if not meter_found_in_header:
+        if detected_meter is None:
             raise ValueError(f"No detected meter information found in {beat_file}. Please ensure the file has a '# DETECTED_METER=X' header.")
         
-        # Check if we have downbeat information (2 columns)
-        if data.ndim == 2 and data.shape[1] == 2:
-            # First column: timestamps
-            beat_timestamps = data[:, 0]
+        # Check if we have any downbeats
+        if len(downbeats) == 0:
+            raise ValueError(f"No downbeat information found in {beat_file}. Please ensure the file has at least one downbeat marked.")
+        
+        # If ending_start_idx wasn't set, set it to the length of beat_timestamps
+        if ending_start_idx is None:
+            ending_start_idx = len(beat_timestamps)
             
-            # Second column: downbeat flags (1=downbeat, 0=regular beat)
-            downbeat_flags = data[:, 1].astype(int)
+        # Print information about the loaded data
+        print(f"Loaded {len(beat_timestamps)} beats with {len(downbeats)} downbeats")
+        if intro_end_idx > 0:
+            print(f"Intro section ends at beat {intro_end_idx}")
+        if ending_start_idx < len(beat_timestamps):
+            print(f"Ending section starts at beat {ending_start_idx}")
+        print(f"Detected meter: {detected_meter}/4 time signature")
             
-            # Get indices of downbeats
-            downbeats = np.where(downbeat_flags == 1)[0]
-            
-            # Check if we have any downbeats
-            if len(downbeats) == 0:
-                raise ValueError(f"No downbeat information found in {beat_file}. Please ensure the file has at least one downbeat marked.")
-            
-            # If ending_start_idx wasn't set in the header, set it to the length of beat_timestamps
-            if ending_start_idx == -1:
-                ending_start_idx = len(beat_timestamps)
-                
-            print(f"Loaded {len(beat_timestamps)} beats with {len(downbeats)} downbeats")
-            if intro_end_idx > 0:
-                print(f"Intro section ends at beat {intro_end_idx}")
-            if ending_start_idx < len(beat_timestamps):
-                print(f"Ending section starts at beat {ending_start_idx}")
-            print(f"Detected meter: {detected_meter}/4 time signature")
-                
-            return beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter
-        else:
-            # No downbeat information in the data
-            raise ValueError(f"No downbeat information found in {beat_file}. The file must have two columns: timestamps and downbeat flags.")
-            
+        return beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter
     except Exception as e:
         print(f"Error loading beats from {beat_file}: {e}")
         raise ValueError(f"Failed to load beat data from {beat_file}: {e}")

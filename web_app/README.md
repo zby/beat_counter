@@ -22,13 +22,35 @@ pip install -r requirements.txt
 
 ## Running the Application
 
-From the project root directory, run:
+### Using the Starter Scripts
+
+The application now uses Celery for handling long-running tasks. You'll need to run both the web application and the Celery worker.
+
+1. Start the web application:
 
 ```bash
-python -m web_app.app
+cd web_app
+./start_app.py
+```
+
+2. In a separate terminal, start the Celery worker:
+
+```bash
+cd web_app
+./start_worker.py
 ```
 
 The application will be available at http://localhost:8000
+
+### Docker Setup
+
+Alternatively, you can use Docker Compose to run Redis:
+
+```bash
+docker-compose up redis -d
+```
+
+Then run the application and worker as described above.
 
 ## Integration with Existing Code
 
@@ -52,7 +74,8 @@ This web application integrates with the existing beat detection and video gener
 
 - `GET /`: Main page
 - `POST /upload`: Upload an audio file
-- `POST /analyze/{file_id}`: Analyze an uploaded audio file
+- `POST /analyze/{file_id}`: Analyze an uploaded audio file (starts a Celery task)
 - `GET /status/{file_id}`: Get processing status
-- `POST /confirm/{file_id}`: Confirm analysis and generate video
+- `POST /confirm/{file_id}`: Confirm analysis and generate video (starts a Celery task)
 - `GET /download/{file_id}`: Download the generated video
+- `GET /task/{task_id}`: Get the status of a Celery task

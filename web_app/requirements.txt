@@ -7,3 +7,5 @@ numpy>=1.22.0
 moviepy>=1.0.3
 madmom>=0.16.1
 pillow>=9.0.0
+celery>=5.4.0
+redis>=5.2.0

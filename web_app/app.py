@@ -11,22 +11,38 @@ import tempfile
 import pathlib
 import shutil
 import time
-from typing import List, Optional, Dict, Any
+import io
+import contextlib
+import sys
+import logging
+from datetime import datetime
+from typing import List, Optional, Dict, Any, Tuple
 import uuid
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from celery.result import AsyncResult
 import uvicorn
+
+# Import Redis-based metadata storage
+from web_app.metadata import (
+    update_file_metadata,
+    get_all_file_metadata,
+    delete_file_metadata,
+    get_status
+)
 
 from beat_detection.core.detector import BeatDetector
 from beat_detection.utils import file_utils, reporting
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from beat_detection.cli.generate_videos import generate_counter_video, load_beat_data
-
-# Import the state manager
-from state_manager import StateManager
+from beat_detection.utils.beat_file import load_beat_data
+from beat_detection.cli.generate_videos import generate_counter_video
 
 # Create FastAPI app
 app = FastAPI(
@@ -52,9 +68,9 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# Create a state manager for processing status
-STATE_DIR = pathlib.Path("./state")
-state_manager = StateManager(STATE_DIR)
+# We'll use Redis-based metadata storage to store basic file information and track all tasks related to each file
+# This allows us to maintain a mapping between file_id and all its associated tasks
+# The metadata will be persistent across application restarts and shared between instances
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -63,33 +79,8 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-# Routes for debugging with URL paths that match processing stages
-@app.get("/analyzing/{file_id}", response_class=HTMLResponse)
-async def analyzing_page(request: Request, file_id: str):
-    """Render the main page with file_id in analyzing state."""
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.get("/analyzed/{file_id}", response_class=HTMLResponse)
-async def analyzed_page(request: Request, file_id: str):
-    """Render the main page with file_id in analyzed state."""
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.get("/video_generation/{file_id}", response_class=HTMLResponse)
-async def video_generation_page(request: Request, file_id: str):
-    """Render the main page with file_id in video generation state."""
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.get("/completed/{file_id}", response_class=HTMLResponse)
-async def completed_page(request: Request, file_id: str):
-    """Render the main page with file_id in completed state."""
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
 @app.post("/upload")
-async def upload_audio(request: Request, file: UploadFile = File(...)):
+async def upload_audio(request: Request, file: UploadFile = File(...), analyze: Optional[bool] = Form(False), generate_video: Optional[bool] = Form(False)):
     """
     Upload an audio file for processing.
     
@@ -118,18 +109,14 @@ async def upload_audio(request: Request, file: UploadFile = File(...)):
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
     
-    # Initialize processing status
-    state_manager.update_state(file_id, {
-        "status": "uploaded",
+    # Store only minimal required file information in Redis
+    # Status is now derived from task metadata, so we don't store it here
+    update_file_metadata(file_id, {
         "filename": filename,
+        "original_filename": filename,  # Store original filename for reference
         "file_path": str(file_path),
-        "beats_file": None,
-        "video_file": None,
-        "stats": None,
-        "progress": {
-            "status": "File uploaded successfully",
-            "percent": 100
-        }
+        "upload_time": datetime.now().isoformat()
+        # Task IDs will be stored by name (beat_detection, video_generation) when tasks are created
     })
     
     # Check if this is an AJAX request or a traditional form submission
@@ -139,125 +126,204 @@ async def upload_audio(request: Request, file: UploadFile = File(...)):
         # For AJAX requests, return JSON response
         return {"file_id": file_id, "filename": filename}
     else:
-        # For traditional form submissions, redirect to the analysis page
-        return RedirectResponse(url=f"/analyzing/{file_id}", status_code=303)
+        # For traditional form submissions, redirect to the file page
+        return RedirectResponse(url=f"/file/{file_id}", status_code=303)
 
 
 @app.post("/analyze/{file_id}")
-async def analyze_audio(request: Request, file_id: str, background_tasks: BackgroundTasks):
+async def analyze_audio(request: Request, file_id: str):
     """
-    Analyze the uploaded audio file to detect beats.
+    Analyze the uploaded audio file to detect beats using Celery.
     
     This is an asynchronous operation. The client should poll the /status endpoint
     to check when processing is complete.
     """
-    # Check if the file exists
-    file_state = state_manager.get_state(file_id)
+    from pathlib import Path
+    # Check if the file exists and get its status
+    file_state = await get_status(file_id)
     if not file_state:
         raise HTTPException(status_code=404, detail="File not found")
     
-    # Update status with initial progress
-    state_manager.update_state(file_id, {
-        "status": "analyzing",
-        "progress": {
-            "status": "Starting analysis",
-            "percent": 0
-        }
-    })
+    # Get the file path from the status data
+    file_path = file_state.get("file_path")
+    if not file_path:
+        raise HTTPException(status_code=400, detail="File path not found in metadata")
     
-    # Run beat detection in the background
-    background_tasks.add_task(detect_beats, file_id)
+    # Verify that the file exists
+    if not Path(file_path).exists():
+        raise HTTPException(status_code=404, detail=f"File not found at path: {file_path}")
+    
+    # Start the Celery task for beat detection
+    from web_app.tasks import detect_beats_task
+    task = detect_beats_task.delay(file_id, file_path)
+    
+    # Update metadata in Redis with the beat detection task ID
+    update_file_metadata(file_id, {
+        "beat_detection": task.id  # Store task ID by name
+    })
     
     # Check if this is an AJAX request or a traditional form submission
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     
     if is_ajax:
-        # For AJAX requests, return JSON response
-        return {"status": "analyzing", "file_id": file_id}
+        # For AJAX requests, return JSON response with task ID
+        return {"status": "analyzing", "file_id": file_id, "task_id": task.id, "task_type": "beat_detection"}
     else:
-        # For traditional form submissions, redirect to the analyzing page
-        return RedirectResponse(url=f"/analyzing/{file_id}", status_code=303)
+        # For traditional form submissions, redirect to the file page
+        return RedirectResponse(url=f"/file/{file_id}", status_code=303)
 
 
 @app.get("/status/{file_id}")
-async def get_status(file_id: str):
+async def get_file_status(file_id: str):
     """Get the processing status for a file."""
-    status_data = state_manager.get_state(file_id)
-    if not status_data:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    # Debug log the status
-    print(f"STATUS ENDPOINT: Current status for {file_id}: {status_data.get('status')}")
-    
-    # More detailed debugging for video generation
-    if status_data.get("status") == "generating_video":
-        progress_data = status_data.get('progress', {})
-        print(f"STATUS ENDPOINT: Video progress details: {progress_data}")
-        print(f"STATUS ENDPOINT: Progress percent: {progress_data.get('percent')}")
-        print(f"STATUS ENDPOINT: Progress status: {progress_data.get('status')}")
-    
-    return status_data
+    try:
+        status_data = await get_status(file_id)
+        
+        # Get the status directly from the metadata module
+        # No need to modify it here
+        
+        return status_data
+    except Exception as e:
+        logger.error(f"Error getting file status: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
 
-@app.get("/processing_queue")
-async def get_processing_queue():
+@app.get("/processing_queue", response_class=HTMLResponse)
+async def get_processing_queue(request: Request):
     """
     Get the list of files currently in processing.
     
-    Returns the current processing status for all files.
+    Returns an HTML page with links to each file's status page.
     """
-    return state_manager.get_all_states()
+    # Get all file metadata from Redis
+    all_metadata = get_all_file_metadata()
+    
+    # Process each file's metadata to create a list of files with their status
+    files_with_status = []
+    for file_id, file_info in all_metadata.items():
+        # Get filename from file metadata
+        filename = file_info.get("filename", "Unknown file")
+        
+        status_data = await get_status(file_id)
+        status = status_data.get("status", "unknown") if status_data else "unknown"
+        
+        # Add to the list of files
+        files_with_status.append({
+            "file_id": file_id,
+            "filename": filename,
+            "status": status,
+            "link": f"/file/{file_id}"
+        })
+    
+    # Sort files by status (to group similar statuses together)
+    files_with_status.sort(key=lambda x: x["status"])
+    
+    # Render the template with the file list
+    return templates.TemplateResponse(
+        "processing_queue.html", 
+        {"request": request, "files": files_with_status}
+    )
+
+
+
 
 @app.post("/confirm/{file_id}")
-async def confirm_analysis(request: Request, file_id: str, background_tasks: BackgroundTasks):
+async def confirm_analysis(request: Request, file_id: str):
     """
-    Confirm the beat analysis and generate the video.
+    Confirm the beat analysis and generate the video using Celery.
     
     This is an asynchronous operation. The client should poll the /status endpoint
     to check when processing is complete.
     """
-    # Check if the file exists and has been analyzed
-    file_state = state_manager.get_state(file_id)
-    if not file_state:
+    # Get the current file status
+    current_status = await get_status(file_id)
+    if not current_status:
         raise HTTPException(status_code=404, detail="File not found")
     
-    if file_state.get("status") != "analyzed":
+    # Check if the file has been analyzed or if beat detection was successful
+    beat_task = current_status.get("beat_detection_task", {})
+    beat_task_success = beat_task and beat_task.get("status") == "SUCCESS"
+    
+    if not beat_task_success:
         raise HTTPException(status_code=400, detail="File has not been analyzed yet")
     
-    # Update status with initial progress for video generation
-    state_manager.update_state(file_id, {
-        "status": "generating_video",
-        "progress": {
-            "status": "Starting video generation",
-            "percent": 0
-        }
-    })
+    # Get required file paths
+    file_path = current_status.get("file_path")
+    beats_file = beat_task.get("beats_file")
+
+    if not file_path or not beats_file:
+        raise HTTPException(status_code=400, detail="Required file paths not found in state")
     
-    # Generate video in the background
-    background_tasks.add_task(generate_video, file_id)
+    # Check if there's an existing video generation task
+    existing_video_task_id = current_status.get("video_generation_task", {}).get("id")
+    if existing_video_task_id:
+        logger.info(f"Found existing video generation task: {existing_video_task_id}. Creating a new one.")
+    
+    # Start a new Celery task for video generation
+    from web_app.tasks import generate_video_task
+    task = generate_video_task.delay(file_id, file_path, beats_file)
+    logger.info(f"Created new video generation task with ID: {task.id}")
+    
+    # Update metadata in Redis with the new video generation task ID
+    # This will replace any existing task ID
+    update_file_metadata(file_id, {
+        "video_generation": task.id,  # Store task ID by name
+        "status": "GENERATING_VIDEO"  # Update overall status
+    })
     
     # Check if this is an AJAX request or a traditional form submission
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     
     if is_ajax:
-        # For AJAX requests, return JSON response
-        return {"status": "generating_video", "file_id": file_id}
+        # For AJAX requests, return JSON response with task ID and type
+        return {"status": "generating_video", "file_id": file_id, "task_id": task.id, "task_type": "video_generation"}
     else:
-        # For traditional form submissions, redirect to the video generation page
-        return RedirectResponse(url=f"/video_generation/{file_id}", status_code=303)
+        # For traditional form submissions, redirect back to the file view page
+        return RedirectResponse(url=f"/file/{file_id}", status_code=303)
 
+
+# The /beats/{file_id} endpoint has been removed as it's no longer needed
+# It was previously used for chart visualization which has been removed
+
+@app.get("/file/{file_id}")
+async def file_page(request: Request, file_id: str):
+    """
+    Render the file view page for a specific file at any stage of processing.
+    
+    This single route handles all file states (analyzing, analyzed, video_generation, completed).
+    The frontend JavaScript will determine what to display based on the file's status.
+    """
+    # Get the current status of the file from task metadata
+    try:
+        file_status = await get_status(file_id)
+        if not file_status:
+            raise HTTPException(status_code=404, detail="File not found")
+    except Exception as e:
+        logger.error(f"Error getting file status: {e}")
+        # Return Internal Server Error instead of using fallback
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+    
+    # Render the dedicated file view template with file information
+    return templates.TemplateResponse(
+        "file_view.html", 
+        {
+            "request": request,
+            "file_id": file_id,
+            "file_status": file_status
+        }
+    )
 
 @app.get("/download/{file_id}")
 async def download_video(file_id: str):
     """Download the generated video."""
-    # Check if the file exists and video has been generated
-    file_state = state_manager.get_state(file_id)
-    if not file_state:
+    # Get the current file status
+    current_status = await get_status(file_id)
+    if not current_status:
         raise HTTPException(status_code=404, detail="File not found")
     
-    if file_state.get("status") != "completed":
+    if current_status.get("status") != "COMPLETED":
         raise HTTPException(status_code=400, detail="Video generation not completed")
     
-    video_file = file_state.get("video_file")
+    video_file = current_status.get("video_file")
     
     if not os.path.exists(video_file):
         raise HTTPException(status_code=404, detail="Video file not found")
@@ -269,628 +335,101 @@ async def download_video(file_id: str):
     )
 
 
-async def detect_beats(file_id: str):
-    """
-    Detect beats in the uploaded audio file.
-    
-    This function runs in the background and updates the processing status.
-    """
-    try:
-        # Get file information
-        file_info = state_manager.get_state(file_id)
-        if not file_info:
-            raise Exception(f"File state not found for ID: {file_id}")
-            
-        file_path = file_info["file_path"]
-        
-        # Create output directory
-        output_path = OUTPUT_DIR / file_id
-        output_path.mkdir(exist_ok=True)
-        
-        # Create a synchronous wrapper for the progress callback
-        def sync_update_progress(status, progress):
-            # Update progress in the state manager
-            percent = progress * 100
-            state_manager.update_progress(file_id, status, percent)
-        
-        # Initialize beat detector with progress callback
-        detector = BeatDetector(
-            min_bpm=60,
-            max_bpm=240,
-            tolerance_percent=10.0,
-            progress_callback=sync_update_progress
-        )
-        
-        # Detect beats
-        beat_timestamps, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx, detected_meter = detector.detect_beats(
-            file_path, skip_intro=True, skip_ending=True
-        )
-        
-        # Generate output file paths
-        input_path = pathlib.Path(file_path)
-        beats_file = output_path / f"{input_path.stem}_beats.txt"
-        stats_file = output_path / f"{input_path.stem}_beat_stats.txt"
-        
-        # Save beat timestamps and statistics
-        reporting.save_beat_timestamps(
-            beat_timestamps, beats_file, downbeats, 
-            intro_end_idx=intro_end_idx, ending_start_idx=ending_start_idx,
-            detected_meter=detected_meter
-        )
-        
-        reporting.save_beat_statistics(
-            stats, irregular_beats, stats_file, 
-            filename=input_path.name
-        )
-        
-        # Update processing status
-        state_manager.update_state(file_id, {
-            "status": "analyzed",
-            "beats_file": str(beats_file),
-            "stats": {
-                "bpm": stats.tempo_bpm,
-                "total_beats": len(beat_timestamps),
-                "duration": beat_timestamps[-1] if len(beat_timestamps) > 0 else 0,
-                "irregularity_percent": stats.irregularity_percent,
-                "detected_meter": detected_meter
-            },
-            "progress": {
-                "status": "Beat detection complete",
-                "percent": 100
-            }
-        })
-        
-    except Exception as e:
-        # Update status with error
-        state_manager.update_state(file_id, {
-            "status": "error",
-            "error": str(e)
-        })
+# These functions have been moved to the Celery task system where output capturing is now handled
+
+# This function has been moved to the Celery task system (detect_beats_task in tasks.py)
 
 
-async def generate_video(file_id: str):
-    """
-    Generate a beat visualization video.
-    
-    This function runs in the background and updates the processing status.
-    """
-    try:
-        # Get file information
-        file_info = state_manager.get_state(file_id)
-        if not file_info:
-            raise Exception(f"File state not found for ID: {file_id}")
-            
-        file_path = file_info["file_path"]
-        beats_file = file_info["beats_file"]
-        
-        # Create output directory
-        output_path = OUTPUT_DIR / file_id
-        output_path.mkdir(exist_ok=True)
-        
-        # Update progress
-        state_manager.update_progress(file_id, "Loading beat data", 10)
-        
-        # Generate output video path
-        input_path = pathlib.Path(file_path)
-        video_file = output_path / f"{input_path.stem}_counter.mp4"
-        
-        # Load beat data
-        beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = load_beat_data(beats_file)
-        
-        # Update progress
-        state_manager.update_progress(file_id, "Preparing video generation", 30)
-        
-        # Update progress
-        state_manager.update_progress(file_id, "Generating video", 50)
-        
-        # Create a synchronous wrapper for the video progress callback
-        def sync_video_progress_callback(status, progress):
-            # Update progress in the state manager
-            percent = progress * 100
-            print(f"VIDEO PROGRESS: {status} - {percent:.1f}%")
-            state_manager.update_progress(file_id, status, percent)
-            
-            # Make sure the status is set to generating_video
-            current_state = state_manager.get_state(file_id)
-            if "status" not in current_state or current_state["status"] != "generating_video":
-                state_manager.update_state(file_id, {"status": "generating_video"})
-        
-        # Generate video
-        try:
-            success = generate_counter_video(
-                audio_path=input_path,
-                output_file=video_file,
-                beat_timestamps=beat_timestamps,
-                downbeats=downbeats,
-                intro_end_idx=intro_end_idx,
-                ending_start_idx=ending_start_idx,
-                meter=detected_meter,
-                verbose=True,
-                progress_callback=sync_video_progress_callback
-            )
-            
-            # Update progress
-            state_manager.update_progress(file_id, "Finalizing video", 90)
-            
-            # Check if the video file was actually created despite potential warnings
-            if success or video_file.exists():
-                # Update processing status
-                state_manager.update_state(file_id, {
-                    "status": "completed",
-                    "video_file": str(video_file),
-                    "progress": {
-                        "status": "Video generation complete",
-                        "percent": 100
-                    }
-                })
-            else:
-                raise Exception("Failed to generate video")
-        except Exception as video_error:
-            # Check if the video file was created despite the error
-            if video_file.exists() and video_file.stat().st_size > 0:
-                print(f"Warning during video generation: {video_error}, but video file was created successfully")
-                state_manager.update_state(file_id, {
-                    "status": "completed",
-                    "video_file": str(video_file),
-                    "warning": str(video_error),
-                    "progress": {
-                        "status": "Video generation complete (with warnings)",
-                        "percent": 100
-                    }
-                })
-            else:
-                # Re-raise the exception if no video was created
-                raise
-        
-    except Exception as e:
-        # Update status with error
-        state_manager.update_state(file_id, {
-            "status": "error",
-            "error": str(e)
-        })
+# This function has been moved to the Celery task system (generate_video_task in tasks.py)
 
 
-# Test endpoint for progress bar
-@app.get("/test-progress")
-async def test_progress():
-    """Test endpoint that returns a simple HTML page with a progress bar test."""
-    html_content = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Progress Bar Test</title>
-        <style>
-            :root {
-                --primary-color: #4a6fa5;
-                --primary-dark: #3a5a8c;
-                --secondary-color: #6c757d;
-                --light-color: #f8f9fa;
-                --dark-color: #343a40;
-                --success-color: #28a745;
-                --danger-color: #dc3545;
-                --warning-color: #ffc107;
-                --border-radius: 8px;
-                --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-                --transition: all 0.3s ease;
-            }
-            
-            body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                line-height: 1.6;
-                color: var(--dark-color);
-                background-color: #f5f7fa;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 20px;
-            }
-            
-            .card {
-                background-color: white;
-                border-radius: var(--border-radius);
-                box-shadow: var(--box-shadow);
-                padding: 30px;
-                margin-bottom: 30px;
-            }
-            
-            h1 {
-                color: var(--primary-color);
-                margin-bottom: 20px;
-                border-bottom: 2px solid #eee;
-                padding-bottom: 10px;
-            }
-            
-            /* Progress Bar Styles - Matching the main app */
-            .progress-container {
-                margin: 20px 0;
-            }
-            
-            .progress-bar {
-                height: 10px;
-                background-color: #e9ecef;
-                border-radius: 5px;
-                overflow: hidden;
-                margin-bottom: 10px;
-            }
-            
-            .progress-fill {
-                height: 100%;
-                background-color: var(--primary-color);
-                width: 0%;
-                transition: width 0.3s ease;
-            }
-            
-            .progress-status {
-                margin-top: 10px;
-                font-size: 14px;
-            }
-            
-            /* Button Styles */
-            button {
-                padding: 12px 24px;
-                background-color: var(--primary-color);
-                color: white;
-                border: none;
-                border-radius: var(--border-radius);
-                cursor: pointer;
-                font-weight: bold;
-                transition: var(--transition);
-            }
-            
-            button:hover {
-                background-color: var(--primary-dark);
-            }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h1>Progress Bar Test</h1>
-            <p>This page tests the progress bar functionality by simulating 100 updates at 0.5 second intervals.</p>
-            
-            <div class="progress-container">
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progress-fill"></div>
-                </div>
-                <div class="progress-status" id="progress-status">Ready to start</div>
-            </div>
-            
-            <button id="start-test">Start Test</button>
-        </div>
-        
-        <script>
-            document.getElementById('start-test').addEventListener('click', function() {
-                // Reset progress
-                const progressFill = document.getElementById('progress-fill');
-                const progressStatus = document.getElementById('progress-status');
-                progressFill.style.width = '0%';
-                progressStatus.textContent = 'Starting test...';
-                
-                // Disable button during test
-                this.disabled = true;
-                
-                // Simulate 100 progress updates
-                let count = 0;
-                const totalUpdates = 100;
-                
-                const updateProgress = function() {
-                    count++;
-                    const percent = (count / totalUpdates) * 100;
-                    
-                    // Update progress bar
-                    progressFill.style.width = `${percent}%`;
-                    progressStatus.textContent = `Update ${count}/${totalUpdates} - ${percent.toFixed(1)}%`;
-                    
-                    console.log(`Progress update: ${count}/${totalUpdates} - ${percent.toFixed(1)}%`);
-                    
-                    // Continue until we reach 100 updates
-                    if (count < totalUpdates) {
-                        setTimeout(updateProgress, 500);
-                    } else {
-                        progressStatus.textContent = 'Test completed!';
-                        document.getElementById('start-test').disabled = false;
-                    }
-                };
-                
-                // Start the updates
-                setTimeout(updateProgress, 500);
-            });
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
 
-
-# Test endpoint for progress polling
-@app.get("/test-polling")
-async def test_polling():
-    """Test endpoint that uses the main app.js file for progress polling."""
-    html_content = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Progress Polling Test</title>
-        <style>
-            :root {
-                --primary-color: #4a6fa5;
-                --primary-dark: #3a5a8c;
-                --secondary-color: #6c757d;
-                --light-color: #f8f9fa;
-                --dark-color: #343a40;
-                --success-color: #28a745;
-                --danger-color: #dc3545;
-                --warning-color: #ffc107;
-                --border-radius: 8px;
-                --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-                --transition: all 0.3s ease;
-            }
-            
-            body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                line-height: 1.6;
-                color: var(--dark-color);
-                background-color: #f5f7fa;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 20px;
-            }
-            
-            .card {
-                background-color: white;
-                border-radius: var(--border-radius);
-                box-shadow: var(--box-shadow);
-                padding: 30px;
-                margin-bottom: 30px;
-            }
-            
-            h1 {
-                color: var(--primary-color);
-                margin-bottom: 20px;
-                border-bottom: 2px solid #eee;
-                padding-bottom: 10px;
-            }
-            
-            /* Progress Bar Styles - Matching the main app */
-            .progress-container {
-                margin: 20px 0;
-            }
-            
-            .progress-bar {
-                height: 10px;
-                background-color: #e9ecef;
-                border-radius: 5px;
-                overflow: hidden;
-                margin-bottom: 10px;
-            }
-            
-            .progress-fill {
-                height: 100%;
-                background-color: var(--primary-color);
-                width: 0%;
-                transition: width 0.3s ease;
-            }
-            
-            .progress-status {
-                margin-top: 10px;
-                font-size: 14px;
-            }
-            
-            /* Button Styles */
-            button {
-                padding: 12px 24px;
-                background-color: var(--primary-color);
-                color: white;
-                border: none;
-                border-radius: var(--border-radius);
-                cursor: pointer;
-                font-weight: bold;
-                transition: var(--transition);
-            }
-            
-            button:hover {
-                background-color: var(--primary-dark);
-            }
-            
-            /* Debug Panel */
-            .debug-panel {
-                margin-top: 30px;
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: var(--border-radius);
-                padding: 15px;
-            }
-            
-            .debug-panel h3 {
-                margin-top: 0;
-                color: var(--secondary-color);
-            }
-            
-            #debug-log {
-                max-height: 200px;
-                overflow-y: auto;
-                background-color: #343a40;
-                color: #f8f9fa;
-                padding: 10px;
-                border-radius: 4px;
-                font-family: monospace;
-                margin-top: 10px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h1>Progress Polling Test</h1>
-            <p>This page tests the polling mechanism used in the main app to update the progress bar.</p>
-            
-            <div class="progress-container">
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progress-fill"></div>
-                </div>
-                <div class="progress-status" id="progress-status">Ready to start</div>
-            </div>
-            
-            <button id="start-test">Start Test</button>
-            
-            <div class="debug-panel">
-                <h3>Debug Information</h3>
-                <div id="debug-log"></div>
-            </div>
-        </div>
-        
-        <script src="/static/js/app.js"></script>
-        
-        <script>
-            // Set up the debug log
-            const debugLog = document.getElementById('debug-log');
-            
-            // Debug logging function
-            function logMessage(message) {
-                const timestamp = new Date().toLocaleTimeString();
-                const entry = document.createElement('div');
-                entry.textContent = '[' + timestamp + '] ' + message;
-                debugLog.appendChild(entry);
-                debugLog.scrollTop = debugLog.scrollHeight;
-                console.log('[DEBUG] ' + message);
-            }
-            
-            // Start button click handler
-            document.getElementById('start-test').addEventListener('click', function() {
-                // Reset progress
-                const progressContainer = document.querySelector('.progress-container');
-                const progressFill = document.getElementById('progress-fill');
-                
-                // Use the app.js functions
-                setProgress(progressContainer, 0);
-                updateProgressStatus(progressContainer, 'Starting test...');
-                
-                // Disable button during test
-                this.disabled = true;
-                logMessage('Test started');
-                
-                // Generate a test ID
-                const testId = 'test-' + Math.random().toString(36).substring(2, 15);
-                logMessage('Generated test ID: ' + testId);
-                
-                // Start the test process on the server
-                fetch('/start-test-process/' + testId)
-                    .then(response => response.json())
-                    .then(data => {
-                        logMessage('Server response: ' + JSON.stringify(data));
-                        
-                        // Start polling for status
-                        const statusCheckInterval = setInterval(() => {
-                            fetch('/test-status/' + testId)
-                                .then(response => response.json())
-                                .then(statusData => {
-                                    logMessage('Status update: ' + JSON.stringify(statusData));
-                                    
-                                    if (statusData.progress) {
-                                        // Log the current progress bar state
-                                        const currentWidth = progressFill.style.width;
-                                        logMessage('Current progress bar width: ' + currentWidth);
-                                        
-                                        // Update progress
-                                        setProgress(progressContainer, statusData.progress.percent);
-                                        updateProgressStatus(progressContainer, statusData.progress.status);
-                                        
-                                        // Log the new progress bar state
-                                        setTimeout(() => {
-                                            const newWidth = progressFill.style.width;
-                                            logMessage('New progress bar width: ' + newWidth);
-                                        }, 50);
-                                    }
-                                    
-                                    if (statusData.status === 'completed') {
-                                        clearInterval(statusCheckInterval);
-                                        logMessage('Test completed');
-                                        document.getElementById('start-test').disabled = false;
-                                    }
-                                })
-                                .catch(error => {
-                                    logMessage('Error polling status: ' + error);
-                                    clearInterval(statusCheckInterval);
-                                    document.getElementById('start-test').disabled = false;
-                                });
-                        }, 300);
-                    })
-                    .catch(error => {
-                        logMessage('Error starting test: ' + error);
-                        this.disabled = false;
-                    });
-            });
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
-
-
-# Test process data storage
-test_processes = {}
-
-
-# Start a test process
-@app.get("/start-test-process/{test_id}")
-async def start_test_process(test_id: str, background_tasks: BackgroundTasks):
-    """Start a simulated process with progress updates."""
-    # Initialize the test process data
-    test_processes[test_id] = {
-        "status": "running",
-        "progress": {
-            "status": "Initializing test",
-            "percent": 0
-        },
-        "start_time": time.time()
-    }
-    
-    # Start the background task
-    background_tasks.add_task(run_test_process, test_id)
-    
-    return {"status": "started", "test_id": test_id}
-
-
-# Get test process status
-@app.get("/test-status/{test_id}")
-async def get_test_status(test_id: str):
-    """Get the status of a test process."""
-    if test_id not in test_processes:
-        raise HTTPException(status_code=404, detail="Test process not found")
-    
-    return test_processes[test_id]
-
-
-# Run the test process in the background
-async def run_test_process(test_id: str):
-    """Simulate a process with progress updates."""
-    import asyncio
-    import random
-    
-    # Simulate 20 progress updates
-    for i in range(1, 21):
-        # Update progress
-        percent = i * 5  # 5% increments
-        test_processes[test_id]["progress"] = {
-            "status": f"Processing step {i}/20",
-            "percent": percent
-        }
-        
-        # Simulate variable processing time
-        await asyncio.sleep(random.uniform(0.5, 1.5))
-    
-    # Mark as completed
-    test_processes[test_id]["status"] = "completed"
-    test_processes[test_id]["progress"] = {
-        "status": "Test completed",
-        "percent": 100
-    }
 
 
 def main():
     """Entry point for the web application."""
     uvicorn.run("web_app.app:app", host="0.0.0.0", port=8000, reload=True)
+
+@app.get("/task/{task_id}")
+async def get_task_status(task_id: str):
+    """
+    Get the status of a Celery task.
+    """
+    from celery.result import AsyncResult
+    task_result = AsyncResult(task_id)
+    
+    # Get task status
+    # Get the task state and ensure consistent case comparison
+    task_state = task_result.state
+    
+    if task_state == 'PENDING':
+        response = {
+            'status': 'pending',
+            'info': 'Task is pending'
+        }
+    elif task_state == 'STARTED':
+        response = {
+            'status': 'started',
+            'info': task_result.info
+        }
+    elif task_state == 'SUCCESS':
+        # For successful tasks, include the full result
+        result = task_result.result
+        response = {
+            'status': 'success',
+            'result': result
+        }
+        # If the result has its own status field, use it for consistency
+        if isinstance(result, dict) and 'status' in result:
+            response['status'] = result['status']
+        
+        # If this was a beat detection task and video generation is requested,
+        # start the video generation task
+        if task_result.result.get('status') == 'success':
+            file_id = task_result.result.get('file_id')
+            
+            # Get the file info using get_status
+            file_info = await get_status(file_id) or {}
+            
+            # Check if we need to automatically generate a video
+            if file_info.get('generate_video_after_analysis', False):
+                # Get the file path and beats file from the task result
+                file_path = task_result.result.get('file_path')
+                beats_file = task_result.result.get('beats_file')
+                
+                if file_path and beats_file:
+                    # Start video generation task
+                    from web_app.tasks import generate_video_task
+                    video_task = generate_video_task.delay(
+                        file_id,
+                        file_path,
+                        beats_file
+                    )
+                    
+                    # Update metadata in Redis with the video generation task ID
+                    update_file_metadata(file_id, {
+                        "video_generation": video_task.id,  # Store task ID by name
+                        "generate_video_after_analysis": False  # Reset the flag
+                    })
+                    
+                    # Add video task info to response
+                    response['video_task'] = {
+                        'id': video_task.id,
+                        'status': 'started'
+                    }
+    elif task_state == 'FAILURE':
+        response = {
+            'status': 'failure',
+            'error': str(task_result.result)
+        }
+    else:
+        response = {
+            'status': task_state.lower(),
+            'info': str(task_result.info)
+        }
+    
+    return response
+
 
 if __name__ == "__main__":
     main()

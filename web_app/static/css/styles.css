@@ -199,6 +199,40 @@ h2 {
     box-shadow: var(--box-shadow);
 }
 
+/* Error Message Styles */
+.error-message {
+    background-color: var(--danger-color);
+    color: white;
+    padding: 15px;
+    border-radius: var(--border-radius);
+    margin: 20px 0;
+    text-align: center;
+    font-weight: bold;
+    box-shadow: var(--box-shadow);
+}
+
+/* Layout for beat detection and video generation sections */
+#analysis-section {
+    margin-bottom: 20px;
+}
+
+#video-section {
+    margin-top: 10px;
+    border-top: 1px solid #eee;
+    padding-top: 20px;
+}
+
+/* When both sections are visible, add some visual separation */
+#analysis-section.with-video {
+    padding-bottom: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+/* Hide the button group when video generation is in progress */
+#analysis-buttons.hidden {
+    display: none;
+}
+
 /* Footer Styles */
 footer {
     text-align: center;

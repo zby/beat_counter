@@ -29,11 +29,59 @@ const resultMeter = document.getElementById('result-meter');
 // Global state
 let currentFileId = null;
 let statusCheckInterval = null;
-let beatChart = null;
+// Chart visualization has been removed
 
 // Initialize the application
 function init() {
     setupEventListeners();
+    
+    // Check if we have initial file data from the server
+    if (window.initialFileData) {
+        console.log('Initializing with file data:', window.initialFileData);
+        currentFileId = window.initialFileData.fileId;
+        
+        // Hide the upload section
+        uploadSection.classList.add('hidden');
+        
+        // Handle different file states
+        const status = window.initialFileData.status.status;
+        
+        if (status === 'analyzing') {
+            // Show analysis section with progress
+            analysisSection.classList.remove('hidden');
+            analysisProgress.classList.remove('hidden');
+            analysisResults.classList.add('hidden');
+            // Start polling for status updates
+            startStatusPolling();
+        } 
+        else if (status === 'analyzed') {
+            // Show analysis results
+            analysisSection.classList.remove('hidden');
+            analysisProgress.classList.add('hidden');
+            analysisResults.classList.remove('hidden');
+            displayAnalysisResults(window.initialFileData.status);
+        } 
+        else if (status === 'generating_video') {
+            // Show video generation in progress
+            videoSection.classList.remove('hidden');
+            videoProgress.classList.remove('hidden');
+            videoResults.classList.add('hidden');
+            // Start polling for status updates
+            startStatusPolling();
+        } 
+        else if (status === 'completed') {
+            // Show completed video
+            videoSection.classList.remove('hidden');
+            videoProgress.classList.add('hidden');
+            videoResults.classList.remove('hidden');
+            displayVideo(window.initialFileData.status);
+        }
+        else if (status === 'error') {
+            // Show error message and reset to upload
+            alert(`Error: ${window.initialFileData.status.error || 'Unknown error'}`);
+            resetToUpload();
+        }
+    }
 }
 
 // Set up all event listeners
@@ -210,8 +258,12 @@ function startStatusPolling() {
     const warningElements = document.querySelectorAll('.warning-text');
     warningElements.forEach(el => el.remove());
     
-    // Update URL to reflect we're in the analysis stage
-    updateUrlForStage('analyzing', currentFileId);
+    // Update URL to reflect we're viewing the file
+    if (currentFileId) {
+        const newUrl = `/file/${currentFileId}`;
+        window.history.pushState({ fileId: currentFileId }, '', newUrl);
+        console.log(`URL updated to: ${newUrl}`);
+    }
     
     // Poll for status updates every 500ms to catch all progress updates
     statusCheckInterval = setInterval(() => {
@@ -224,8 +276,9 @@ function startStatusPolling() {
             })
             .then(data => {
                 // Update progress based on status and progress information
+                // Use the status directly (it's already uppercase from the backend)
                 switch (data.status) {
-                    case 'analyzing':
+                    case 'ANALYZING':
                         // Show real progress from backend if available
                         if (data.progress) {
                             setProgress(analysisProgress, data.progress.percent);
@@ -234,27 +287,37 @@ function startStatusPolling() {
                         }
                         break;
                         
-                    case 'analyzed':
+                    case 'ANALYZED':
                         // Analysis complete, show results
                         setProgress(analysisProgress, 100);
                         updateProgressStatus(analysisProgress, 'Analysis complete');
-                        // Update URL to reflect analysis is complete
-                        updateUrlForStage('analyzed', currentFileId);
-                        setTimeout(() => {
-                            analysisProgress.classList.add('hidden');
-                            analysisResults.classList.remove('hidden');
-                            displayAnalysisResults(data);
-                        }, 500);
-                        clearInterval(statusCheckInterval);
+                        
+                        // Check if we have valid stats in the beat detection task
+                        const beatTask = data.beat_detection_task || {};
+                        const hasValidStats = beatTask && beatTask.stats && Object.keys(beatTask.stats).length > 0;
+                        
+                        if (hasValidStats) {
+                            // We have valid stats, so we can stop polling and display the results
+                            console.log('Valid stats found, displaying analysis results');
+                            setTimeout(() => {
+                                analysisProgress.classList.add('hidden');
+                                analysisResults.classList.remove('hidden');
+                                displayAnalysisResults(data);
+                            }, 500);
+                            clearInterval(statusCheckInterval);
+                        } else {
+                            // No valid stats yet, continue polling
+                            console.warn('Status is ANALYZED but no valid stats found yet. Continuing to poll...');
+                            // Don't clear the interval or hide the progress bar yet
+                        }
                         break;
                         
-                    case 'generating_video':
+                    case 'GENERATING_VIDEO':
                         // Show real progress from backend if available
                         console.log('Received generating_video status update');
                         console.log('Full response data:', data);
                         
-                        // Update URL to reflect we're in the video generation stage
-                        updateUrlForStage('video_generation', currentFileId);
+                        // We don't need to update the URL since we're already on /file/{fileId}
                         
                         if (data.progress) {
                             console.log(`Video progress update: ${data.progress.status} - ${data.progress.percent}%`);
@@ -285,12 +348,11 @@ function startStatusPolling() {
                         }
                         break;
                         
-                    case 'completed':
+                    case 'COMPLETED':
                         // Video generation complete
                         setProgress(videoProgress, 100);
                         updateProgressStatus(videoProgress, 'Video generation complete');
-                        // Update URL to reflect video generation is complete
-                        updateUrlForStage('completed', currentFileId);
+                        // We don't need to update the URL since we're already on /file/{fileId}
                         setTimeout(() => {
                             videoProgress.classList.add('hidden');
                             videoResults.classList.remove('hidden');
@@ -299,7 +361,7 @@ function startStatusPolling() {
                         clearInterval(statusCheckInterval);
                         break;
                         
-                    case 'error':
+                    case 'ERROR':
                         // Error occurred
                         if (data.progress && data.progress.status) {
                             alert(`Error: ${data.progress.status}`);
@@ -320,93 +382,33 @@ function startStatusPolling() {
 
 // Display analysis results
 function displayAnalysisResults(data) {
-    if (!data.stats) {
-        alert('No analysis results available');
-        return;
+    console.log('Displaying analysis results with data:', JSON.stringify(data, null, 2));
+    
+    // Get beat detection task data if available
+    const beatTask = data.beat_detection_task || {};
+    console.log('Beat detection task:', JSON.stringify(beatTask, null, 2));
+    
+    // Only look for stats inside the beat detection task object
+    let stats = {};
+    if (beatTask && beatTask.stats) {
+        stats = beatTask.stats;
+        console.log('Found stats in beatTask.stats');
     }
     
-    const stats = data.stats;
+    console.log('Final stats object used:', JSON.stringify(stats, null, 2));
+    
+    // Check if we have valid stats
+    if (Object.keys(stats).length === 0) {
+        console.warn('No stats found in the beat detection task yet. This might be a race condition.');
+        console.log('Will continue polling for status updates until stats are available.');
+        // Don't return - we'll just show placeholder values and continue polling
+    }
     
     // Update result display
-    resultBpm.textContent = Math.round(stats.bpm);
-    resultTotalBeats.textContent = stats.total_beats;
-    resultDuration.textContent = formatTime(stats.duration);
-    resultMeter.textContent = `${stats.detected_meter}/4`;
-    
-    // Create a simple chart to visualize beats
-    createBeatChart(stats);
-}
-
-// Create a chart to visualize beats
-function createBeatChart(stats) {
-    const ctx = document.getElementById('beat-chart').getContext('2d');
-    
-    // Destroy existing chart if it exists
-    if (beatChart) {
-        beatChart.destroy();
-    }
-    
-    // Create dummy beat data for visualization
-    const beatCount = stats.total_beats;
-    const duration = stats.duration;
-    const bpm = stats.bpm;
-    
-    // Create labels and data points
-    const labels = [];
-    const data = [];
-    
-    // Generate beat points (simplified visualization)
-    const beatInterval = 60 / bpm; // seconds between beats
-    for (let i = 0; i < Math.min(beatCount, 30); i++) {
-        const time = i * beatInterval;
-        labels.push(formatTime(time));
-        
-        // Create a pattern where downbeats are higher
-        if (i % stats.detected_meter === 0) {
-            data.push(100); // Downbeat
-        } else {
-            data.push(70); // Regular beat
-        }
-    }
-    
-    // Create chart
-    beatChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Beat Intensity',
-                data: data,
-                backgroundColor: function(context) {
-                    const index = context.dataIndex;
-                    return index % stats.detected_meter === 0 ? 
-                        'rgba(74, 111, 165, 0.8)' : 'rgba(108, 117, 125, 0.6)';
-                },
-                borderColor: function(context) {
-                    const index = context.dataIndex;
-                    return index % stats.detected_meter === 0 ? 
-                        'rgba(74, 111, 165, 1)' : 'rgba(108, 117, 125, 0.8)';
-                },
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: 120,
-                    display: false
-                }
-            },
-            plugins: {
-                legend: {
-                    display: false
-                }
-            }
-        }
-    });
+    resultBpm.textContent = stats.bpm ? Math.round(stats.bpm) : '--';
+    resultTotalBeats.textContent = stats.total_beats || '--';
+    resultDuration.textContent = stats.duration ? formatTime(stats.duration) : '--';
+    resultMeter.textContent = stats.detected_meter ? `${stats.detected_meter}/4` : '--';
 }
 
 // Confirm analysis and generate video
@@ -543,15 +545,7 @@ function formatTime(seconds) {
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Update the URL based on the current processing stage
-function updateUrlForStage(stage, fileId) {
-    if (!fileId) return;
-    
-    // Update the URL without reloading the page
-    const newUrl = `/${stage}/${fileId}`;
-    window.history.pushState({ stage, fileId }, '', newUrl);
-    console.log(`URL updated to: ${newUrl}`);
-}
+// No longer needed - URL is updated directly where needed
 
 // Handle browser back/forward navigation
 window.addEventListener('popstate', (event) => {

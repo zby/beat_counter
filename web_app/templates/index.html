@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Beat Detection App</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', path='/images/favicon.ico') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', path='/images/favicon.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="container">
@@ -68,9 +69,7 @@
                         </div>
                     </div>
                     
-                    <div class="chart-container">
-                        <canvas id="beat-chart"></canvas>
-                    </div>
+                    <!-- Chart visualization has been removed -->
                     
                     <p class="verification-text">Do these results look correct?</p>
                     <div class="button-group">
@@ -109,6 +108,12 @@
         </footer>
     </div>
 
+    {% if file_id and file_status %}
+    <script>
+        // Pass file information from the backend to the frontend
+        window.initialFileData = JSON.parse('{{ {"fileId": file_id, "status": file_status} | tojson }}');
+    </script>
+    {% endif %}
     <script src="{{ url_for('static', path='/js/app.js') }}"></script>
 </body>
 </html>

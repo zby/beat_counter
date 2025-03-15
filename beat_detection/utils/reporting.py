@@ -31,37 +31,14 @@ def save_beat_timestamps(timestamps: np.ndarray, output_file: Union[str, pathlib
     detected_meter : int, optional
         Detected meter (time signature numerator, typically 2, 3, or 4)
     """
-    # Set default ending_start_idx if not provided
-    if ending_start_idx is None:
-        ending_start_idx = len(timestamps)
+    from .beat_file import save_beat_data
     
-    if downbeats is None:
-        # Create a simple header with intro, ending, and meter information
-        with open(output_file, 'w') as f:
-            f.write(f"# Beat timestamps in seconds\n")
-            f.write(f"# INTRO_END_IDX={intro_end_idx}\n")
-            f.write(f"# ENDING_START_IDX={ending_start_idx}\n")
-            if detected_meter is not None:
-                f.write(f"# DETECTED_METER={detected_meter}\n")
-            np.savetxt(f, timestamps, fmt='%.3f')
-    else:
-        # Create a 2-column array with beat timestamps and downbeat flags
-        # 1 = downbeat, 0 = regular beat
-        downbeat_flags = np.zeros(len(timestamps), dtype=int)
-        downbeat_flags[downbeats] = 1
-        
-        # Combine into a single array
-        beat_data = np.column_stack((timestamps, downbeat_flags))
-        
-        # Save with a header that includes intro, ending, and meter information
-        with open(output_file, 'w') as f:
-            f.write("# Beat timestamps in seconds with downbeat flags\n")
-            f.write("# Format: timestamp downbeat_flag(1=yes,0=no)\n")
-            f.write(f"# INTRO_END_IDX={intro_end_idx}\n")
-            f.write(f"# ENDING_START_IDX={ending_start_idx}\n")
-            if detected_meter is not None:
-                f.write(f"# DETECTED_METER={detected_meter}\n")
-            np.savetxt(f, beat_data, fmt=['%.3f', '%d'])
+    # Convert pathlib.Path to string if needed
+    if not isinstance(output_file, str):
+        output_file = str(output_file)
+    
+    # Use the dedicated beat_file module to save the data
+    save_beat_data(timestamps, output_file, downbeats, intro_end_idx, ending_start_idx, detected_meter)
 
 
 def save_beat_statistics(stats: BeatStatistics, irregular_beats: List[int], 

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processing Queue - Beat Detection App</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', path='/images/favicon.ico') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', path='/images/favicon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
+    <style>
+        .queue-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .file-list {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        .file-list th, .file-list td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .file-list th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        
+        .file-list tr:hover {
+            background-color: #f1f1f1;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+        
+        .status-UPLOADED { background-color: #e0e0e0; }
+        .status-ANALYZING { background-color: #fff3cd; }
+        .status-ANALYZED { background-color: #d1ecf1; }
+        .status-GENERATING_VIDEO { background-color: #d4edda; }
+        .status-COMPLETED { background-color: #c3e6cb; }
+        .status-ERROR { background-color: #f8d7da; }
+        
+        .empty-queue {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+        
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #007bff;
+            text-decoration: none;
+        }
+        
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Processing Queue</h1>
+            <p>Current status of all files in the system</p>
+        </header>
+
+        <main class="queue-container">
+            <a href="/" class="back-link">← Back to Home</a>
+            
+            {% if files %}
+                <table class="file-list">
+                    <thead>
+                        <tr>
+                            <th>File ID</th>
+                            <th>Filename</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in files %}
+                            <tr>
+                                <td>{{ file.file_id }}</td>
+                                <td>{{ file.filename }}</td>
+                                <td>
+                                    <span class="status-badge status-{{ file.status }}">
+                                        {{ file.status | replace('_', ' ') | title }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <a href="{{ file.link }}">View Details</a>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="empty-queue">
+                    <p>No files in the processing queue</p>
+                </div>
+            {% endif %}
+        </main>
+
+        <footer>
+            <p>Beat Detection App | Powered by FastAPI</p>
+        </footer>
+    </div>
+</body>
+</html>
