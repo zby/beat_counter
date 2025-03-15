@@ -10,6 +10,7 @@ import io
 import json
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
+import os
 
 from web_app.celery_app import app
 from celery import states
@@ -19,8 +20,12 @@ from beat_detection.core.detector import BeatDetector
 from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.utils import reporting
 
-# Set up logger
+# Set up task logger
 logger = get_task_logger(__name__)
+
+# Configure Celery to log to a file instead of stdout/stderr
+# This is done via environment variables that Celery will read
+os.environ['CELERY_LOG_FILE'] = str(pathlib.Path(__file__).parent.absolute() / 'celery.log')
 
 # Configure logging to handle I/O errors gracefully
 class SafeLogHandler:
@@ -404,41 +409,8 @@ def generate_video_task(self, file_id: str, file_path: str, beats_file: str) -> 
             # The load_beat_data function returns a tuple directly
             beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = load_beat_data(beats_file)
             
-            # For stats, we'll need to read them from the metadata file
-            # First, get the base filename without extension
-            input_path = pathlib.Path(file_path)
-            base_name = input_path.stem
-            
-            # Construct the path to the stats file
-            stats_file = pathlib.Path(beats_file).parent / f"{base_name}_beat_stats.txt"
-            
-            # Initialize stats with default values
-            stats = {
-                "bpm": 120.0,
-                "total_beats": len(beat_timestamps),
-                "duration": beat_timestamps[-1] if len(beat_timestamps) > 0 else 0,
-                "detected_meter": detected_meter or "4/4"
-            }
-            
-            # Try to read the stats file if it exists
-            if stats_file.exists():
-                try:
-                    with open(stats_file, 'r') as f:
-                        for line in f:
-                            if ':' in line:
-                                key, value = line.split(':', 1)
-                                key = key.strip().lower()
-                                value = value.strip()
-                                if key == 'tempo':
-                                    stats['bpm'] = float(value.split()[0])
-                                elif key == 'total beats':
-                                    stats['total_beats'] = int(value)
-                except Exception as e:
-                    print(f"Error reading stats file: {e}")
-            
             # Update progress
             update_progress("Preparing video generation", 0.3)  # 30%
-            update_progress("Generating video", 0.5)  # 50%
             
             # Create a synchronous wrapper for the video progress callback
             def sync_video_progress_callback(status, progress):
@@ -489,19 +461,12 @@ def generate_video_task(self, file_id: str, file_path: str, beats_file: str) -> 
                         # Silently ignore I/O errors when writing to stdout
                         pass
                     
-                    # Get the stats from the beat data to include in the result
-                    stats = {}
-                    if beat_data and 'stats' in beat_data:
-                        stats = beat_data['stats']
-                    
                     # Return the results with comprehensive information
                     return {
                         'status': 'COMPLETED',  # Using uppercase for consistency
                         'file_id': file_id,
-                        'file_path': file_path,
                         'beats_file': beats_file,
                         'video_file': str(video_file),
-                        'stats': stats,  # Include the stats in the result
                         'progress': {
                             'status': 'Video generation complete',
                             'percent': 100

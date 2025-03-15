@@ -85,6 +85,7 @@ async def upload_audio(request: Request, file: UploadFile = File(...), analyze: 
     Upload an audio file for processing.
     
     Returns the file ID for subsequent API calls or redirects to the analysis page.
+    Beat detection is automatically started after upload.
     """
     # Validate file extension
     filename = file.filename
@@ -119,59 +120,29 @@ async def upload_audio(request: Request, file: UploadFile = File(...), analyze: 
         # Task IDs will be stored by name (beat_detection, video_generation) when tasks are created
     })
     
-    # Check if this is an AJAX request or a traditional form submission
-    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
-    
-    if is_ajax:
-        # For AJAX requests, return JSON response
-        return {"file_id": file_id, "filename": filename}
-    else:
-        # For traditional form submissions, redirect to the file page
-        return RedirectResponse(url=f"/file/{file_id}", status_code=303)
-
-
-@app.post("/analyze/{file_id}")
-async def analyze_audio(request: Request, file_id: str):
-    """
-    Analyze the uploaded audio file to detect beats using Celery.
-    
-    This is an asynchronous operation. The client should poll the /status endpoint
-    to check when processing is complete.
-    """
-    from pathlib import Path
-    # Check if the file exists and get its status
-    file_state = await get_status(file_id)
-    if not file_state:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    # Get the file path from the status data
-    file_path = file_state.get("file_path")
-    if not file_path:
-        raise HTTPException(status_code=400, detail="File path not found in metadata")
-    
-    # Verify that the file exists
-    if not Path(file_path).exists():
-        raise HTTPException(status_code=404, detail=f"File not found at path: {file_path}")
-    
-    # Start the Celery task for beat detection
+    # Automatically start beat detection after upload
     from web_app.tasks import detect_beats_task
-    task = detect_beats_task.delay(file_id, file_path)
+    task = detect_beats_task.delay(file_id, str(file_path))
     
     # Update metadata in Redis with the beat detection task ID
     update_file_metadata(file_id, {
         "beat_detection": task.id  # Store task ID by name
     })
     
+    logger.info(f"Automatically started beat detection for file {file_id}, task ID: {task.id}")
+    
     # Check if this is an AJAX request or a traditional form submission
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     
     if is_ajax:
-        # For AJAX requests, return JSON response with task ID
-        return {"status": "analyzing", "file_id": file_id, "task_id": task.id, "task_type": "beat_detection"}
+        # For AJAX requests, return JSON response with task information
+        return {"file_id": file_id, "filename": filename, "task_id": task.id, "task_type": "beat_detection"}
     else:
         # For traditional form submissions, redirect to the file page
         return RedirectResponse(url=f"/file/{file_id}", status_code=303)
 
+
+# The analyze_audio endpoint has been removed since beat detection now starts automatically after upload
 
 @app.get("/status/{file_id}")
 async def get_file_status(file_id: str):

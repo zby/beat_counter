@@ -1,4 +1,5 @@
 // Beat Detection App - Client-side JavaScript
+// Updated version - beat detection starts automatically after upload
 
 // DOM Elements
 const dropArea = document.getElementById('drop-area');
@@ -201,7 +202,15 @@ function uploadFile() {
         setTimeout(() => {
             uploadSection.classList.add('hidden');
             analysisSection.classList.remove('hidden');
-            analyzeAudio();
+            
+            // Show analysis progress
+            analysisProgress.classList.remove('hidden');
+            analysisResults.classList.add('hidden');
+            setProgress(analysisProgress, 10);
+            
+            // Beat detection now starts automatically after upload
+            // so we can immediately start polling for status
+            startStatusPolling();
         }, 500);
     })
     .catch(error => {
@@ -209,42 +218,6 @@ function uploadFile() {
         alert('Error uploading file. Please try again.');
         uploadProgress.classList.add('hidden');
         fileInfo.classList.remove('hidden');
-    });
-}
-
-// Analyze the uploaded audio
-function analyzeAudio() {
-    if (!currentFileId) {
-        alert('No file uploaded');
-        return;
-    }
-    
-    // Show analysis progress
-    analysisProgress.classList.remove('hidden');
-    analysisResults.classList.add('hidden');
-    setProgress(analysisProgress, 10);
-    
-    // Start analysis
-    fetch(`/analyze/${currentFileId}`, {
-        method: 'POST',
-        headers: {
-            'X-Requested-With': 'XMLHttpRequest'
-        }
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Network response was not ok');
-        }
-        return response.json();
-    })
-    .then(data => {
-        // Start polling for status
-        startStatusPolling();
-    })
-    .catch(error => {
-        console.error('Error starting analysis:', error);
-        alert('Error starting analysis. Please try again.');
-        resetToUpload();
     });
 }
 
