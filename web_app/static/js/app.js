@@ -6,7 +6,7 @@ const dropArea = document.getElementById('drop-area');
 const fileInput = document.getElementById('file-input');
 const fileName = document.getElementById('file-name');
 const fileInfo = document.getElementById('file-info');
-const uploadButton = document.getElementById('upload-button');
+// Upload button removed as we now upload automatically
 const uploadProgress = document.getElementById('upload-progress');
 const uploadSection = document.getElementById('upload-section');
 const analysisSection = document.getElementById('analysis-section');
@@ -106,7 +106,6 @@ function setupEventListeners() {
     dropArea.addEventListener('drop', handleDrop, false);
     
     // Button event listeners
-    uploadButton.addEventListener('click', uploadFile);
     confirmButton.addEventListener('click', confirmAnalysis);
     cancelButton.addEventListener('click', resetToUpload);
     downloadButton.addEventListener('click', downloadVideo);
@@ -158,6 +157,9 @@ function handleFileSelection() {
         // Display file info
         fileName.textContent = file.name;
         fileInfo.classList.remove('hidden');
+        
+        // Automatically start upload after file selection
+        uploadFile();
     }
 }
 
