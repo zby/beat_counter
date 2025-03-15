@@ -9,25 +9,106 @@ and Celery tasks to access the same metadata.
 import json
 import redis
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
 from functools import wraps
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
-# Connect to Redis
-redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+class RedisManager:
+    """
+    Class to manage Redis operations with consistent error handling.
+    """
+    def __init__(self, host='localhost', port=6379, db=0, prefix='file_metadata:'):
+        """
+        Initialize Redis connection.
+        
+        Parameters:
+        -----------
+        host : str
+            Redis host
+        port : int
+            Redis port
+        db : int
+            Redis database number
+        prefix : str
+            Prefix for keys
+        """
+        self.client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+        self.prefix = prefix
+        
+        # Test the connection
+        try:
+            self.client.ping()
+            logger.info("Redis connection successful")
+        except redis.exceptions.ConnectionError as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+            raise RuntimeError("Redis connection failed. Make sure Redis is running.")
+    
+    def _get_key(self, file_id: str) -> str:
+        """Get the Redis key for a file ID."""
+        return f"{self.prefix}{file_id}"
+    
+    def get(self, file_id: str) -> Optional[Dict[str, Any]]:
+        """Get metadata for a file from Redis."""
+        try:
+            redis_key = self._get_key(file_id)
+            metadata_json = self.client.get(redis_key)
+            
+            if metadata_json:
+                return json.loads(metadata_json)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting metadata from Redis: {e}")
+            return None
+    
+    def set(self, file_id: str, metadata: Dict[str, Any], expiration: int = 604800) -> bool:
+        """Set metadata for a file in Redis."""
+        try:
+            redis_key = self._get_key(file_id)
+            self.client.set(redis_key, json.dumps(metadata), ex=expiration)
+            return True
+        except Exception as e:
+            logger.error(f"Error saving metadata to Redis: {e}")
+            return False
+    
+    def delete(self, file_id: str) -> bool:
+        """Delete metadata for a file from Redis."""
+        try:
+            redis_key = self._get_key(file_id)
+            return self.client.delete(redis_key) > 0
+        except Exception as e:
+            logger.error(f"Error deleting metadata from Redis: {e}")
+            return False
+    
+    def get_all_keys(self) -> List[str]:
+        """Get all keys matching the file metadata prefix."""
+        try:
+            keys = self.client.keys(f"{self.prefix}*")
+            return [key.replace(self.prefix, '') for key in keys]
+        except Exception as e:
+            logger.error(f"Error getting keys from Redis: {e}")
+            return []
+    
+    def get_all(self) -> Dict[str, Dict[str, Any]]:
+        """Get metadata for all files from Redis."""
+        try:
+            all_metadata = {}
+            
+            # Get all keys matching the file metadata prefix
+            for key in self.client.keys(f"{self.prefix}*"):
+                file_id = key.replace(self.prefix, '')
+                metadata = self.get(file_id)
+                if metadata:
+                    all_metadata[file_id] = metadata
+            
+            return all_metadata
+        except Exception as e:
+            logger.error(f"Error getting all metadata from Redis: {e}")
+            return {}
 
-# Test the connection
-try:
-    redis_client.ping()
-    logger.info("Redis connection successful")
-except redis.exceptions.ConnectionError as e:
-    logger.error(f"Failed to connect to Redis: {e}")
-    raise RuntimeError("Redis connection failed. Make sure Redis is running.")
-
-# Prefix for file metadata keys
-FILE_METADATA_PREFIX = 'file_metadata:'
+# Create global Redis manager instance
+redis_manager = RedisManager(prefix='file_metadata:')
 
 # Helper function for deep updating dictionaries
 def deep_update(target, source):
@@ -38,7 +119,7 @@ def deep_update(target, source):
             target[key] = value
 
 
-def update_file_metadata(file_id: str, updates: Dict[str, Any]) -> None:
+def update_file_metadata(file_id: str, updates: Dict[str, Any]) -> bool:
     """
     Update metadata for a file in Redis.
     
@@ -48,6 +129,11 @@ def update_file_metadata(file_id: str, updates: Dict[str, Any]) -> None:
         The unique identifier for the file
     updates : Dict[str, Any]
         Dictionary containing the updates to apply
+        
+    Returns:
+    --------
+    bool
+        True if successful, False otherwise
     """
     # Get existing metadata or initialize empty dict
     metadata = get_file_metadata(file_id) or {}
@@ -56,13 +142,7 @@ def update_file_metadata(file_id: str, updates: Dict[str, Any]) -> None:
     deep_update(metadata, updates)
     
     # Save updated metadata to Redis
-    try:
-        redis_key = f"{FILE_METADATA_PREFIX}{file_id}"
-        # Use a reasonable expiration time (7 days) to prevent Redis from growing indefinitely
-        redis_client.set(redis_key, json.dumps(metadata), ex=604800)  # 7 days in seconds
-    except Exception as e:
-        logger.error(f"Error saving metadata to Redis: {e}")
-        raise
+    return redis_manager.set(file_id, metadata)
 
 
 def get_file_metadata(file_id: str) -> Optional[Dict[str, Any]]:
@@ -79,16 +159,7 @@ def get_file_metadata(file_id: str) -> Optional[Dict[str, Any]]:
     Dict[str, Any] or None
         The file metadata or None if not found
     """
-    try:
-        redis_key = f"{FILE_METADATA_PREFIX}{file_id}"
-        metadata_json = redis_client.get(redis_key)
-        
-        if metadata_json:
-            return json.loads(metadata_json)
-        return None
-    except Exception as e:
-        logger.error(f"Error getting metadata from Redis: {e}")
-        raise
+    return redis_manager.get(file_id)
 
 
 def get_all_file_metadata() -> Dict[str, Dict[str, Any]]:
@@ -100,20 +171,7 @@ def get_all_file_metadata() -> Dict[str, Dict[str, Any]]:
     Dict[str, Dict[str, Any]]
         Dictionary mapping file IDs to their metadata
     """
-    try:
-        all_metadata = {}
-        
-        # Get all keys matching the file metadata prefix
-        for key in redis_client.keys(f"{FILE_METADATA_PREFIX}*"):
-            file_id = key.replace(FILE_METADATA_PREFIX, '')
-            metadata = get_file_metadata(file_id)
-            if metadata:
-                all_metadata[file_id] = metadata
-        
-        return all_metadata
-    except Exception as e:
-        logger.error(f"Error getting all metadata from Redis: {e}")
-        raise
+    return redis_manager.get_all()
 
 
 def update_progress(file_id: str, status: str, percent: float) -> None:
@@ -155,17 +213,92 @@ def delete_file_metadata(file_id: str) -> bool:
     bool
         True if metadata was deleted, False if not found
     """
-    try:
-        redis_key = f"{FILE_METADATA_PREFIX}{file_id}"
-        return redis_client.delete(redis_key) > 0
-    except Exception as e:
-        logger.error(f"Error deleting metadata from Redis: {e}")
-        raise
+    return redis_manager.delete(file_id)
 
 
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, TypeVar, Generic, Union
 # Import AsyncResult from the app directly instead of from celery.result
 from web_app.celery_app import app
+
+# Type variable for generic return types
+T = TypeVar('T')
+
+class TaskResultManager:
+    """
+    Class to manage task result operations with consistent error handling.
+    """
+    
+    @staticmethod
+    def create_async_result(task_id: str) -> Optional[object]:
+        """
+        Create an AsyncResult object for a task ID.
+        
+        Parameters:
+        -----------
+        task_id : str
+            The task ID
+            
+        Returns:
+        --------
+        Optional[object]
+            The AsyncResult object or None if an error occurs
+        """
+        try:
+            return app.AsyncResult(task_id)
+        except Exception as e:
+            logger.error(f"Error creating AsyncResult: {e}")
+            return None
+    
+    @staticmethod
+    def get_attribute(task_result: object, attribute_name: str, default_value: T = None) -> T:
+        """
+        Safely get an attribute from a task result.
+        
+        Parameters:
+        -----------
+        task_result : object
+            The task result object
+        attribute_name : str
+            The name of the attribute to get
+        default_value : T
+            The default value to return if the attribute doesn't exist
+            
+        Returns:
+        --------
+        T
+            The attribute value or default value
+        """
+        if task_result is None:
+            return default_value
+            
+        try:
+            return getattr(task_result, attribute_name, default_value)
+        except (AttributeError, Exception) as e:
+            logger.error(f"Error getting task attribute '{attribute_name}': {e}")
+            return default_value
+    
+    @staticmethod
+    def extract_task_data(task_result: object, attribute_name: str = 'result') -> Dict[str, Any]:
+        """
+        Extract data from a task result.
+        
+        Parameters:
+        -----------
+        task_result : object
+            The task result object
+        attribute_name : str
+            The name of the attribute to extract
+            
+        Returns:
+        --------
+        Dict[str, Any]
+            The extracted data or an empty dict if an error occurs
+        """
+        data = TaskResultManager.get_attribute(task_result, attribute_name, {})
+        if not isinstance(data, dict):
+            # Convert non-dict data to a dict with a 'value' key
+            return {'value': data} if data is not None else {}
+        return data
 
 
 def extract_task_output(task_data: Dict[str, Any], output_key: str) -> Optional[Dict[str, str]]:
@@ -218,6 +351,97 @@ def update_task_status_with_output(task_status: Dict[str, Any], task_data: Dict[
     if output_data:
         task_status["output"] = output_data
 
+
+def process_success_state(task_status: Dict[str, Any], task_result: object, task_type: str) -> None:
+    """
+    Process a successful task result and update task_status.
+    
+    Parameters:
+    -----------
+    task_status : Dict[str, Any]
+        The task status dictionary to update
+    task_result : object
+        The task result object
+    task_type : str
+        The type of task ('beat_detection' or 'video_generation')
+    """
+    # Get the task result data
+    result = TaskResultManager.extract_task_data(task_result)
+    
+    # For beat detection tasks
+    if task_type == 'beat_detection' and result:
+        if "beats_file" in result:
+            task_status["beats_file"] = result["beats_file"]
+            task_status["file_path"] = result.get("file_path")
+            
+            # Add beat statistics if available
+            if "stats" in result:
+                task_status["stats"] = result["stats"]
+    
+    # For video generation tasks
+    elif task_type == 'video_generation' and result:
+        if "video_file" in result:
+            task_status["video_file"] = result["video_file"]
+    
+    # Common fields for both task types
+    if result:
+        # Add any warning if present
+        if "warning" in result:
+            task_status["warning"] = result["warning"]
+            
+        # Extract stdout/stderr output if available
+        update_task_status_with_output(task_status, result, task_type)
+
+
+def process_progress_state(task_status: Dict[str, Any], task_result: object, task_type: str) -> None:
+    """
+    Process an in-progress task result and update task_status.
+    
+    Parameters:
+    -----------
+    task_status : Dict[str, Any]
+        The task status dictionary to update
+    task_result : object
+        The task result object
+    task_type : str
+        The type of task ('beat_detection' or 'video_generation')
+    """
+    # Get the task info data
+    task_info_data = TaskResultManager.extract_task_data(task_result, 'info')
+    
+    if task_info_data:
+        # Include progress information
+        if "progress" in task_info_data:
+            task_status["progress"] = task_info_data["progress"]
+        
+        # Include file paths if available
+        if "file_path" in task_info_data:
+            task_status["file_path"] = task_info_data["file_path"]
+        
+        # For beat detection tasks
+        if task_type == 'beat_detection' and "beats_file" in task_info_data:
+            task_status["beats_file"] = task_info_data["beats_file"]
+        
+        # Extract stdout/stderr output if available
+        update_task_status_with_output(task_status, task_info_data, task_type)
+
+
+def process_failure_state(task_status: Dict[str, Any], task_result: object) -> None:
+    """
+    Process a failed task result and update task_status.
+    
+    Parameters:
+    -----------
+    task_status : Dict[str, Any]
+        The task status dictionary to update
+    task_result : object
+        The task result object
+    """
+    # Get the error result
+    error_result = TaskResultManager.get_attribute(task_result, 'result')
+    error_msg = str(error_result) if error_result else "Unknown error"
+    task_status["error"] = error_msg
+
 async def get_beat_detection_status(beat_detection_task_id: str) -> Tuple[Dict[str, Any], Optional[object]]:
     """
     Get the status of a beat detection task.
@@ -239,91 +463,23 @@ async def get_beat_detection_status(beat_detection_task_id: str) -> Tuple[Dict[s
         "status": "UNKNOWN"
     }
     
-    # Safely create and use the AsyncResult
-    try:
-        # Use the app's AsyncResult method to ensure proper backend configuration
-        task_result = app.AsyncResult(beat_detection_task_id)
-        
-        # Safely get the task state
-        try:
-            # Get the state and ensure it's uppercase for consistency
-            state = task_result.state
-            if state:
-                task_status["status"] = state.upper()
-        except (AttributeError, Exception) as e:
-            logger.error(f"Error getting task state: {e}")
-            return task_status, None
-    except Exception as e:
-        logger.error(f"Error creating AsyncResult: {e}")
+    # Create AsyncResult and get state
+    task_result = TaskResultManager.create_async_result(beat_detection_task_id)
+    if not task_result:
         return task_status, None
     
-    # Handle different task states to gather task-specific information
+    # Get task state
+    state = TaskResultManager.get_attribute(task_result, "state")
+    if state:
+        task_status["status"] = state.upper()
+    
+    # Process different states
     if task_status["status"] == 'SUCCESS':
-        try:
-            # Get the task result
-            result = None
-            try:
-                result = task_result.result
-            except (AttributeError, Exception) as e:
-                logger.error(f"Error getting task result: {e}")
-            
-            if result and isinstance(result, dict):
-                # For beat detection tasks, extract the beats_file path
-                if "beats_file" in result:
-                    task_status["beats_file"] = result["beats_file"]
-                    task_status["file_path"] = result.get("file_path")
-                    
-                    # Add beat statistics if available
-                    if "stats" in result:
-                        task_status["stats"] = result["stats"]
-                
-                # Add any warning if present
-                if "warning" in result:
-                    task_status["warning"] = result["warning"]
-                    
-                # Extract stdout/stderr output if available
-                update_task_status_with_output(task_status, result, "beat_detection")
-        except Exception as e:
-            logger.error(f"Error processing task result: {e}")
-    
-    # For in-progress tasks, include progress information
+        process_success_state(task_status, task_result, "beat_detection")
     elif task_status["status"] in ['STARTED', 'PROGRESS']:
-        try:
-            task_info_data = None
-            try:
-                task_info_data = task_result.info
-            except (AttributeError, Exception) as e:
-                logger.error(f"Error getting task info: {e}")
-            
-            if task_info_data and isinstance(task_info_data, dict):
-                # Include progress information
-                if "progress" in task_info_data:
-                    task_status["progress"] = task_info_data["progress"]
-                
-                # Include file paths if available
-                if "file_path" in task_info_data:
-                    task_status["file_path"] = task_info_data["file_path"]
-                if "beats_file" in task_info_data:
-                    task_status["beats_file"] = task_info_data["beats_file"]
-                    
-                # Extract stdout/stderr output if available
-                update_task_status_with_output(task_status, task_info_data, "beat_detection")
-        except Exception as e:
-            logger.error(f"Error processing task progress: {e}")
-    
-    # For failed tasks, include error information
+        process_progress_state(task_status, task_result, "beat_detection")
     elif task_status["status"] == 'FAILURE':
-        try:
-            error_result = None
-            try:
-                error_result = task_result.result
-            except (AttributeError, Exception) as e:
-                logger.error(f"Error getting failure result: {e}")
-            
-            error_msg = str(error_result) if error_result else "Unknown error"
-            task_status["error"] = error_msg
-        except Exception as e:
-            logger.error(f"Error processing task failure: {e}")
+        process_failure_state(task_status, task_result)
     
     return task_status, task_result
 
@@ -349,86 +505,23 @@ async def get_video_generation_status(video_task_id: str) -> Tuple[Dict[str, Any
         "status": "UNKNOWN"
     }
     
-    # Safely create and use the AsyncResult
-    try:
-        # Use the app's AsyncResult method to ensure proper backend configuration
-        task_result = app.AsyncResult(video_task_id)
-        
-        # Safely get the task state
-        try:
-            # Get the state and ensure it's uppercase for consistency
-            state = task_result.state
-            if state:
-                task_status["status"] = state.upper()
-        except (AttributeError, Exception) as e:
-            logger.error(f"Error getting task state: {e}")
-            return task_status, None
-    except Exception as e:
-        logger.error(f"Error creating AsyncResult: {e}")
+    # Create AsyncResult and get state
+    task_result = TaskResultManager.create_async_result(video_task_id)
+    if not task_result:
         return task_status, None
     
-    # Handle different task states to gather task-specific information
+    # Get task state
+    state = TaskResultManager.get_attribute(task_result, "state")
+    if state:
+        task_status["status"] = state.upper()
+    
+    # Process different states
     if task_status["status"] == 'SUCCESS':
-        try:
-            # Get the task result
-            result = None
-            try:
-                result = task_result.result
-            except (AttributeError, Exception) as e:
-                logger.error(f"Error getting task result: {e}")
-            
-            if result and isinstance(result, dict):
-                # For video generation tasks, extract the video_file path
-                if "video_file" in result:
-                    task_status["video_file"] = result["video_file"]
-                
-                # Add any warning if present
-                if "warning" in result:
-                    task_status["warning"] = result["warning"]
-                    
-                # Extract stdout/stderr output if available
-                update_task_status_with_output(task_status, result, "video_generation")
-        except Exception as e:
-            logger.error(f"Error processing task result: {e}")
-    
-    # For in-progress tasks, include progress information
+        process_success_state(task_status, task_result, "video_generation")
     elif task_status["status"] in ['STARTED', 'PROGRESS']:
-        try:
-            task_info_data = None
-            try:
-                task_info_data = task_result.info
-            except (AttributeError, Exception) as e:
-                logger.error(f"Error getting task info: {e}")
-            
-            if task_info_data and isinstance(task_info_data, dict):
-                # Include progress information
-                if "progress" in task_info_data:
-                    task_status["progress"] = task_info_data["progress"]
-                
-                # Include file paths if available
-                if "file_path" in task_info_data:
-                    task_status["file_path"] = task_info_data["file_path"]
-                if "beats_file" in task_info_data:
-                    task_status["beats_file"] = task_info_data["beats_file"]
-                    
-                # Extract stdout/stderr output if available
-                update_task_status_with_output(task_status, task_info_data, "beat_detection")
-        except Exception as e:
-            logger.error(f"Error processing task progress: {e}")
-    
-    # For failed tasks, include error information
+        process_progress_state(task_status, task_result, "video_generation")
     elif task_status["status"] == 'FAILURE':
-        try:
-            error_result = None
-            try:
-                error_result = task_result.result
-            except (AttributeError, Exception) as e:
-                logger.error(f"Error getting failure result: {e}")
-            
-            error_msg = str(error_result) if error_result else "Unknown error"
-            task_status["error"] = error_msg
-        except Exception as e:
-            logger.error(f"Error processing task failure: {e}")
+        process_failure_state(task_status, task_result)
     
     return task_status, task_result
 
