@@ -92,7 +92,7 @@ asyncio_mode = "auto"
 testpaths = ["web_app/test_app.py"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --cov=web_app --cov-report=term-missing"
+addopts = "-v"
 
 [dependency-groups]
 dev = [

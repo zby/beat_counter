@@ -1,30 +1,34 @@
 // Beat Detection App - File View JavaScript
 
-// DOM Elements
-const analysisSection = document.getElementById('analysis-section');
-const analysisProgress = document.getElementById('analysis-progress');
-const analysisResults = document.getElementById('analysis-results');
-const confirmButton = document.getElementById('confirm-button');
-const cancelButton = document.getElementById('cancel-button');
-const videoSection = document.getElementById('video-section');
-const videoProgress = document.getElementById('video-progress');
-const videoResults = document.getElementById('video-results');
-const resultVideo = document.getElementById('result-video');
-// Download button converted to a standard link - no longer need this reference
-const restartButton = document.getElementById('restart-button');
+/*
+POLLING LOGIC:
+1. When polling starts:
+   - During initialization (init function):
+     - When status is 'ANALYZING' - polling starts
+     - When status is 'GENERATING_VIDEO' - polling starts
+   - During user actions:
+     - When user clicks "Generate Video" button (handleConfirmAnalysis function) - polling starts
 
-// Result display elements
-const resultBpm = document.getElementById('result-bpm');
-const resultTotalBeats = document.getElementById('result-total-beats');
-const resultDuration = document.getElementById('result-duration');
-const resultMeter = document.getElementById('result-meter');
+2. When polling stops:
+   - When status is 'ANALYZED' with valid stats and no video generation in progress - polling stops
+   - When status is 'COMPLETED' - polling stops
+   - When status is 'ERROR' or 'FAILURE' - polling stops
+
+3. Error states (no polling):
+   - When status is 'ANALYZED' but no valid stats are found - this is an error state, polling does not start
+*/
+
+// Global variables for DOM elements
+let analysisSection, analysisProgress, analysisResults, confirmButton, cancelButton;
+let videoSection, videoProgress, videoResults, resultVideo, restartButton;
+let resultBpm, resultTotalBeats, resultDuration, resultMeter;
 
 // Global state
 let currentFileId = null;
 let statusCheckInterval = null;
 
 // Debug logging
-let debugMode = false; // Set to true to enable debug panel
+let debugMode = true; // Set to true to enable debug panel
 const debugMessages = [];
 
 // Override console methods to capture logs
@@ -50,6 +54,14 @@ if (debugMode) {
         updateDebugPanel();
         originalError.apply(console, arguments);
     };
+    
+    // Make sure the debug panel is visible when debug mode is enabled
+    document.addEventListener('DOMContentLoaded', function() {
+        const debugPanel = document.getElementById('debug-panel');
+        if (debugPanel) {
+            debugPanel.style.display = 'block';
+        }
+    });
 }
 
 // Update the debug panel with latest messages
@@ -59,27 +71,74 @@ function updateDebugPanel() {
     const debugPanel = document.getElementById('debug-panel');
     if (!debugPanel) return;
     
-    // Keep only the last 10 messages
-    const recentMessages = debugMessages.slice(-10);
+    // Keep only the last 20 messages
+    const recentMessages = debugMessages.slice(-20);
     
     // Clear and rebuild the debug panel
-    debugPanel.innerHTML = '';
+    debugPanel.innerHTML = '<h3>Debug Messages</h3>';
+    
+    // Add current state section
+    const stateSection = document.createElement('div');
+    stateSection.className = 'debug-state';
+    stateSection.innerHTML = `
+        <h4>Current State:</h4>
+        <pre>status: ${window.initialFileData?.status?.status || 'N/A'}
+fileId: ${currentFileId || 'N/A'}
+beat_task: ${JSON.stringify(window.initialFileData?.status?.beat_detection_task || {}, null, 2)}
+video_task: ${JSON.stringify(window.initialFileData?.status?.video_generation_task || {}, null, 2)}
+</pre>
+    `;
+    debugPanel.appendChild(stateSection);
+    
+    // Add messages section
+    const messagesSection = document.createElement('div');
+    messagesSection.className = 'debug-messages';
+    messagesSection.innerHTML = '<h4>Recent Messages:</h4>';
     recentMessages.forEach(msg => {
         const msgElement = document.createElement('div');
         msgElement.className = `debug-message debug-${msg.type}`;
         msgElement.textContent = msg.message;
-        debugPanel.appendChild(msgElement);
+        messagesSection.appendChild(msgElement);
     });
+    debugPanel.appendChild(messagesSection);
 }
 
 // Initialize the application
 function init() {
-    // Create debug panel if in debug mode
-    if (debugMode) {
+    console.log('Initializing application...');
+    
+    // Get DOM elements after the DOM is loaded
+    analysisSection = document.getElementById('analysis-section');
+    analysisProgress = document.getElementById('analysis-progress');
+    analysisResults = document.getElementById('analysis-results');
+    confirmButton = document.getElementById('confirm-button');
+    cancelButton = document.getElementById('cancel-button');
+    videoSection = document.getElementById('video-section');
+    videoProgress = document.getElementById('video-progress');
+    videoResults = document.getElementById('video-results');
+    resultVideo = document.getElementById('result-video');
+    restartButton = document.getElementById('restart-button');
+
+    // Result display elements
+    resultBpm = document.getElementById('result-bpm');
+    resultTotalBeats = document.getElementById('result-total-beats');
+    resultDuration = document.getElementById('result-duration');
+    resultMeter = document.getElementById('result-meter');
+    
+    // Log DOM elements to verify they exist
+    console.log('DOM Elements loaded:');
+    console.log('- analysisSection:', analysisSection);
+    console.log('- analysisProgress:', analysisProgress);
+    console.log('- analysisResults:', analysisResults);
+    console.log('- confirmButton:', confirmButton);
+    console.log('- cancelButton:', cancelButton);
+    console.log('- videoSection:', videoSection);
+    
+    // Ensure the debug panel is created and visible
+    if (!document.getElementById('debug-panel')) {
         const debugPanel = document.createElement('div');
         debugPanel.id = 'debug-panel';
         debugPanel.className = 'debug-panel';
-        debugPanel.innerHTML = '<h3>Debug Messages</h3>';
         document.body.appendChild(debugPanel);
         
         // Add some basic styling
@@ -90,19 +149,33 @@ function init() {
                 bottom: 0;
                 right: 0;
                 width: 400px;
-                max-height: 300px;
+                max-height: 80vh;
                 overflow-y: auto;
-                background: rgba(0,0,0,0.8);
+                background: rgba(0,0,0,0.9);
                 color: white;
                 padding: 10px;
                 font-family: monospace;
                 z-index: 9999;
                 border-top-left-radius: 5px;
             }
+            .debug-state {
+                margin: 10px 0;
+                padding: 10px;
+                background: rgba(50,50,50,0.5);
+                border-radius: 4px;
+            }
+            .debug-state pre {
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }
+            .debug-messages {
+                margin-top: 10px;
+            }
             .debug-message {
                 margin: 5px 0;
                 padding: 5px;
                 border-left: 3px solid #ccc;
+                font-size: 12px;
             }
             .debug-log { border-color: #4CAF50; }
             .debug-warn { border-color: #FFC107; color: #FFC107; }
@@ -110,6 +183,8 @@ function init() {
         `;
         document.head.appendChild(style);
     }
+    
+    // Set up event listeners
     setupEventListeners();
     
     // Initialize with file data from the server
@@ -125,39 +200,35 @@ function init() {
         const videoTask = window.initialFileData.status.video_generation_task;
         console.log('Beat detection task:', beatTask);
         console.log('Video generation task:', videoTask);
-        
-        // Log the specific properties we're checking
-        if (beatTask) console.log('Beat task status:', beatTask.status);
-        if (videoTask) console.log('Video task status:', videoTask.status);
-        if (videoTask && videoTask.result) console.log('Video task result:', videoTask.result);
-        
+       
         currentFileId = window.initialFileData.fileId;
         
-        // Force immediate check for the specific case of beat detection success with video generation failure
-        const data = window.initialFileData.status;
+        // Log the overall status explicitly
+        const overallStatus = window.initialFileData.status.status;
+        console.log('Overall status:', overallStatus);
         
-        // Log DOM elements to verify they exist
-        console.log('Analysis progress element:', analysisProgress);
-        console.log('Analysis results element:', analysisResults);
+        // Check if the status is undefined and log a warning
+        if (typeof overallStatus === 'undefined') {
+            console.warn('Overall status is undefined!');
+        }
         
-        // Directly check and fix the issue regardless of task status
-        // Handle any case where beat detection is SUCCESS, even if overall status is FAILURE
-        if (data.status === 'ANALYZED' || data.status === 'FAILURE' || 
-            (data.beat_detection_task && data.beat_detection_task.status === 'SUCCESS')) {
-            console.log('%c FORCING DISPLAY OF ANALYSIS RESULTS', 'background: red; color: white; font-size: 16px;');
-            console.log('Reason: Overall status:', data.status, 'Beat task status:', 
-                data.beat_detection_task ? data.beat_detection_task.status : 'N/A');
+        // Ensure the status is used correctly in the logic
+        if (overallStatus === 'COMPLETED') {
+            console.log('Status is COMPLETED, updating UI accordingly.');
+            // Show both analysis results and completed video
+            analysisSection.classList.remove('hidden');
+            analysisSection.classList.add('with-video');
+            // Hide both progress bars
+            analysisProgress.classList.add('hidden');
+            videoProgress.classList.add('hidden');
+            // Show both results sections
+            analysisResults.classList.remove('hidden');
+            document.getElementById('analysis-buttons').classList.add('hidden');
+            displayAnalysisResults(window.initialFileData.status);
             
-            // Force hide analysis progress and show results
-            if (analysisProgress) {
-                console.log('Hiding analysis progress');
-                analysisProgress.classList.add('hidden');
-            }
-            if (analysisResults) {
-                console.log('Showing analysis results');
-                analysisResults.classList.remove('hidden');
-                displayAnalysisResults(data);
-            }
+            videoSection.classList.remove('hidden');
+            videoResults.classList.remove('hidden');
+            displayVideo(window.initialFileData.status);
         }
         
         // Handle different file states
@@ -186,7 +257,40 @@ function init() {
             analysisSection.classList.remove('hidden');
             analysisProgress.classList.add('hidden');
             analysisResults.classList.remove('hidden');
+            
+            // Get beat detection task data if available
+            const beatTask = window.initialFileData.status.beat_detection_task || {};
+            
+            // Get stats from the beat detection task
+            const stats = getStats(beatTask);
+            
+            // Only start polling if we don't have valid stats yet
+            if (Object.keys(stats).length === 0) {
+                console.log('Status is ANALYZED but no valid stats found. Starting polling to get stats.');
+                startStatusPolling();
+            } else {
+                console.log('Status is ANALYZED and we have valid stats. No need to poll for updates.');
+            }
+
+            // Display the analysis results
             displayAnalysisResults(window.initialFileData.status);
+            
+            // If we don't have valid stats, show an error message instead of starting polling
+            if (Object.keys(stats).length === 0) {
+                console.error('Status is ANALYZED but no valid stats found. This is an error state.');
+                
+                // Show an error message to the user
+                const errorMessage = document.createElement('div');
+                errorMessage.className = 'error-message';
+                errorMessage.textContent = 'Error: Beat analysis completed but no statistics were found. Please try again or contact support.';
+                analysisResults.prepend(errorMessage);
+                
+                // Don't start polling as this is an error state
+                if (statusCheckInterval) {
+                    clearInterval(statusCheckInterval);
+                    statusCheckInterval = null;
+                }
+            }
         } 
         else if (status === 'GENERATING_VIDEO') {
             // Show both analysis results and video generation in progress
@@ -217,357 +321,368 @@ function init() {
             // Show both analysis results and completed video
             analysisSection.classList.remove('hidden');
             analysisSection.classList.add('with-video');
+            // Hide both progress bars
             analysisProgress.classList.add('hidden');
+            videoProgress.classList.add('hidden');
+            // Show both results sections
             analysisResults.classList.remove('hidden');
             document.getElementById('analysis-buttons').classList.add('hidden');
             displayAnalysisResults(window.initialFileData.status);
             
             videoSection.classList.remove('hidden');
-            videoProgress.classList.add('hidden');
             videoResults.classList.remove('hidden');
             displayVideo(window.initialFileData.status);
         }
         else if (status === 'ERROR') {
             // Show error message
-            alert(`Error: ${window.initialFileData.status.error || 'Unknown error'}`);
+            alert('An error occurred during processing. Please try again or contact support.');
         }
-    } else {
-        console.error('No file data provided');
     }
 }
 
-// Set up all event listeners
+// Setup event listeners for buttons and other interactive elements
 function setupEventListeners() {
-    // Confirm button (generate video)
-    confirmButton.addEventListener('click', handleConfirmAnalysis);
+    console.log('Setting up event listeners...');
     
-    // Cancel button
-    cancelButton.addEventListener('click', handleCancelAnalysis);
+    // Set up confirm button
+    if (confirmButton) {
+        console.log('Adding event listener to confirm button');
+        confirmButton.addEventListener('click', handleConfirmAnalysis);
+    } else {
+        console.warn('Confirm button not found');
+    }
     
-    // Download button converted to a standard link - no longer need this event listener
+    // Set up cancel button
+    if (cancelButton) {
+        console.log('Adding event listener to cancel button');
+        cancelButton.addEventListener('click', handleCancelAnalysis);
+    } else {
+        console.warn('Cancel button not found');
+    }
     
-    // Restart button
-    restartButton.addEventListener('click', handleRestart);
+    // Set up restart button
+    if (restartButton) {
+        console.log('Adding event listener to restart button');
+        restartButton.addEventListener('click', handleRestartAnalysis);
+    } else {
+        console.warn('Restart button not found');
+    }
+    
+    console.log('Event listeners set up successfully');
+}
+
+// Initialize the application when the DOM is fully loaded
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM fully loaded, initializing application');
+    
+    // Get data from the app-data div
+    const appDataElement = document.getElementById('app-data');
+    if (appDataElement) {
+        try {
+            // Parse the JSON data from the data attributes
+            const fileInfo = JSON.parse(appDataElement.getAttribute('data-file-info') || '{}');
+            const beatDetection = JSON.parse(appDataElement.getAttribute('data-beat-detection') || '{}');
+            const videoGeneration = JSON.parse(appDataElement.getAttribute('data-video-generation') || '{}');
+            
+            // Set up the initialFileData object
+            window.initialFileData = {
+                fileId: fileInfo.fileId,
+                status: fileInfo.status
+            };
+            
+            console.log('Initialized with file data:', window.initialFileData);
+            
+            // Initialize the application
+            init();
+        } catch (error) {
+            console.error('Error parsing app data:', error);
+        }
+    } else {
+        console.error('App data element not found');
+    }
+});
+
+// Handle confirm analysis button click
+function handleConfirmAnalysis() {
+    console.log('Confirm analysis button clicked');
+    if (!currentFileId) {
+        console.error('No file ID available');
+        return;
+    }
+    
+    // Disable the button to prevent multiple clicks
+    confirmButton.disabled = true;
+    
+    // Send request to confirm analysis
+    fetch(`/confirm/${currentFileId}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => {
+        if (response.redirected) {
+            // If redirected, follow the redirect
+            window.location.href = response.url;
+        } else if (response.ok) {
+            // If successful but not redirected, reload the page
+            window.location.reload();
+        } else {
+            // If error, parse the error message
+            return response.json().then(data => {
+                throw new Error(data.detail || 'Failed to confirm analysis');
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Error confirming analysis:', error);
+        alert('Error: ' + error.message);
+        // Re-enable the button
+        confirmButton.disabled = false;
+    });
+}
+
+// Handle cancel analysis button click
+function handleCancelAnalysis() {
+    console.log('Cancel analysis button clicked');
+    // Redirect to home page
+    window.location.href = '/';
+}
+
+// Handle restart analysis button click
+function handleRestartAnalysis() {
+    console.log('Restart analysis button clicked');
+    if (!currentFileId) {
+        console.error('No file ID available');
+        return;
+    }
+    
+    // Redirect to upload page with file ID as parameter
+    window.location.href = `/?restart=${currentFileId}`;
 }
 
 // Start polling for status updates
 function startStatusPolling() {
+    console.log('Starting status polling');
+    
     // Clear any existing interval
     if (statusCheckInterval) {
         clearInterval(statusCheckInterval);
     }
     
-    // Check immediately
-    checkStatus();
-    
-    // Set up interval for checking status
+    // Set up new polling interval (every 2 seconds)
     statusCheckInterval = setInterval(checkStatus, 2000);
+    
+    // Do an immediate check
+    checkStatus();
 }
 
-// Check the status of the current file
-async function checkStatus() {
-    if (!currentFileId) return;
+// Check the current status of the file
+function checkStatus() {
+    if (!currentFileId) {
+        console.error('No file ID available for status check');
+        return;
+    }
     
-    try {
-        const response = await fetch(`/status/${currentFileId}`);
-        if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        console.log('Status update:', data);
-        
-        // Check for beat detection task
-        const beatTask = data.beat_detection_task;
-        // Check for video generation task
-        const videoTask = data.video_generation_task;
-        
-        // Log the full structure to debug the stats issue
-        console.log('Full data structure:', JSON.stringify(data, null, 2));
-        
-        // Handle status updates based on current state
-        if (data.status === 'ANALYZED') {
-            // Analysis completed
+    console.log('Checking status for file:', currentFileId);
+    
+    // Fetch the current status
+    fetch(`/status/${currentFileId}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch status');
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('Status update received:', data);
+            handleStatusUpdate(data);
+        })
+        .catch(error => {
+            console.error('Error checking status:', error);
+        });
+}
+
+// Handle a status update
+function handleStatusUpdate(statusData) {
+    // Update the debug panel
+    window.initialFileData = {
+        fileId: currentFileId,
+        status: statusData
+    };
+    updateDebugPanel();
+    
+    const status = statusData.status;
+    console.log('Handling status update:', status);
+    
+    // Handle different statuses
+    if (status === 'ANALYZING') {
+        console.log('Status is ANALYZING, updating progress bar');
+        // Update progress bar if we have progress information
+        if (analysisSection && analysisProgress && analysisResults) {
+            // Show analysis section with progress
+            analysisSection.classList.remove('hidden');
+            analysisProgress.classList.remove('hidden');
+            analysisResults.classList.add('hidden');
             
-            // Get beat detection task data if available
-            const beatTask = data.beat_detection_task || {};
-            
-            // Check if we have valid stats in the beat detection task
-            const hasValidStats = beatTask && beatTask.stats && Object.keys(beatTask.stats).length > 0;
-            
-            if (hasValidStats) {
-                // We have valid stats, so we can stop polling and display the results
-                console.log('Valid stats found, displaying analysis results');
-                analysisProgress.classList.add('hidden');
-                analysisResults.classList.remove('hidden');
-                displayAnalysisResults(data);
-                
-                // Only clear interval if we're not waiting for video generation
-                if (!data.video_generation_task || 
-                    (data.video_generation_task.status !== 'STARTED' && 
-                     data.video_generation_task.status !== 'PROGRESS')) {
-                    clearInterval(statusCheckInterval);
-                }
-            } else {
-                // This is an unusual case - the server says ANALYZED but we don't have stats
-                console.warn('Status is ANALYZED but no valid stats found. Beat task status:', 
-                    beatTask ? beatTask.status : 'undefined');
-                
-                // If beat detection task is SUCCESS but no stats, show results anyway
-                // This handles cases where the task succeeded but stats weren't properly returned
-                if (beatTask && beatTask.status === 'SUCCESS') {
-                    console.log('Beat detection task is SUCCESS, showing results despite missing stats');
-                    analysisProgress.classList.add('hidden');
-                    analysisResults.classList.remove('hidden');
-                    displayAnalysisResults(data);
-                    
-                    // Only clear interval if we're not waiting for video generation
-                    if (!data.video_generation_task || 
-                        (data.video_generation_task.status !== 'STARTED' && 
-                         data.video_generation_task.status !== 'PROGRESS')) {
-                        clearInterval(statusCheckInterval);
-                    }
-                } else {
-                    // Continue polling only if we're still waiting for something
-                    console.warn('Continuing to poll for complete results...');
+            const beatTask = statusData.beat_detection_task;
+            if (beatTask && beatTask.progress) {
+                const progressValue = typeof beatTask.progress === 'object' && beatTask.progress.percent ? 
+                    beatTask.progress.percent : beatTask.progress;
+                const progressFill = analysisProgress.querySelector('.progress-fill');
+                if (progressFill) {
+                    updateProgressBar(progressFill, progressValue);
                 }
             }
+        } else {
+            console.warn('DOM elements for analysis not found');
         }
-        else if (data.status === 'GENERATING_VIDEO' && videoSection.classList.contains('hidden')) {
-            // Video generation started
-            document.getElementById('analysis-buttons').classList.add('hidden');
+    }
+    else if (status === 'ANALYZED') {
+        console.log('Status is ANALYZED, showing analysis results');
+        // Stop polling and show analysis results
+        clearInterval(statusCheckInterval);
+        statusCheckInterval = null;
+        
+        if (analysisSection && analysisProgress && analysisResults) {
+            // Show analysis results
+            analysisSection.classList.remove('hidden');
+            analysisProgress.classList.add('hidden');
+            analysisResults.classList.remove('hidden');
+            
+            // Display the analysis results
+            displayAnalysisResults(statusData);
+        } else {
+            console.warn('DOM elements for analysis not found');
+        }
+    }
+    else if (status === 'GENERATING_VIDEO') {
+        console.log('Status is GENERATING_VIDEO, updating video progress');
+        if (videoSection && videoProgress) {
+            // Update progress bar if we have progress information
+            const videoTask = statusData.video_generation_task;
+            if (videoTask && videoTask.progress) {
+                const progressValue = typeof videoTask.progress === 'object' && videoTask.progress.percent ? 
+                    videoTask.progress.percent : videoTask.progress;
+                const progressFill = videoProgress.querySelector('.progress-fill');
+                if (progressFill) {
+                    updateProgressBar(progressFill, progressValue);
+                }
+            }
+        } else {
+            console.warn('DOM elements for video not found');
+        }
+    }
+    else if (status === 'COMPLETED') {
+        console.log('Status is COMPLETED, showing completed video');
+        // Stop polling and show completed video
+        clearInterval(statusCheckInterval);
+        statusCheckInterval = null;
+        
+        if (analysisSection && analysisProgress && analysisResults && 
+            videoSection && videoProgress && videoResults) {
+            // Show both analysis results and completed video
+            analysisSection.classList.remove('hidden');
             analysisSection.classList.add('with-video');
-            videoSection.classList.remove('hidden');
-            videoProgress.classList.remove('hidden');
-            videoResults.classList.add('hidden');
-            // Keep polling for updates
-        }
-        else if (data.status === 'COMPLETED' && videoProgress.classList.contains('hidden') === false) {
-            // Video generation completed
+            // Hide both progress bars
+            analysisProgress.classList.add('hidden');
             videoProgress.classList.add('hidden');
+            // Show both results sections
+            analysisResults.classList.remove('hidden');
+            
+            const analysisButtons = document.getElementById('analysis-buttons');
+            if (analysisButtons) {
+                analysisButtons.classList.add('hidden');
+            }
+            
+            displayAnalysisResults(statusData);
+            
+            videoSection.classList.remove('hidden');
             videoResults.classList.remove('hidden');
-            displayVideo(data);
-            clearInterval(statusCheckInterval);
-        }
-        else if (data.status === 'ERROR' || data.status === 'FAILURE') {
-            // Error occurred
-            clearInterval(statusCheckInterval);
+            displayVideo(statusData);
             
-            // Always check if beat detection succeeded, regardless of video task status
-            if (beatTask && beatTask.status === 'SUCCESS') {
-                console.log('%c ERROR/FAILURE with successful beat detection', 'background: blue; color: white;');
-                // Beat detection succeeded, make sure to show results
-                analysisProgress.classList.add('hidden');
-                analysisResults.classList.remove('hidden');
-                displayAnalysisResults(data);
-            }
-            
-            // Check if this is a video generation error
-            // Need to handle both FAILURE status and SUCCESS status with error result
-            if (videoTask) {
-                console.log('Video task in error handler:', videoTask);
-                // Hide video progress regardless of specific error type
-                videoProgress.classList.add('hidden');
-                
-                // Make sure video section is visible
-                videoSection.classList.remove('hidden');
-                videoResults.classList.remove('hidden');
-                
-                // Create error message element if it doesn't exist
-                let errorElement = document.getElementById('video-error-message');
-                if (!errorElement) {
-                    errorElement = document.createElement('div');
-                    errorElement.id = 'video-error-message';
-                    errorElement.className = 'error-message';
-                    videoResults.appendChild(errorElement);
-                }
-                
-                // Get error message from the appropriate location
-                let errorMsg;
-                if (videoTask.status === 'SUCCESS' && videoTask.result) {
-                    // For tasks that returned error results
-                    errorMsg = videoTask.result.error || 'Video generation failed';
-                } else {
-                    // For tasks that failed with exceptions
-                    errorMsg = videoTask.error || data.error || 'Video generation failed';
-                }
-                
-                errorElement.textContent = `Error: ${errorMsg}`;
-                errorElement.style.display = 'block';
-                
-                console.error('Video generation error:', errorMsg);
-            } else {
-                // General error or beat detection error
-                alert(`Error: ${data.error || 'Unknown error'}`);
-            }
+            // Reload the page to ensure everything is up to date
+            window.location.reload();
+        } else {
+            console.warn('DOM elements for completed state not found');
         }
-        // Update progress indicators if tasks are in progress
-        else if (beatTask && (beatTask.status === 'STARTED' || beatTask.status === 'PROGRESS') && beatTask.progress) {
-            // Handle both formats of progress data
-            const progressValue = typeof beatTask.progress === 'object' && beatTask.progress.percent ? 
-                beatTask.progress.percent : beatTask.progress;
-            updateProgressBar(analysisProgress.querySelector('.progress-fill'), progressValue);
-        }
-        else if (videoTask && (videoTask.status === 'STARTED' || videoTask.status === 'PROGRESS') && videoTask.progress) {
-            // Handle both formats of progress data
-            const progressValue = typeof videoTask.progress === 'object' && videoTask.progress.percent ? 
-                videoTask.progress.percent : videoTask.progress;
-            updateProgressBar(videoProgress.querySelector('.progress-fill'), progressValue);
-        }
+    }
+    else if (status === 'ERROR' || status === 'FAILURE') {
+        console.log('Status is ERROR or FAILURE, showing error message');
+        // Stop polling and show error
+        clearInterval(statusCheckInterval);
+        statusCheckInterval = null;
         
-    } catch (error) {
-        console.error('Error checking status:', error);
+        // Show error message
+        alert('An error occurred during processing. Please try again or contact support.');
+    }
+}
+
+// Update a progress bar
+function updateProgressBar(progressElement, percent) {
+    if (!progressElement) return;
+    
+    // Ensure percent is between 0 and 100
+    percent = Math.max(0, Math.min(100, percent));
+    
+    // Update the width of the progress bar
+    progressElement.style.width = `${percent}%`;
+    
+    // Update the text if there's a progress-text element
+    const progressText = progressElement.parentElement.querySelector('.progress-text');
+    if (progressText) {
+        progressText.textContent = `${Math.round(percent)}%`;
     }
 }
 
 // Display analysis results
-function displayAnalysisResults(data) {
-    console.log('Displaying analysis results with data:', JSON.stringify(data, null, 2));
+function displayAnalysisResults(statusData) {
+    // Get beat detection task data
+    const beatTask = statusData.beat_detection_task || {};
     
-    // Get beat detection task data if available
-    const beatTask = data.beat_detection_task || {};
-    console.log('Beat detection task:', JSON.stringify(beatTask, null, 2));
+    // Get stats from the beat detection task
+    const stats = getStats(beatTask);
     
-    // Only look for stats inside the beat detection task object
-    let stats = {};
-    if (beatTask && beatTask.stats) {
-        stats = beatTask.stats;
-        console.log('Found stats in beatTask.stats');
-    }
-    
-    console.log('Final stats object used:', JSON.stringify(stats, null, 2));
-    
-    // Check if we have valid stats
-    if (Object.keys(stats).length === 0) {
-        console.warn('No stats found in the beat detection task yet. This might be a race condition.');
-        console.log('Will continue polling for status updates until stats are available.');
-        // Don't return - we'll just show placeholder values and continue polling
-    }
-    
-    // Update the UI with the stats values
-    resultBpm.textContent = stats.bpm ? Number(stats.bpm).toFixed(1) : '--';
-    resultTotalBeats.textContent = stats.total_beats || '--';
-    resultDuration.textContent = stats.duration ? formatTime(stats.duration) : '--';
-    resultMeter.textContent = stats.detected_meter || '--';
-    
-    // No need to fetch beat data for visualization anymore
+    // Update result display elements
+    if (resultBpm) resultBpm.textContent = stats.bpm ? `${stats.bpm.toFixed(1)} BPM` : 'N/A';
+    if (resultTotalBeats) resultTotalBeats.textContent = stats.total_beats || 'N/A';
+    if (resultDuration) resultDuration.textContent = stats.duration ? `${stats.duration.toFixed(1)}s` : 'N/A';
+    if (resultMeter) resultMeter.textContent = stats.meter || 'N/A';
 }
 
-// Display the generated video
-function displayVideo(data) {
-    // Set video source to use the download endpoint instead of the non-existent video endpoint
-    resultVideo.src = `/download/${currentFileId}`;
-    resultVideo.load();
+// Display video
+function displayVideo(statusData) {
+    // Get video generation task data
+    const videoTask = statusData.video_generation_task || {};
     
-    // Also make sure to display the analysis results
-    // This ensures stats are shown even when coming directly to the completed video
-    displayAnalysisResults(data);
-}
-
-// Handle confirm analysis button click
-async function handleConfirmAnalysis() {
-    if (!currentFileId) return;
+    // Get video file from the task result
+    const videoFile = videoTask.result?.video_file;
     
-    try {
-        // Disable the button to prevent multiple clicks
-        const confirmButton = document.getElementById('confirm-button');
-        if (confirmButton) {
-            confirmButton.disabled = true;
-            confirmButton.textContent = 'Processing...';
-        }
+    // Update video element if we have a video file
+    if (videoFile && resultVideo) {
+        // Set the video source
+        resultVideo.src = `/download/${currentFileId}`;
+        resultVideo.load();
         
-        // Log current status for debugging
-        console.log('Attempting to confirm analysis for file:', currentFileId);
-        
-        // Now try to confirm the analysis
-        const response = await fetch(`/confirm/${currentFileId}`, {
-            method: 'POST',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        console.log('Confirmation response:', data);
-        
-        // Keep analysis section visible and also show video section
-        // Hide the generate video button to prevent multiple clicks
-        document.getElementById('analysis-buttons').classList.add('hidden');
-        // Add the with-video class to the analysis section for better styling
-        analysisSection.classList.add('with-video');
-        videoSection.classList.remove('hidden');
-        videoProgress.classList.remove('hidden');
-        videoResults.classList.add('hidden');
-        
-        // Start polling for status updates
-        startStatusPolling();
-        
-    } catch (error) {
-        console.error('Error confirming analysis:', error);
-        alert(`Error starting video generation: ${error.message}`);
-        
-        // Re-enable the button
-        const confirmButton = document.getElementById('confirm-button');
-        if (confirmButton) {
-            confirmButton.disabled = false;
-            confirmButton.textContent = 'Generate Video';
+        // Update download link
+        const downloadLink = document.getElementById('download-link');
+        if (downloadLink) {
+            downloadLink.href = `/download/${currentFileId}`;
         }
     }
 }
 
-// Handle cancel analysis button click
-async function handleCancelAnalysis() {
-    if (!currentFileId) return;
+// Extract stats from beat detection task
+function getStats(beatTask) {
+    const stats = {};
+    console.log('Beat task:', beatTask);
     
-    if (confirm('Are you sure you want to cancel? This will delete the current analysis.')) {
-        try {
-            const response = await fetch(`/cancel/${currentFileId}`, {
-                method: 'POST'
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! Status: ${response.status}`);
-            }
-            
-            // Redirect to home page
-            window.location.href = '/';
-            
-        } catch (error) {
-            console.error('Error canceling analysis:', error);
-            alert('Error canceling analysis. Please try again.');
-        }
+    // Check if we have a result
+    if (beatTask && beatTask.result && beatTask.result.stats) {
+        return beatTask.result.stats;
     }
-}
-
-// Download button converted to a standard link - function no longer needed
-
-// Handle restart button click
-function handleRestart() {
-    // Redirect to home page
-    window.location.href = '/';
-}
-
-// Format seconds to MM:SS
-function formatTime(seconds) {
-    if (typeof seconds !== 'number') return '--:--';
     
-    const minutes = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    return stats;
 }
 
-// Update progress bar with percentage
-function updateProgressBar(progressElement, percentage) {
-    if (progressElement && typeof percentage === 'number') {
-        // Ensure percentage is between 0 and 100
-        const validPercentage = Math.min(100, Math.max(0, percentage));
-        progressElement.style.width = `${validPercentage}%`;
-    }
-}
-
-// Initialize the application when the DOM is loaded
-document.addEventListener('DOMContentLoaded', init);
+// ... rest of the existing code ...

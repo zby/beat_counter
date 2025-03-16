@@ -23,13 +23,18 @@ class MetadataStorage(ABC):
         pass
     
     @abstractmethod
-    def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
+    async def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
         """Get metadata for all files."""
         pass
 
     @abstractmethod
     def delete_metadata(self, file_id: str) -> bool:
         """Delete metadata for a specific file."""
+        pass
+
+    @abstractmethod
+    async def get_file_status(self, file_id: str, executor: 'TaskExecutor') -> Dict[str, Any]:
+        """Get the processing status for a file."""
         pass
 
 class TaskExecutor(ABC):
@@ -49,6 +54,12 @@ class TaskExecutor(ABC):
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
         """Get status of a task."""
         pass
+
+class FileNotFoundError(Exception):
+    """Exception raised when a file is not found in the storage."""
+    def __init__(self, file_id: str):
+        self.file_id = file_id
+        super().__init__(f"File with ID {file_id} not found.")
 
 class RedisMetadataStorage(MetadataStorage):
     """Redis implementation of metadata storage."""
@@ -70,8 +81,8 @@ class RedisMetadataStorage(MetadataStorage):
         """Get the Redis key for a file ID."""
         return f"{self.prefix}{file_id}"
 
-    async def get_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
-        """Get metadata for a specific file."""
+    def _get_metadata_sync(self, file_id: str) -> Optional[Dict[str, Any]]:
+        """Synchronous version of get_metadata for internal use."""
         try:
             redis_key = self._get_key(file_id)
             metadata_json = self.client.get(redis_key)
@@ -83,12 +94,16 @@ class RedisMetadataStorage(MetadataStorage):
             logger.error(f"Error getting metadata from Redis: {e}")
             return None
 
+    async def get_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
+        """Get metadata for a specific file."""
+        return self._get_metadata_sync(file_id)
+
     def update_metadata(self, file_id: str, metadata: Dict[str, Any]) -> None:
         """Update metadata for a specific file."""
         try:
             redis_key = self._get_key(file_id)
             # Get existing metadata or initialize empty dict
-            existing = self.get_metadata(file_id) or {}
+            existing = self._get_metadata_sync(file_id) or {}
             
             # Deep update the metadata
             self._deep_update(existing, metadata)
@@ -99,7 +114,7 @@ class RedisMetadataStorage(MetadataStorage):
             logger.error(f"Error updating metadata in Redis: {e}")
             raise
 
-    def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
+    async def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
         """Get metadata for all files."""
         try:
             all_metadata = {}
@@ -107,7 +122,7 @@ class RedisMetadataStorage(MetadataStorage):
             # Get all keys matching the file metadata prefix
             for key in self.client.keys(f"{self.prefix}*"):
                 file_id = key.replace(self.prefix, '')
-                metadata = self.get_metadata(file_id)
+                metadata = await self.get_metadata(file_id)
                 if metadata:
                     all_metadata[file_id] = metadata
             
@@ -133,6 +148,52 @@ class RedisMetadataStorage(MetadataStorage):
             else:
                 target[key] = value
 
+    async def get_file_status(self, file_id: str, executor: 'TaskExecutor') -> Dict[str, Any]:
+        """Get the processing status for a file."""
+        metadata = await self.get_metadata(file_id)
+        if not metadata:
+            raise FileNotFoundError(file_id)
+
+        # Get task statuses
+        beat_task_id = metadata.get("beat_detection")
+        video_task_id = metadata.get("video_generation")
+
+        status_data = {
+            "file_id": file_id,
+            "filename": metadata.get("filename"),
+            "file_path": metadata.get("file_path")
+        }
+
+        # Determine overall status based on task states
+        overall_status = "UNKNOWN"
+
+        if beat_task_id:
+            beat_task_status = executor.get_task_status(beat_task_id)
+            status_data["beat_detection_task"] = beat_task_status
+
+            if beat_task_status["state"] == "SUCCESS":
+                overall_status = "ANALYZED"
+            elif beat_task_status["state"] == "FAILURE":
+                overall_status = "FAILED"
+            else:
+                overall_status = "ANALYZING"
+
+        if video_task_id:
+            video_task_status = executor.get_task_status(video_task_id)
+            status_data["video_generation_task"] = video_task_status
+
+            if video_task_status["state"] == "SUCCESS":
+                overall_status = "COMPLETED"
+            elif video_task_status["state"] == "FAILURE":
+                overall_status = "FAILED"
+            else:
+                overall_status = "GENERATING_VIDEO"
+
+        # Add overall status to response
+        status_data["status"] = overall_status
+
+        return status_data
+
 class CeleryTaskExecutor(TaskExecutor):
     """Celery implementation of task executor."""
     def __init__(self):
@@ -147,8 +208,13 @@ class CeleryTaskExecutor(TaskExecutor):
         return self.generate_video_task.delay(file_id, file_path, beats_file)
     
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
+        """Get the status of a task."""
         from celery.result import AsyncResult
-        return AsyncResult(task_id)
+        task_result = AsyncResult(task_id)
+        return {
+            "state": task_result.state,
+            "result": task_result.result if task_result.ready() else None
+        }
 
 class TaskStatusManager:
     """Class to manage task status retrieval."""
@@ -264,7 +330,7 @@ class TaskStatusManager:
             
             # Add the Celery state - this is the only status we need
             task_metadata["state"] = TaskStatusManager.get_attribute(task_result, "state")
-                
+
             return task_metadata
             
         except Exception as e:

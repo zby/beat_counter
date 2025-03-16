@@ -2,11 +2,12 @@
 
 import os
 import pathlib
-from typing import Generator, Tuple
+from typing import Generator, Tuple, Optional
 import pytest
 from fastapi.testclient import TestClient
 from web_app.app import create_app
 from web_app.test_storage import MockMetadataStorage, MockTaskExecutor, MockTask
+import uuid
 
 # Test data
 TEST_FILES = [
@@ -147,7 +148,8 @@ def test_file_not_found(test_client: TestClient):
     """Test handling of non-existent files."""
     response = test_client.get("/status/nonexistent")
     assert response.status_code == 404
-    assert "File not found" in response.json()["detail"]
+    # Check if the file ID is in the error message
+    assert "nonexistent" in response.json()["detail"]
 
 @pytest.mark.asyncio
 async def test_confirm_analysis_success(
@@ -205,11 +207,11 @@ async def test_confirm_analysis_not_ready(
     response = test_client.post(f"/confirm/{file_id}")
     
     assert response.status_code == 400
-    assert "File has not been analyzed yet" in response.json()["detail"]
+    assert "Beat detection not completed" in response.json()["detail"]
 
 @pytest.mark.parametrize("status,expected_status", [
     ("COMPLETED", 404),  # File exists but video doesn't
-    ("PROCESSING", 400), # Video not ready
+    ("ANALYZING", 400), # Video not ready
     (None, 404),         # File doesn't exist
 ])
 def test_download_video(
@@ -220,21 +222,158 @@ def test_download_video(
     expected_status: int
 ):
     """Test video download with various states."""
-    file_id = "test_file"
-    if status is not None:
-        # Create a mock task
-        task = mock_executor._create_task()
-        if status == "PROCESSING":
-            task.set_state("STARTED")
-        else:
-            # For COMPLETED status, set a success state but without a video file
-            task.set_state("SUCCESS", {"result": "success"})
-        
-        mock_storage.update_metadata(file_id, {
-            "filename": "test.mp3",
-            "status": status,
-            "video_generation": task.id
-        })
+    # Create a file with the given status
+    file_id = str(uuid.uuid4())
     
+    if status is None:
+        # Don't create any metadata for this case
+        pass
+    else:
+        metadata = {"filename": "test.mp3", "file_path": "/tmp/test.mp3"}
+        mock_storage.update_metadata(file_id, metadata)
+        
+        # Create a beat detection task with the appropriate state
+        if status == "COMPLETED":
+            # Create and set up beat detection task
+            beat_task = mock_executor._create_task()
+            beat_task.set_state("SUCCESS")
+            metadata["beat_detection"] = beat_task.id
+            
+            # Create and set up video generation task
+            video_task = mock_executor._create_task()
+            # Set a non-existent video file path to trigger a 404
+            video_task.set_state("SUCCESS", {"video_file": "/non/existent/path/video.mp4"})
+            metadata["video_generation"] = video_task.id
+            
+            # Update metadata with both tasks
+            mock_storage.update_metadata(file_id, metadata)
+        elif status == "ANALYZING":
+            beat_task = mock_executor.execute_beat_detection(file_id, "/tmp/test.mp3")
+            beat_task.set_state("STARTED")
+    
+    # Try to download the video
     response = test_client.get(f"/download/{file_id}")
-    assert response.status_code == expected_status 
+    assert response.status_code == expected_status
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("beat_state,video_state,expected_status", [
+    (None, None, "UNKNOWN"),  # No tasks
+    ("STARTED", None, "ANALYZING"),  # Beat detection in progress
+    ("SUCCESS", None, "ANALYZED"),  # Beat detection completed
+    ("SUCCESS", "STARTED", "GENERATING_VIDEO"),  # Video generation in progress
+    ("SUCCESS", "SUCCESS", "COMPLETED"),  # All completed
+    ("FAILURE", None, "FAILED"),  # Beat detection failed
+    ("SUCCESS", "FAILURE", "FAILED"),  # Video generation failed
+])
+async def test_get_file_status_overall_status(
+    test_client: TestClient,
+    mock_storage: MockMetadataStorage,
+    mock_executor: MockTaskExecutor,
+    beat_state: Optional[str],
+    video_state: Optional[str],
+    expected_status: str
+):
+    """Test that get_file_status returns the correct overall status."""
+    # Setup
+    file_id = "test_file"
+    metadata = {
+        "filename": "test.mp3",
+        "file_path": "/path/to/test.mp3"
+    }
+    
+    if beat_state:
+        beat_task = mock_executor._create_task()
+        beat_task.set_state(beat_state)
+        metadata["beat_detection"] = beat_task.id
+    
+    if video_state:
+        video_task = mock_executor._create_task()
+        video_task.set_state(video_state)
+        metadata["video_generation"] = video_task.id
+    
+    mock_storage.update_metadata(file_id, metadata)
+    
+    # Get status
+    response = test_client.get(f"/status/{file_id}")
+    
+    # Verify response
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == expected_status
+    
+    # Verify task states are included
+    if beat_state:
+        assert "beat_detection_task" in data
+        assert data["beat_detection_task"]["state"] == beat_state
+    
+    if video_state:
+        assert "video_generation_task" in data
+        assert data["video_generation_task"]["state"] == video_state
+
+@pytest.mark.parametrize("beat_state,video_state,expected_status", [
+    ("SUCCESS", None, 200),  # Only beat detection completed
+    ("PENDING", None, 200),  # Beat detection pending
+    ("SUCCESS", "SUCCESS", 200),  # Both tasks completed
+    ("SUCCESS", "PENDING", 200),  # Video generation in progress
+    (None, None, 404),  # File not found
+])
+async def test_file_page_status(
+    test_client: TestClient,
+    mock_storage: MockMetadataStorage,
+    mock_executor: MockTaskExecutor,
+    beat_state: str,
+    video_state: str,
+    expected_status: int
+):
+    """Test the file page endpoint with various task states."""
+    file_id = "test_file_id"
+    
+    if beat_state is not None:
+        # Create metadata with beat detection task
+        beat_task = mock_executor._create_task()
+        metadata = {
+            "filename": "test.mp3",
+            "file_path": "/path/to/test.mp3",
+            "beat_detection": beat_task.id
+        }
+        
+        # Set up beat detection task state
+        beat_task.set_state(beat_state, {"beats_file": "beats.json"} if beat_state == "SUCCESS" else None)
+        
+        if video_state is not None:
+            # Add video generation task
+            video_task = mock_executor._create_task()
+            metadata["video_generation"] = video_task.id
+            video_task.set_state(video_state, {"video_file": "video.mp4"} if video_state == "SUCCESS" else None)
+        
+        # Store metadata
+        mock_storage.update_metadata(file_id, metadata)
+    
+    # Make request to file page
+    response = test_client.get(f"/file/{file_id}")
+    
+    if expected_status == 404:
+        # For 404 cases, we should get a JSON error response
+        assert response.status_code == 404
+        # Check if the file ID is in the error message
+        assert "test_file_id" in response.json()["detail"]
+    else:
+        assert response.status_code == expected_status
+        
+        # Get response content
+        response_html = response.text
+        
+        # Verify basic file information is present in the HTML
+        assert file_id in response_html
+        assert "test.mp3" in response_html
+        
+        # Verify task status information is present
+        if beat_state is not None:
+            assert beat_state in response_html
+            if beat_state == "SUCCESS":
+                assert "beats.json" in response_html
+        
+        if video_state is not None:
+            assert video_state in response_html
+            if video_state == "SUCCESS":
+                assert "video.mp4" in response_html 

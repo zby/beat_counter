@@ -142,9 +142,8 @@ def create_app(
                 "task_id": task.id,
                 "task_type": "beat_detection"
             }
-        
-        # For non-AJAX requests, always return a redirect
-        return RedirectResponse(url=f"/file/{file_id}", status_code=303)
+        else:
+            return RedirectResponse(url=f"/file/{file_id}", status_code=303)
 
     @app.get("/status/{file_id}")
     async def get_file_status(
@@ -154,32 +153,14 @@ def create_app(
     ):
         """Get the processing status for a file."""
         try:
-            metadata = await storage.get_metadata(file_id)
-            if not metadata:
-                raise HTTPException(status_code=404, detail="File not found")
-            
-            # Get task statuses
-            beat_task_id = metadata.get("beat_detection")
-            video_task_id = metadata.get("video_generation")
-            
-            status_data = {
-                "file_id": file_id,
-                "filename": metadata.get("filename"),
-                "file_path": metadata.get("file_path")
-            }
-            
-            if beat_task_id:
-                beat_task_status = executor.get_task_status(beat_task_id)
-                status_data["beat_detection_task"] = beat_task_status
-            
-            if video_task_id:
-                video_task_status = executor.get_task_status(video_task_id)
-                status_data["video_generation_task"] = video_task_status
-            
+            # Use the new get_file_status method from storage
+            status_data = await storage.get_file_status(file_id, executor)
             return status_data
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:
             logger.error(f"Error getting file status: {e}")
-            raise HTTPException(status_code=404, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal Server Error")
 
     @app.get("/processing_queue", response_class=HTMLResponse)
     async def get_processing_queue(
@@ -189,7 +170,7 @@ def create_app(
     ):
         """Get the list of files currently in processing."""
         # Get all file metadata
-        all_metadata = storage.get_all_metadata()
+        all_metadata = await storage.get_all_metadata()
         
         # Process each file's metadata to create a list of files with their status
         files_with_status = []
@@ -257,7 +238,7 @@ def create_app(
         
         beat_task_status = executor.get_task_status(beat_task_id)
         if beat_task_status["state"] != "SUCCESS":
-            raise HTTPException(status_code=400, detail="File has not been analyzed yet")
+            raise HTTPException(status_code=400, detail="Beat detection not completed")
         
         # Get required file paths
         file_path = metadata.get("file_path")
@@ -287,9 +268,8 @@ def create_app(
                 "task_id": task.id,
                 "task_type": "video_generation"
             }
-        
-        # For non-AJAX requests, always return a redirect
-        return RedirectResponse(url=f"/file/{file_id}", status_code=303)
+        else:
+            return RedirectResponse(url=f"/file/{file_id}", status_code=303)
 
     @app.get("/file/{file_id}")
     async def file_page(
@@ -300,28 +280,9 @@ def create_app(
     ):
         """Render the file view page."""
         try:
-            metadata = await storage.get_metadata(file_id)
-            if not metadata:
-                raise HTTPException(status_code=404, detail="File not found")
-            
-            # Get task statuses
-            beat_task_id = metadata.get("beat_detection")
-            video_task_id = metadata.get("video_generation")
-            
-            file_status = {
-                "file_id": file_id,
-                "filename": metadata.get("filename"),
-                "file_path": metadata.get("file_path")
-            }
-            
-            if beat_task_id:
-                beat_task_status = executor.get_task_status(beat_task_id)
-                file_status["beat_detection_task"] = beat_task_status
-            
-            if video_task_id:
-                video_task_status = executor.get_task_status(video_task_id)
-                file_status["video_generation_task"] = video_task_status
-            
+            # Use the new get_file_status method from storage
+            file_status = await storage.get_file_status(file_id, executor)
+
             return templates.TemplateResponse(
                 "file_view.html",
                 {
@@ -330,6 +291,8 @@ def create_app(
                     "file_status": file_status
                 }
             )
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:
             logger.error(f"Error getting file status: {e}")
             raise HTTPException(status_code=500, detail="Internal Server Error")
@@ -347,7 +310,7 @@ def create_app(
         
         video_task_id = metadata.get("video_generation")
         if not video_task_id:
-            raise HTTPException(status_code=404, detail="No video generation task found")
+            raise HTTPException(status_code=400, detail="No video generation task found")
         
         video_task_status = executor.get_task_status(video_task_id)
         if video_task_status["state"] != "SUCCESS":
