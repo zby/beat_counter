@@ -2,7 +2,7 @@
 
 import pytest
 from typing import Any, Dict, Optional
-from web_app.storage import MetadataStorage, TaskExecutor
+from web_app.storage import MetadataStorage, TaskExecutor, FileIDNotFoundError
 
 class MockMetadataStorage(MetadataStorage):
     """In-memory implementation of metadata storage for testing."""
@@ -43,7 +43,7 @@ class MockMetadataStorage(MetadataStorage):
         """Get the processing status for a file."""
         metadata = await self.get_metadata(file_id)
         if not metadata:
-            raise FileNotFoundError(file_id)
+            raise FileIDNotFoundError(file_id)
 
         # Get task statuses
         beat_task_id = metadata.get("beat_detection")

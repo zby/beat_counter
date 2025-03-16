@@ -55,7 +55,7 @@ class TaskExecutor(ABC):
         """Get status of a task."""
         pass
 
-class FileNotFoundError(Exception):
+class FileIDNotFoundError(Exception):
     """Exception raised when a file is not found in the storage."""
     def __init__(self, file_id: str):
         self.file_id = file_id
@@ -152,7 +152,7 @@ class RedisMetadataStorage(MetadataStorage):
         """Get the processing status for a file."""
         metadata = await self.get_metadata(file_id)
         if not metadata:
-            raise FileNotFoundError(file_id)
+            raise FileIDNotFoundError(file_id)
 
         # Get task statuses
         beat_task_id = metadata.get("beat_detection")

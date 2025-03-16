@@ -118,7 +118,6 @@ def detect_beats_task(
     
     # Update task state to started with comprehensive metadata
     self.update_state(state=states.STARTED, meta={
-        'status': 'analyzing',
         'file_id': file_id,
         'file_path': file_path,
         'progress': {
@@ -167,7 +166,6 @@ def detect_beats_task(
                 
                 # Update task state with comprehensive metadata
                 self.update_state(state=states.STARTED, meta={
-                    'status': 'analyzing',
                     'file_id': file_id,
                     'file_path': file_path,
                     'progress': {
@@ -266,8 +264,6 @@ def detect_beats_task(
             # This will be stored in Celery's result backend and accessible
             # via AsyncResult
             return {
-                # Use 'analyzed' instead of 'success' for consistency
-                "status": "analyzed",
                 "file_id": file_id,
                 "file_path": file_path,
                 "beats_file": str(beats_file),
@@ -315,13 +311,12 @@ def detect_beats_task(
             
             # Update task state with error information
             self.update_state(state=states.FAILURE, meta={
-                'status': 'error',
-                'file_id': file_id,
-                'file_path': file_path,
-                'error': str(e),
-                'beat_detection_output': {
-                    'stdout': current_stdout,
-                    'stderr': current_stderr
+                "file_id": file_id,
+                "file_path": file_path,
+                "error": str(e),
+                "beat_detection_output": {
+                    "stdout": current_stdout,
+                    "stderr": current_stderr
                 }
             })
             
@@ -366,7 +361,6 @@ def generate_video_task(
     
     # Update task state to started with comprehensive metadata
     self.update_state(state=states.STARTED, meta={
-        'status': 'generating_video',
         'file_id': file_id,
         'file_path': file_path,
         'beats_file': beats_file,
@@ -416,7 +410,6 @@ def generate_video_task(
                 
                 # Update task state with comprehensive metadata
                 self.update_state(state=states.STARTED, meta={
-                    'status': 'generating_video',
                     'file_id': file_id,
                     'file_path': file_path,
                     'beats_file': beats_file,
@@ -521,9 +514,9 @@ def generate_video_task(
 
                     # Return success result
                     return {
-                        'status': 'success',
                         'file_id': file_id,
                         'file_path': file_path,
+                        'beats_file': beats_file,
                         'video_file': str(video_file),
                         'progress': {
                             'status': 'Video generation complete',
@@ -564,9 +557,10 @@ def generate_video_task(
 
                     # Return warning result
                     return {
-                        'status': 'warning',
                         'file_id': file_id,
                         'file_path': file_path,
+                        'beats_file': beats_file,
+                        'video_file': str(video_file),
                         'warning': warning_msg,
                         'progress': {
                             'status': 'Video generation completed with warnings',
@@ -627,7 +621,6 @@ def generate_video_task(
                     
                     # Return success with warning
                     return {
-                        'status': 'completed',
                         'file_id': file_id,
                         'file_path': file_path,
                         'beats_file': beats_file,
@@ -673,7 +666,6 @@ def generate_video_task(
             
             # Update task state with error information
             self.update_state(state=states.FAILURE, meta={
-                "status": "error",
                 "file_id": file_id,
                 "file_path": file_path,
                 "beats_file": beats_file,
@@ -721,7 +713,6 @@ def generate_video_task(
         
         # Return failure result with comprehensive information
         return {
-            'status': 'error',
             'file_id': file_id,
             'file_path': file_path,
             'beats_file': beats_file,

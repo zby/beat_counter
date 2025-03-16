@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 
 # Local imports
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from web_app.storage import MetadataStorage, TaskExecutor, RedisMetadataStorage, CeleryTaskExecutor
+from web_app.storage import MetadataStorage, TaskExecutor, RedisMetadataStorage, CeleryTaskExecutor, FileIDNotFoundError
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -156,7 +156,7 @@ def create_app(
             # Use the new get_file_status method from storage
             status_data = await storage.get_file_status(file_id, executor)
             return status_data
-        except FileNotFoundError as e:
+        except FileIDNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:
             logger.error(f"Error getting file status: {e}")
@@ -291,7 +291,8 @@ def create_app(
                     "file_status": file_status
                 }
             )
-        except FileNotFoundError as e:
+        except FileIDNotFoundError as e:
+            # Return a 404 not found response using the HTTPException handler
             raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:
             logger.error(f"Error getting file status: {e}")
@@ -338,6 +339,7 @@ def create_app(
         state = task_status.get("state", "UNKNOWN").upper()
         result = task_status.get("result")
         
+        # Format response based on Celery task state
         if state == "PENDING":
             response = {
                 "status": "pending",
@@ -349,13 +351,18 @@ def create_app(
                 "info": str(result) if result else "Task is running"
             }
         elif state == "SUCCESS":
+            # Check for result progress info, if available
+            progress_status = None
+            if isinstance(result, dict) and "progress" in result:
+                progress = result.get("progress", {})
+                if isinstance(progress, dict) and "status" in progress:
+                    progress_status = progress["status"]
+            
             response = {
                 "status": "success",
+                "progress_status": progress_status,
                 "result": result
             }
-            # If the result has its own status field, use it
-            if isinstance(result, dict) and "status" in result:
-                response["status"] = result["status"]
         elif state == "FAILURE":
             response = {
                 "status": "failure",
