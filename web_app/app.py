@@ -1,48 +1,40 @@
 #!/usr/bin/env python3
-"""
-Beat Detection Web Application
+"""Beat Detection Web Application.
 
 This web application allows users to upload audio files, analyze them for beats,
 and generate visualization videos marking each beat.
 """
 
+# Standard library imports
+import logging
 import os
-import tempfile
 import pathlib
 import shutil
-import time
-import io
-import contextlib
-import sys
-import logging
-from datetime import datetime
-from typing import List, Optional, Dict, Any, Tuple
 import uuid
+from datetime import datetime
+from typing import Optional
+
+import uvicorn
+
+# Third-party imports
+from celery.result import AsyncResult
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+# Local imports
+from beat_detection.utils.constants import AUDIO_EXTENSIONS
+from web_app.metadata import (
+    get_all_file_metadata,
+    get_status,
+    update_file_metadata,
+)
+from web_app.tasks import detect_beats_task
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from celery.result import AsyncResult
-import uvicorn
-
-# Import Redis-based metadata storage
-from web_app.metadata import (
-    update_file_metadata,
-    get_all_file_metadata,
-    delete_file_metadata,
-    get_status
-)
-
-from beat_detection.core.detector import BeatDetector
-from beat_detection.utils import file_utils, reporting
-from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from beat_detection.utils.beat_file import load_beat_data
-from beat_detection.cli.generate_videos import generate_counter_video
 
 # Create FastAPI app
 app = FastAPI(
@@ -54,10 +46,10 @@ app = FastAPI(
 # Add custom exception handler to log HTTP exceptions with details
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions and log their details."""
     # Log the exception with its details
     logger.error(f"HTTP {exc.status_code}: {exc.detail}")
     # Return the default FastAPI HTTPException response
-    from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail}
@@ -80,9 +72,11 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# We'll use Redis-based metadata storage to store basic file information and track all tasks related to each file
-# This allows us to maintain a mapping between file_id and all its associated tasks
-# The metadata will be persistent across application restarts and shared between instances
+# We'll use Redis-based metadata storage to store basic file information
+# and track all tasks related to each file.
+# This allows us to maintain a mapping between file_id and all its associated tasks.
+# The metadata will be persistent across application restarts and shared
+# between instances.
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -92,7 +86,12 @@ async def index(request: Request):
 
 
 @app.post("/upload")
-async def upload_audio(request: Request, file: UploadFile = File(...), analyze: Optional[bool] = Form(False), generate_video: Optional[bool] = Form(False)):
+async def upload_audio(
+    request: Request,
+    file: UploadFile = File(...),
+    analyze: Optional[bool] = Form(False),
+    generate_video: Optional[bool] = Form(False),
+):
     """
     Upload an audio file for processing.
     
@@ -104,9 +103,10 @@ async def upload_audio(request: Request, file: UploadFile = File(...), analyze: 
     file_extension = pathlib.Path(filename).suffix.lower()
     
     if file_extension not in AUDIO_EXTENSIONS:
+        supported_formats = ", ".join(AUDIO_EXTENSIONS)
         raise HTTPException(
-            status_code=400, 
-            detail=f"Unsupported file format. Supported formats: {', '.join(AUDIO_EXTENSIONS)}"
+            status_code=400,
+            detail=f"Unsupported file format. Supported formats: {supported_formats}"
         )
     
     # Generate a unique ID for this upload
@@ -124,16 +124,17 @@ async def upload_audio(request: Request, file: UploadFile = File(...), analyze: 
     
     # Store only minimal required file information in Redis
     # Status is now derived from task metadata, so we don't store it here
-    update_file_metadata(file_id, {
+    metadata = {
         "filename": filename,
         "original_filename": filename,  # Store original filename for reference
         "file_path": str(file_path),
         "upload_time": datetime.now().isoformat()
-        # Task IDs will be stored by name (beat_detection, video_generation) when tasks are created
-    })
+        # Task IDs will be stored by name (beat_detection, video_generation)
+        # when tasks are created
+    }
+    update_file_metadata(file_id, metadata)
     
     # Automatically start beat detection after upload
-    from web_app.tasks import detect_beats_task
     task = detect_beats_task.delay(file_id, str(file_path))
     
     # Update metadata in Redis with the beat detection task ID
@@ -141,20 +142,29 @@ async def upload_audio(request: Request, file: UploadFile = File(...), analyze: 
         "beat_detection": task.id  # Store task ID by name
     })
     
-    logger.info(f"Automatically started beat detection for file {file_id}, task ID: {task.id}")
+    logger.info(
+        f"Automatically started beat detection for file {file_id}, "
+        f"task ID: {task.id}"
+    )
     
     # Check if this is an AJAX request or a traditional form submission
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     
     if is_ajax:
         # For AJAX requests, return JSON response with task information
-        return {"file_id": file_id, "filename": filename, "task_id": task.id, "task_type": "beat_detection"}
+        return {
+            "file_id": file_id,
+            "filename": filename,
+            "task_id": task.id,
+            "task_type": "beat_detection"
+        }
     else:
         # For traditional form submissions, redirect to the file page
         return RedirectResponse(url=f"/file/{file_id}", status_code=303)
 
 
-# The analyze_audio endpoint has been removed since beat detection now starts automatically after upload
+# The analyze_audio endpoint has been removed since beat detection now starts
+# automatically after upload
 
 @app.get("/status/{file_id}")
 async def get_file_status(file_id: str):
@@ -232,12 +242,18 @@ async def confirm_analysis(request: Request, file_id: str):
     beats_file = beat_task.get("beats_file")
 
     if not file_path or not beats_file:
-        raise HTTPException(status_code=400, detail="Required file paths not found in state")
+        raise HTTPException(
+            status_code=400,
+            detail="Required file paths not found in state"
+        )
     
     # Check if there's an existing video generation task
     existing_video_task_id = current_status.get("video_generation_task", {}).get("id")
     if existing_video_task_id:
-        logger.info(f"Found existing video generation task: {existing_video_task_id}. Creating a new one.")
+        logger.info(
+            f"Found existing video generation task: {existing_video_task_id}. "
+            "Creating a new one."
+        )
     
     # Start a new Celery task for video generation
     from web_app.tasks import generate_video_task
@@ -256,7 +272,12 @@ async def confirm_analysis(request: Request, file_id: str):
     
     if is_ajax:
         # For AJAX requests, return JSON response with task ID and type
-        return {"status": "generating_video", "file_id": file_id, "task_id": task.id, "task_type": "video_generation"}
+        return {
+            "status": "generating_video",
+            "file_id": file_id,
+            "task_id": task.id,
+            "task_type": "video_generation"
+        }
     else:
         # For traditional form submissions, redirect back to the file view page
         return RedirectResponse(url=f"/file/{file_id}", status_code=303)
@@ -270,8 +291,9 @@ async def file_page(request: Request, file_id: str):
     """
     Render the file view page for a specific file at any stage of processing.
     
-    This single route handles all file states (analyzing, analyzed, video_generation, completed).
-    The frontend JavaScript will determine what to display based on the file's status.
+    This single route handles all file states (analyzing, analyzed,
+    video_generation, completed). The frontend JavaScript will determine
+    what to display based on the file's status.
     """
     # Get the current status of the file from task metadata
     try:
@@ -316,12 +338,14 @@ async def download_video(file_id: str):
     )
 
 
-# These functions have been moved to the Celery task system where output capturing is now handled
+# These functions have been moved to the Celery task system where output
+# capturing is now handled
 
-# This function has been moved to the Celery task system (detect_beats_task in tasks.py)
+# This function has been moved to the Celery task system
+# (detect_beats_task in tasks.py)
 
-
-# This function has been moved to the Celery task system (generate_video_task in tasks.py)
+# This function has been moved to the Celery task system
+# (generate_video_task in tasks.py)
 
 
 
@@ -333,10 +357,7 @@ def main():
 
 @app.get("/task/{task_id}")
 async def get_task_status(task_id: str):
-    """
-    Get the status of a Celery task.
-    """
-    from celery.result import AsyncResult
+    """Get the status of a Celery task."""
     task_result = AsyncResult(task_id)
     
     # Get task status
