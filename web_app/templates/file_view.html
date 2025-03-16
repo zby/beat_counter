@@ -97,13 +97,24 @@
         </footer>
     </div>
 
+    <!-- Pass data from backend to frontend using data attributes -->
+    <div id="app-data" 
+         data-file-info='{{ {"fileId": file_id, "status": file_status} | tojson | safe }}'
+         data-beat-detection='{{ file_status.get("beat_detection_task", {}) | tojson | safe }}'
+         data-video-generation='{{ file_status.get("video_generation_task", {}) | tojson | safe }}'>
+    </div>
+    
     <script>
-        // Pass file information from the backend to the frontend
-        window.initialFileData = JSON.parse('{{ {"fileId": file_id, "status": file_status} | tojson }}');
+        // Extract data from data attributes
+        var dataElement = document.getElementById('app-data');
+        var fileInfo = JSON.parse(dataElement.getAttribute('data-file-info'));
+        var beatDetectionTask = JSON.parse(dataElement.getAttribute('data-beat-detection'));
+        var videoGenerationTask = JSON.parse(dataElement.getAttribute('data-video-generation'));
         
-        // Log task information for debugging
-        console.log('Beat Detection Task:', JSON.parse('{{ file_status.get("beat_detection_task", {}) | tojson }}'));
-        console.log('Video Generation Task:', JSON.parse('{{ file_status.get("video_generation_task", {}) | tojson }}'));
+        // Set global variables and log for debugging
+        window.initialFileData = fileInfo;
+        console.log('Beat Detection Task:', beatDetectionTask);
+        console.log('Video Generation Task:', videoGenerationTask);
     </script>
     <script src="{{ url_for('static', path='/js/file_view.js') }}"></script>
 </body>

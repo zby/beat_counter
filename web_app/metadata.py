@@ -352,6 +352,9 @@ def update_task_status_with_output(task_status: Dict[str, Any], task_data: Dict[
         task_status["output"] = output_data
 
 
+
+
+
 def process_success_state(task_status: Dict[str, Any], task_result: object, task_type: str) -> None:
     """
     Process a successful task result and update task_status.
@@ -367,30 +370,24 @@ def process_success_state(task_status: Dict[str, Any], task_result: object, task
     """
     # Get the task result data
     result = TaskResultManager.extract_task_data(task_result)
-    
-    # For beat detection tasks
-    if task_type == 'beat_detection' and result:
-        if "beats_file" in result:
-            task_status["beats_file"] = result["beats_file"]
-            task_status["file_path"] = result.get("file_path")
-            
-            # Add beat statistics if available
-            if "stats" in result:
-                task_status["stats"] = result["stats"]
-    
-    # For video generation tasks
-    elif task_type == 'video_generation' and result:
+    if not result:
+        return
+        
+    # Task-specific fields
+    if task_type == 'beat_detection':
+        # Add beat statistics if available
+        if "stats" in result:
+            task_status["stats"] = result["stats"]
+    elif task_type == 'video_generation':
         if "video_file" in result:
             task_status["video_file"] = result["video_file"]
     
     # Common fields for both task types
-    if result:
-        # Add any warning if present
-        if "warning" in result:
-            task_status["warning"] = result["warning"]
-            
-        # Extract stdout/stderr output if available
-        update_task_status_with_output(task_status, result, task_type)
+    if "warning" in result:
+        task_status["warning"] = result["warning"]
+        
+    # Extract stdout/stderr output if available
+    update_task_status_with_output(task_status, result, task_type)
 
 
 def process_progress_state(task_status: Dict[str, Any], task_result: object, task_type: str) -> None:
@@ -408,22 +405,15 @@ def process_progress_state(task_status: Dict[str, Any], task_result: object, tas
     """
     # Get the task info data
     task_info_data = TaskResultManager.extract_task_data(task_result, 'info')
+    if not task_info_data:
+        return
+        
+    # Include progress information if available
+    if "progress" in task_info_data:
+        task_status["progress"] = task_info_data["progress"]
     
-    if task_info_data:
-        # Include progress information
-        if "progress" in task_info_data:
-            task_status["progress"] = task_info_data["progress"]
-        
-        # Include file paths if available
-        if "file_path" in task_info_data:
-            task_status["file_path"] = task_info_data["file_path"]
-        
-        # For beat detection tasks
-        if task_type == 'beat_detection' and "beats_file" in task_info_data:
-            task_status["beats_file"] = task_info_data["beats_file"]
-        
-        # Extract stdout/stderr output if available
-        update_task_status_with_output(task_status, task_info_data, task_type)
+    # Extract stdout/stderr output if available
+    update_task_status_with_output(task_status, task_info_data, task_type)
 
 
 def process_failure_state(task_status: Dict[str, Any], task_result: object) -> None:
@@ -442,7 +432,7 @@ def process_failure_state(task_status: Dict[str, Any], task_result: object) -> N
     error_msg = str(error_result) if error_result else "Unknown error"
     task_status["error"] = error_msg
 
-async def get_beat_detection_status(beat_detection_task_id: str) -> Tuple[Dict[str, Any], Optional[object]]:
+async def get_beat_detection_status(beat_detection_task_id: str) -> Dict[str, Any]:
     """
     Get the status of a beat detection task.
     
@@ -453,38 +443,49 @@ async def get_beat_detection_status(beat_detection_task_id: str) -> Tuple[Dict[s
         
     Returns:
     --------
-    Tuple[Dict[str, Any], Optional[AsyncResult]]
-        A tuple containing the task status dictionary and the AsyncResult object
+    Dict[str, Any]
+        The task metadata dictionary with essential fields
     """
-    # Create a basic task status object with just the essential information
-    task_status = {
-        "id": beat_detection_task_id,
-        "type": "beat_detection",
-        "status": "UNKNOWN"
-    }
-    
-    # Create AsyncResult and get state
+    # Create AsyncResult
     task_result = TaskResultManager.create_async_result(beat_detection_task_id)
     if not task_result:
-        return task_status, None
+        # Return minimal information if task result cannot be created
+        return {
+            "id": beat_detection_task_id,
+            "type": "beat_detection",
+            "state": "UNKNOWN"
+        }
     
-    # Get task state
-    state = TaskResultManager.get_attribute(task_result, "state")
-    if state:
-        task_status["status"] = state.upper()
-    
-    # Process different states
-    if task_status["status"] == 'SUCCESS':
-        process_success_state(task_status, task_result, "beat_detection")
-    elif task_status["status"] in ['STARTED', 'PROGRESS']:
-        process_progress_state(task_status, task_result, "beat_detection")
-    elif task_status["status"] == 'FAILURE':
-        process_failure_state(task_status, task_result)
-    
-    return task_status, task_result
+    # Extract the raw metadata from Redis
+    try:
+        # Get the task metadata
+        task_metadata = TaskResultManager.extract_task_data(task_result)
+        
+        # Ensure the metadata is a dictionary and has basic required fields
+        if not isinstance(task_metadata, dict):
+            task_metadata = {}
+            
+        # Add essential fields if they don't exist
+        task_metadata["id"] = beat_detection_task_id
+        task_metadata["type"] = "beat_detection"
+        
+        # Add the Celery state - this is the only status we need
+        task_metadata["state"] = TaskResultManager.get_attribute(task_result, "state")
+            
+        return task_metadata
+        
+    except Exception as e:
+        logger.error(f"Error extracting beat detection metadata: {e}")
+        # Return minimal information on error
+        return {
+            "id": beat_detection_task_id,
+            "type": "beat_detection",
+            "state": "FAILURE",
+            "error": str(e)
+        }
 
 
-async def get_video_generation_status(video_task_id: str) -> Tuple[Dict[str, Any], Optional[object]]:
+async def get_video_generation_status(video_task_id: str) -> Dict[str, Any]:
     """
     Get the status of a video generation task.
     
@@ -495,35 +496,46 @@ async def get_video_generation_status(video_task_id: str) -> Tuple[Dict[str, Any
         
     Returns:
     --------
-    Tuple[Dict[str, Any], Optional[AsyncResult]]
-        A tuple containing the task status dictionary and the AsyncResult object
+    Dict[str, Any]
+        The task metadata dictionary with essential fields
     """
-    # Create a basic task status object with just the essential information
-    task_status = {
-        "id": video_task_id,
-        "type": "video_generation",
-        "status": "UNKNOWN"
-    }
-    
-    # Create AsyncResult and get state
+    # Create AsyncResult
     task_result = TaskResultManager.create_async_result(video_task_id)
     if not task_result:
-        return task_status, None
+        # Return minimal information if task result cannot be created
+        return {
+            "id": video_task_id,
+            "type": "video_generation",
+            "state": "UNKNOWN"
+        }
     
-    # Get task state
-    state = TaskResultManager.get_attribute(task_result, "state")
-    if state:
-        task_status["status"] = state.upper()
-    
-    # Process different states
-    if task_status["status"] == 'SUCCESS':
-        process_success_state(task_status, task_result, "video_generation")
-    elif task_status["status"] in ['STARTED', 'PROGRESS']:
-        process_progress_state(task_status, task_result, "video_generation")
-    elif task_status["status"] == 'FAILURE':
-        process_failure_state(task_status, task_result)
-    
-    return task_status, task_result
+    # Extract the raw metadata from Redis
+    try:
+        # Get the task metadata
+        task_metadata = TaskResultManager.extract_task_data(task_result)
+        
+        # Ensure the metadata is a dictionary and has basic required fields
+        if not isinstance(task_metadata, dict):
+            task_metadata = {}
+            
+        # Add essential fields if they don't exist
+        task_metadata["id"] = video_task_id
+        task_metadata["type"] = "video_generation"
+        
+        # Add the Celery state - this is the only status we need
+        task_metadata["state"] = TaskResultManager.get_attribute(task_result, "state")
+            
+        return task_metadata
+        
+    except Exception as e:
+        logger.error(f"Error extracting video generation metadata: {e}")
+        # Return minimal information on error
+        return {
+            "id": video_task_id,
+            "type": "video_generation",
+            "state": "FAILURE",
+            "error": str(e)
+        }
 
 
 async def get_status(file_id: str) -> Dict[str, Any]:
@@ -565,88 +577,62 @@ async def get_status(file_id: str) -> Dict[str, Any]:
     beat_detection_task_id = file_info.get("beat_detection") or file_info.get("beat_detection_task_id")
     video_task_id = file_info.get("video_generation") or file_info.get("video_generation_task_id")
     
-    # Process each task and add its status to the response
-    latest_beat_detection_task = None
-    latest_video_generation_task = None
+    # Process each task and add its metadata to the response
+    beat_detection_metadata = None
+    video_generation_metadata = None
     
     # Process beat detection task if it exists
     if beat_detection_task_id:
-        task_status, task_result = await get_beat_detection_status(beat_detection_task_id)
-        latest_beat_detection_task = task_result
-        status_data["beat_detection_task"] = task_status
+        beat_detection_metadata = await get_beat_detection_status(beat_detection_task_id)
+        status_data["beat_detection_task"] = beat_detection_metadata
     
     # Process video generation task if it exists
     if video_task_id:
-        task_status, task_result = await get_video_generation_status(video_task_id)
-        latest_video_generation_task = task_result
-        status_data["video_generation_task"] = task_status
+        video_generation_metadata = await get_video_generation_status(video_task_id)
+        status_data["video_generation_task"] = video_generation_metadata
     
     # Now derive the overall file status from the tasks
     # Priority: video generation > beat detection
-    if latest_video_generation_task:
+    if video_generation_metadata:
         try:
-            # Get the task state and ensure consistent case comparison
-            task_state = latest_video_generation_task.state
+            # Get the task state from the metadata
+            task_state = video_generation_metadata.get("state")
+            
             if task_state == 'SUCCESS':
-                result = latest_video_generation_task.result
-                if result and isinstance(result, dict):
-                    status_from_result = result.get("status", "COMPLETED")
-                    status_data["status"] = status_from_result.upper() if isinstance(status_from_result, str) else "COMPLETED"
-                    if "video_file" in result:
-                        status_data["video_file"] = result["video_file"]
-                    if "file_path" in result:
-                        status_data["file_path"] = result["file_path"]
-                    if "beats_file" in result:
-                        status_data["beats_file"] = result["beats_file"]
-                    # We no longer need to copy stats or progress from either task
-                    # The frontend will look for them in the respective task objects
+                # Video generation completed successfully
+                status_data["status"] = "COMPLETED"
+                
+                # Copy video_file if available in the task metadata
+                if "video_file" in video_generation_metadata:
+                    status_data["video_file"] = video_generation_metadata["video_file"]
+                    
             elif task_state in ['STARTED', 'PROGRESS']:
                 status_data["status"] = "GENERATING_VIDEO"
-                # We don't need to copy task info to the top level
-                # The frontend will access it through video_generation_task
-                # Just keep the file_path and beats_file for backward compatibility
-                task_info = latest_video_generation_task.info
-                if task_info and isinstance(task_info, dict):
-                    if "file_path" in task_info:
-                        status_data["file_path"] = task_info["file_path"]
-                    if "beats_file" in task_info:
-                        status_data["beats_file"] = task_info["beats_file"]
+                
             elif task_state == 'FAILURE':
                 status_data["status"] = "ERROR"
-                error_result = latest_video_generation_task.result
-                error_msg = str(error_result) if error_result else "Unknown error"
-                status_data["error"] = error_msg
+                # Get error from task metadata if available
+                status_data["error"] = video_generation_metadata.get("error", "Unknown error")
         except Exception as e:
             logger.error(f"Error deriving status from video task: {e}")
     
     # If no video task or video task is not definitive, check beat detection task
-    elif latest_beat_detection_task:
+    elif beat_detection_metadata:
         try:
-            task_state = latest_beat_detection_task.state
+            # Get the task state from the metadata
+            task_state = beat_detection_metadata.get("state")
+            
             if task_state == 'SUCCESS':
                 # Always set the status to ANALYZED when beat detection completes successfully
                 status_data["status"] = "ANALYZED"
-                result = latest_beat_detection_task.result
-                if result and isinstance(result, dict):
-                    if "beats_file" in result:
-                        status_data["beats_file"] = result["beats_file"]
-                    if "file_path" in result:
-                        status_data["file_path"] = result["file_path"]
-                    # We don't need to copy stats or progress to the top level anymore
-                    # The frontend will look for them in beat_detection_task
+                
             elif task_state in ['STARTED', 'PROGRESS']:
                 status_data["status"] = "ANALYZING"
-                # We don't need to copy task info to the top level
-                # The frontend will access it through beat_detection_task
-                # Just keep the file_path for backward compatibility
-                task_info = latest_beat_detection_task.info
-                if task_info and isinstance(task_info, dict) and "file_path" in task_info:
-                    status_data["file_path"] = task_info["file_path"]
+                
             elif task_state == 'FAILURE':
                 status_data["status"] = "ERROR"
-                error_result = latest_beat_detection_task.result
-                error_msg = str(error_result) if error_result else "Unknown error"
-                status_data["error"] = error_msg
+                # Get error from task metadata if available
+                status_data["error"] = beat_detection_metadata.get("error", "Unknown error")
         except Exception as e:
             logger.error(f"Error deriving status from beat detection task: {e}")
     else:

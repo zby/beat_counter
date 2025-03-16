@@ -51,6 +51,18 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Add custom exception handler to log HTTP exceptions with details
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    # Log the exception with its details
+    logger.error(f"HTTP {exc.status_code}: {exc.detail}")
+    # Return the default FastAPI HTTPException response
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+
 # Get the current directory
 BASE_DIR = pathlib.Path(__file__).parent.absolute()
 
@@ -148,11 +160,9 @@ async def upload_audio(request: Request, file: UploadFile = File(...), analyze: 
 async def get_file_status(file_id: str):
     """Get the processing status for a file."""
     try:
-        status_data = await get_status(file_id)
-        
         # Get the status directly from the metadata module
-        # No need to modify it here
-        
+        # This now uses Celery's state field for task status
+        status_data = await get_status(file_id)
         return status_data
     except Exception as e:
         logger.error(f"Error getting file status: {e}")
@@ -212,7 +222,7 @@ async def confirm_analysis(request: Request, file_id: str):
     
     # Check if the file has been analyzed or if beat detection was successful
     beat_task = current_status.get("beat_detection_task", {})
-    beat_task_success = beat_task and beat_task.get("status") == "SUCCESS"
+    beat_task_success = beat_task and beat_task.get("state") == "SUCCESS"
     
     if not beat_task_success:
         raise HTTPException(status_code=400, detail="File has not been analyzed yet")
@@ -356,7 +366,7 @@ async def get_task_status(task_id: str):
         
         # If this was a beat detection task and video generation is requested,
         # start the video generation task
-        if task_result.result.get('status') == 'success':
+        if task_result.result.get('status') == 'analyzed':
             file_id = task_result.result.get('file_id')
             
             # Get the file info using get_status
