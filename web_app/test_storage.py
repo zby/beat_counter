@@ -17,70 +17,75 @@ class MockMetadataStorage(MetadataStorage):
         """Update metadata for a specific file."""
         if file_id not in self.storage:
             self.storage[file_id] = {}
-        self.storage[file_id].update(metadata)
+        self._deep_update(self.storage[file_id], metadata)
     
     def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
         """Get metadata for all files."""
         return self.storage.copy()
 
+    def delete_metadata(self, file_id: str) -> bool:
+        """Delete metadata for a specific file."""
+        if file_id in self.storage:
+            del self.storage[file_id]
+            return True
+        return False
+
+    def _deep_update(self, target: Dict, source: Dict) -> None:
+        """Helper function for deep updating dictionaries."""
+        for key, value in source.items():
+            if isinstance(value, dict) and key in target and isinstance(target[key], dict):
+                self._deep_update(target[key], value)
+            else:
+                target[key] = value
+
 class MockTask:
-    """Mock task result for testing."""
-    def __init__(self, task_id: str, state: str = "PENDING"):
-        self.id = task_id
-        self._state = state
-        self._result = None
+    """Mock implementation of a task."""
     
-    @property
-    def state(self) -> str:
-        return self._state
+    def __init__(self):
+        self.id = str(id(self))
+        self.state = "PENDING"
+        self.result = None
     
     def set_state(self, state: str, result: Any = None) -> None:
-        self._state = state
-        self._result = result
-    
-    @property
-    def result(self) -> Any:
-        return self._result
+        """Set the task state and result."""
+        self.state = state
+        self.result = result
 
 class MockTaskExecutor(TaskExecutor):
     """Mock implementation of task executor for testing."""
     
     def __init__(self):
         self.tasks = {}
-        self.task_counter = 0
     
     def _create_task(self) -> MockTask:
         """Create a new mock task."""
-        self.task_counter += 1
-        task_id = f"task_{self.task_counter}"
-        task = MockTask(task_id)
-        self.tasks[task_id] = task
+        task = MockTask()
+        self.tasks[task.id] = task
         return task
     
     def execute_beat_detection(self, file_id: str, file_path: str) -> MockTask:
-        """Execute beat detection task."""
+        """Execute beat detection on a file."""
         task = self._create_task()
-        # Simulate task execution
         task.set_state("STARTED")
         return task
     
     def execute_video_generation(self, file_id: str, file_path: str, beats_file: str) -> MockTask:
-        """Execute video generation task."""
+        """Execute video generation for a file."""
         task = self._create_task()
-        # Simulate task execution
         task.set_state("STARTED")
         return task
     
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """Get status of a task."""
+        """Get the status of a task."""
         task = self.tasks.get(task_id)
         if not task:
             return {"state": "UNKNOWN"}
-        return {
-            "id": task.id,
-            "state": task.state,
-            "result": task.result
-        }
+        
+        status = {"state": task.state}
+        if task.result is not None:
+            status["result"] = task.result
+        
+        return status
     
     def complete_task(self, task_id: str, result: Any = None) -> None:
         """Complete a task with success state."""
