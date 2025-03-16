@@ -3,6 +3,13 @@ Celery tasks for beat detection and video generation.
 
 This module contains the Celery tasks for handling long-running operations
 like beat detection and video generation.
+
+Result Format:
+-------------
+All tasks return results in a consistent format:
+- Progress information is always in a 'progress' dictionary with 'status' and 'percent'
+- No top-level 'status' field is used (to avoid redundancy with Celery task state)
+- Error information is captured in stdout/stderr in the output dictionaries
 """
 
 # Standard library imports
@@ -150,7 +157,7 @@ def detect_beats_task(
                 current_stderr = stderr_capture.getvalue()
 
                 # Define max output size
-                max_output_size = 10000  # 10KB limit for logs
+                max_output_size = 1000  # 1KB limit for logs
 
                 # Truncate stdout/stderr if too long
                 if len(current_stdout) > max_output_size:

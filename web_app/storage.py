@@ -208,12 +208,18 @@ class CeleryTaskExecutor(TaskExecutor):
         return self.generate_video_task.delay(file_id, file_path, beats_file)
     
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """Get the status of a task."""
+        """Get the raw status of a Celery task.
+        
+        Returns essential information from the Celery AsyncResult.
+        """
         from celery.result import AsyncResult
         task_result = AsyncResult(task_id)
+        
+        # Return basic task information
         return {
             "state": task_result.state,
-            "result": task_result.result if task_result.ready() else None
+            "result": task_result.result if task_result.ready() and task_result.successful() else None,
+            "error": str(task_result.result) if task_result.ready() and not task_result.successful() else None
         }
 
 class TaskStatusManager:
@@ -231,35 +237,22 @@ class TaskStatusManager:
 
     @staticmethod
     def extract_task_data(task_result) -> Dict[str, Any]:
-        """Extract metadata from a task result."""
+        """Extract basic data from a task result."""
         try:
-            # Get the task metadata
-            task_metadata = {}
+            # Return minimal task information
+            result = {"state": task_result.state}
             
-            # Add the task state
-            task_metadata["state"] = task_result.state
-            
-            # Add the task result if available
+            # Add result or error if available
             if task_result.ready():
                 if task_result.successful():
-                    task_metadata["result"] = task_result.result
+                    result["result"] = task_result.result
                 else:
-                    task_metadata["error"] = str(task_result.result)
+                    result["error"] = str(task_result.result) 
             
-            return task_metadata
-            
+            return result
         except Exception as e:
-            logger.error(f"Error extracting task metadata: {e}")
-            return {}
-
-    @staticmethod
-    def get_attribute(task_result, attr: str) -> Any:
-        """Safely get an attribute from a task result."""
-        try:
-            return getattr(task_result, attr)
-        except Exception as e:
-            logger.error(f"Error getting task attribute {attr}: {e}")
-            return None
+            logger.error(f"Error extracting task data: {e}")
+            return {"state": "UNKNOWN", "error": str(e)}
 
     @staticmethod
     async def get_beat_detection_status(beat_detection_task_id: str) -> Dict[str, Any]:
@@ -267,40 +260,20 @@ class TaskStatusManager:
         # Create AsyncResult
         task_result = TaskStatusManager.create_async_result(beat_detection_task_id)
         if not task_result:
-            # Return minimal information if task result cannot be created
             return {
                 "id": beat_detection_task_id,
                 "type": "beat_detection",
                 "state": "UNKNOWN"
             }
         
-        # Extract the task metadata
-        try:
-            # Get the task metadata
-            task_metadata = TaskStatusManager.extract_task_data(task_result)
-            
-            # Ensure the metadata is a dictionary and has basic required fields
-            if not isinstance(task_metadata, dict):
-                task_metadata = {}
-                
-            # Add essential fields if they don't exist
-            task_metadata["id"] = beat_detection_task_id
-            task_metadata["type"] = "beat_detection"
-            
-            # Add the Celery state - this is the only status we need
-            task_metadata["state"] = TaskStatusManager.get_attribute(task_result, "state")
-                
-            return task_metadata
-            
-        except Exception as e:
-            logger.error(f"Error extracting beat detection metadata: {e}")
-            # Return minimal information on error
-            return {
-                "id": beat_detection_task_id,
-                "type": "beat_detection",
-                "state": "FAILURE",
-                "error": str(e)
-            }
+        # Get basic task data
+        task_data = TaskStatusManager.extract_task_data(task_result)
+        
+        # Add task identification
+        task_data["id"] = beat_detection_task_id
+        task_data["type"] = "beat_detection"
+        
+        return task_data
 
     @staticmethod
     async def get_video_generation_status(video_task_id: str) -> Dict[str, Any]:
@@ -308,37 +281,17 @@ class TaskStatusManager:
         # Create AsyncResult
         task_result = TaskStatusManager.create_async_result(video_task_id)
         if not task_result:
-            # Return minimal information if task result cannot be created
             return {
                 "id": video_task_id,
                 "type": "video_generation",
                 "state": "UNKNOWN"
             }
         
-        # Extract the task metadata
-        try:
-            # Get the task metadata
-            task_metadata = TaskStatusManager.extract_task_data(task_result)
-            
-            # Ensure the metadata is a dictionary and has basic required fields
-            if not isinstance(task_metadata, dict):
-                task_metadata = {}
-                
-            # Add essential fields if they don't exist
-            task_metadata["id"] = video_task_id
-            task_metadata["type"] = "video_generation"
-            
-            # Add the Celery state - this is the only status we need
-            task_metadata["state"] = TaskStatusManager.get_attribute(task_result, "state")
-
-            return task_metadata
-            
-        except Exception as e:
-            logger.error(f"Error extracting video generation metadata: {e}")
-            # Return minimal information on error
-            return {
-                "id": video_task_id,
-                "type": "video_generation",
-                "state": "FAILURE",
-                "error": str(e)
-            } 
+        # Get basic task data
+        task_data = TaskStatusManager.extract_task_data(task_result)
+        
+        # Add task identification
+        task_data["id"] = video_task_id
+        task_data["type"] = "video_generation"
+        
+        return task_data 

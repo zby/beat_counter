@@ -332,49 +332,11 @@ def create_app(
         task_id: str,
         executor: TaskExecutor = Depends(get_task_executor)
     ):
-        """Get the status of a task."""
-        task_status = executor.get_task_status(task_id)
+        """Get the raw status of a Celery task.
         
-        # Convert task status to response format
-        state = task_status.get("state", "UNKNOWN").upper()
-        result = task_status.get("result")
-        
-        # Format response based on Celery task state
-        if state == "PENDING":
-            response = {
-                "status": "pending",
-                "info": "Task is pending"
-            }
-        elif state == "STARTED":
-            response = {
-                "status": "started",
-                "info": str(result) if result else "Task is running"
-            }
-        elif state == "SUCCESS":
-            # Check for result progress info, if available
-            progress_status = None
-            if isinstance(result, dict) and "progress" in result:
-                progress = result.get("progress", {})
-                if isinstance(progress, dict) and "status" in progress:
-                    progress_status = progress["status"]
-            
-            response = {
-                "status": "success",
-                "progress_status": progress_status,
-                "result": result
-            }
-        elif state == "FAILURE":
-            response = {
-                "status": "failure",
-                "error": str(result) if result else "Task failed"
-            }
-        else:
-            response = {
-                "status": state.lower(),
-                "info": str(result) if result else "Unknown status"
-            }
-        
-        return response
+        Returns the direct Celery task state and result without modification.
+        """
+        return executor.get_task_status(task_id)
 
     return app
 
