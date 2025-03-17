@@ -104,8 +104,37 @@ function handleSubmit() {
     uploadProgress.classList.remove('hidden');
     setProgress(uploadProgress, 50);
     
-    // Submit the form
-    uploadForm.submit();
+    // Create FormData object
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('analyze', 'true');
+    
+    // Submit the form using fetch
+    fetch('/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (response.redirected) {
+            window.location.href = response.url;
+        } else if (response.ok) {
+            return response.json().then(data => {
+                window.location.href = `/file/${data.file_id}`;
+            });
+        } else {
+            return response.json().then(data => {
+                throw new Error(data.detail || 'Upload failed');
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error: ' + error.message);
+        // Reset UI
+        fileInfo.classList.remove('hidden');
+        uploadProgress.classList.add('hidden');
+        setProgress(uploadProgress, 0);
+    });
 }
 
 // Set progress bar value
