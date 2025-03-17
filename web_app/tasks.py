@@ -446,12 +446,10 @@ def generate_video_task(
             
             # Create video generator
             def sync_video_progress_callback(status, progress):
-                # Calculate adjusted progress (50% to 90% range)
-                adjusted_progress = 0.5 + (progress * 0.4)
-                update_progress(status, adjusted_progress)
+                update_progress(status, progress)
             
             # Generate the visualization video
-            update_progress("Generating visualization", 0.5)
+            update_progress("Initializing video generation", 0.05)
             
             # Initialize video generator
             video_generator = BeatVideoGenerator(

@@ -575,8 +575,8 @@ class BeatVideoGenerator:
         
         # Report progress - writing video file
         if progress_callback:
-            print("DEBUG: Calling progress callback - Writing video file")
-            progress_callback("Writing video file", 0.8)
+            print("DEBUG: Calling progress callback - Starting video encoding")
+            progress_callback("Starting video encoding", 0.1)
         
         # Write video file without callback
         video.write_videofile(output_file_str, fps=self.fps, 
