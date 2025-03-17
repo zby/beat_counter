@@ -21,14 +21,15 @@
                 <p>Supported formats: MP3, WAV, FLAC, M4A, OGG</p>
                 
                 <div class="upload-area" id="drop-area">
-                    <form id="upload-form">
-                        <input type="file" id="file-input" accept=".mp3,.wav,.flac,.m4a,.ogg" hidden>
+                    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+                        <input type="file" id="file-input" name="file" accept=".mp3,.wav,.flac,.m4a,.ogg" hidden>
                         <label for="file-input" class="upload-button">Choose File</label>
                         <p>or drag and drop file here</p>
                     </form>
                     <div id="file-info" class="hidden">
                         <p>Selected file: <span id="file-name"></span></p>
-                        <p class="upload-status">Uploading automatically...</p>
+                        <p class="upload-status">Ready to upload</p>
+                        <button id="submit-button" class="primary-button">Upload File</button>
                     </div>
                 </div>
                 

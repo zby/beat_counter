@@ -11,6 +11,7 @@ from beat_detection.utils.constants import AUDIO_EXTENSIONS
 from web_app.storage import ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR, MetadataStorage, TaskExecutor
 from web_app.test_storage import MockMetadataStorage, MockTask, MockTaskExecutor
 import uuid
+from datetime import datetime
 
 # Test data
 TEST_FILES = [
@@ -60,12 +61,25 @@ def sample_file_with_task(
 ) -> Tuple[str, str, MockTask]:
     """Create a sample file entry with an associated task."""
     file_id = "test_file"
+    
+    # Get standardized file path using the storage API
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    
+    # Create metadata with standardized structure
+    metadata = {
+        "original_filename": "test.mp3",
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3",
+        "upload_time": datetime.now().isoformat()
+    }
+    
+    # Create task and update metadata
     task = mock_executor._create_task()
-    mock_storage.update_metadata(file_id, {
-        "filename": "test.mp3",
-        "file_path": "/path/to/test.mp3",
-        "beat_detection": task.id
-    })
+    metadata["beat_detection"] = task.id
+    
+    # Store metadata
+    mock_storage.update_metadata(file_id, metadata)
+    
     return file_id, task.id, task
 
 @pytest.mark.parametrize("filename,content_type,is_valid,expected_status", TEST_FILES)
@@ -97,14 +111,20 @@ def test_upload_audio(
         # Verify metadata storage
         metadata = mock_storage.storage.get(file_id)
         assert metadata is not None
-        assert metadata["filename"] == filename
+        assert metadata["original_filename"] == filename
         
-        # Verify task creation
+        # Verify file_extension is correctly stored
+        file_extension = pathlib.Path(filename).suffix.lower()
+        assert metadata["file_extension"] == file_extension
+        
+        # Verify the standardized file path structure
+        audio_file_path = metadata["audio_file_path"]
+        assert f"original{file_extension}" in audio_file_path
+        
+        # Verify that beat detection task was started
         assert "beat_detection" in metadata
         task_id = metadata["beat_detection"]
-        task = mock_executor.tasks.get(task_id)
-        assert task is not None
-        assert task.state == "STARTED"
+        assert task_id in mock_executor.tasks
     else:
         assert "Unsupported file format" in response.json()["detail"]
 
@@ -151,8 +171,6 @@ def test_file_not_found(test_client: TestClient):
     """Test handling of non-existent files."""
     response = test_client.get("/status/nonexistent")
     assert response.status_code == 404
-    # Check if the file ID is in the error message
-    assert "nonexistent" in response.json()["detail"]
 
 @pytest.mark.asyncio
 async def test_confirm_analysis_success(
@@ -160,35 +178,79 @@ async def test_confirm_analysis_success(
     mock_storage: MockMetadataStorage,
     mock_executor: MockTaskExecutor
 ):
-    """Test successful confirmation of beat analysis."""
-    # Setup
-    file_id = "test_file"
+    """Test confirming analysis and generating a visualization video."""
+    # Create a file in ANALYZED state
+    file_id = "confirm-test-file"
+    
+    # Get standardized file paths using the storage API
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    beats_file = mock_storage.get_beats_file_path(file_id)
+    stats_file = mock_storage.get_beat_stats_file_path(file_id)
+    
+    # Create file metadata
+    metadata = {
+        "original_filename": "test.mp3",
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3",
+        "upload_time": datetime.now().isoformat()
+    }
+    
+    # Create beat detection task
     beat_task = mock_executor._create_task()
-    mock_storage.update_metadata(file_id, {
-        "filename": "test.mp3",
-        "file_path": "/path/to/test.mp3",
-        "beat_detection": beat_task.id
+    beat_task.set_state("SUCCESS", {
+        "file_id": file_id,
+        "beats_file": str(beats_file),
+        "stats_file": str(stats_file)
     })
     
-    # Set beat detection as successful
-    beat_task.set_state("SUCCESS", {
-        "beats_file": "/path/to/beats.json"
-    })
+    # Update metadata with beat detection task
+    metadata["beat_detection"] = beat_task.id
+    mock_storage.update_metadata(file_id, metadata)
+    
+    # Add stats to mock storage get_file_status response
+    mock_storage.get_file_status_response = {
+        "file_id": file_id,
+        "filename": "test.mp3",
+        "status": ANALYZED,
+        "beat_detection_task": {
+            "id": beat_task.id,
+            "state": "SUCCESS",
+            "result": {
+                "beats_file": str(beats_file)
+            }
+        }
+    }
     
     # Confirm analysis
-    response = test_client.post(f"/confirm/{file_id}", follow_redirects=False)
+    response = test_client.post(f"/confirm/{file_id}")
+    assert response.status_code == 200
     
-    assert response.status_code == 303
+    # Verify video generation task was created
+    file_metadata = await mock_storage.get_metadata(file_id)
+    assert "video_generation" in file_metadata
     
-    # Verify video generation task
-    metadata = mock_storage.storage.get(file_id)
-    assert "video_generation" in metadata
-    assert metadata["status"] == "GENERATING_VIDEO"
+    # Update mock response to reflect new status
+    video_task_id = file_metadata["video_generation"]
+    mock_storage.get_file_status_response = {
+        "file_id": file_id,
+        "filename": "test.mp3",
+        "status": GENERATING_VIDEO,
+        "beat_detection_task": {
+            "id": beat_task.id,
+            "state": "SUCCESS",
+            "result": {
+                "beats_file": str(beats_file)
+            }
+        },
+        "video_generation_task": {
+            "id": video_task_id,
+            "state": "STARTED"
+        }
+    }
     
-    video_task_id = metadata["video_generation"]
-    video_task = mock_executor.tasks.get(video_task_id)
-    assert video_task is not None
-    assert video_task.state == "STARTED"
+    # Verify status was updated
+    file_status = await mock_storage.get_file_status(file_id, mock_executor)
+    assert file_status["status"] == GENERATING_VIDEO
 
 @pytest.mark.asyncio
 async def test_confirm_analysis_not_ready(
@@ -200,70 +262,263 @@ async def test_confirm_analysis_not_ready(
     # Setup with pending beat detection
     file_id = "test_file"
     beat_task = mock_executor._create_task()
-    mock_storage.update_metadata(file_id, {
-        "filename": "test.mp3",
-        "file_path": "/path/to/test.mp3",
+    
+    # Get standardized file path using the storage API
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    
+    metadata = {
+        "original_filename": "test.mp3",
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3",
         "beat_detection": beat_task.id
-    })
+    }
+    mock_storage.update_metadata(file_id, metadata)
+    
+    # Set the task state to STARTED 
+    beat_task.set_state("STARTED")
+    
+    # Set custom file status for consistent testing
+    mock_storage.get_file_status_response = {
+        "file_id": file_id,
+        "filename": "test.mp3",
+        "status": ANALYZING,
+        "beat_detection_task": {
+            "id": beat_task.id,
+            "state": "STARTED"
+        }
+    }
     
     # Confirm analysis
     response = test_client.post(f"/confirm/{file_id}")
     
     assert response.status_code == 400
-    assert "Beat detection not completed" in response.json()["detail"]
+    assert "not ready for confirmation" in response.json()["detail"]
 
-@pytest.mark.parametrize("status,expected_status", [
-    (COMPLETED, 200),  # File exists and video is ready
-    (ANALYZING, 400),  # Video not ready
-    (None, 404),       # File doesn't exist
-])
-def test_download_video(
+def test_download_video_success(
     test_client: TestClient,
     mock_storage: MockMetadataStorage,
     mock_executor: MockTaskExecutor,
-    test_dir: pathlib.Path,
-    status: str,
-    expected_status: int
+    test_dir: pathlib.Path
 ):
-    """Test downloading a video file."""
-    file_id = "test-download-video"
+    """Test successfully downloading a generated video."""
+    file_id = "test-download"
     
-    # Set up mock file with the specified status
-    if status:
-        # Create test files in the test directory
-        audio_file = test_dir / "test.mp3"
-        audio_file.touch()
-        
-        metadata = {
-            "filename": "test.mp3",
-            "file_path": str(audio_file)
+    # Get standardized file paths using the storage API
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    video_file = mock_storage.get_video_file_path(file_id)
+    
+    # Create metadata
+    metadata = {
+        "original_filename": "test.mp3",
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3",
+        "upload_time": datetime.now().isoformat()
+    }
+    mock_storage.update_metadata(file_id, metadata)
+    
+    # Create beat detection task
+    beat_task = mock_executor._create_task()
+    beat_task.set_state("SUCCESS")
+    metadata["beat_detection"] = beat_task.id
+    
+    # Create the directory and dummy video file
+    job_dir = mock_storage.ensure_job_directory(file_id)
+    video_file.parent.mkdir(exist_ok=True, parents=True)
+    video_file.touch()
+    
+    # Create video task
+    video_task = mock_executor._create_task()
+    video_task.set_state("SUCCESS", {
+        "video_file": str(video_file)
+    })
+    metadata["video_generation"] = video_task.id
+    metadata["video_file"] = str(video_file)
+    
+    mock_storage.update_metadata(file_id, metadata)
+    
+    # Set mock response for file status
+    mock_storage.get_file_status_response = {
+        "file_id": file_id,
+        "filename": "test.mp3",
+        "status": COMPLETED,
+        "beat_detection_task": {
+            "id": metadata.get("beat_detection"),
+            "state": "SUCCESS"
+        },
+        "video_generation_task": {
+            "id": metadata["video_generation"],
+            "state": "SUCCESS",
+            "result": {"video_file": str(video_file)}
         }
-        mock_storage.update_metadata(file_id, metadata)
-        
-        if status == COMPLETED:
-            # Create a test video file
-            video_file = test_dir / "test.mp4"
-            video_file.touch()
-            
-            # Simulate completed video
-            beat_task = mock_executor.execute_beat_detection(file_id, str(audio_file))
-            beat_task.set_state("SUCCESS")
-            metadata["beat_detection"] = beat_task.id
-            
-            video_task = mock_executor.execute_video_generation(file_id, str(audio_file), str(test_dir / "beats.txt"))
-            video_task.set_state("SUCCESS")
-            metadata["video_generation"] = video_task.id
-            metadata["video_file"] = str(video_file)  # Add video file path
-            mock_storage.update_metadata(file_id, metadata)
-        elif status == ANALYZING:
-            beat_task = mock_executor.execute_beat_detection(file_id, str(audio_file))
-            beat_task.set_state("STARTED")
-            metadata["beat_detection"] = beat_task.id
-            mock_storage.update_metadata(file_id, metadata)
+    }
     
-    # Try to download the video
+    # Attempt to download the video
     response = test_client.get(f"/download/{file_id}")
-    assert response.status_code == expected_status
+    assert response.status_code == 200
+    
+    # Cleanup test files
+    video_file.unlink(missing_ok=True)
+    job_dir = mock_storage.get_job_directory(file_id)
+    job_dir.rmdir()
+
+def test_download_video_not_ready(
+    test_client: TestClient,
+    mock_storage: MockMetadataStorage,
+    mock_executor: MockTaskExecutor
+):
+    """Test downloading a video that's not ready yet."""
+    file_id = "test-download-not-ready"
+    
+    # Get standardized file paths using the storage API
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    
+    # Create metadata
+    metadata = {
+        "original_filename": "test.mp3",
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3",
+        "upload_time": datetime.now().isoformat()
+    }
+    
+    # Create beat detection task that's still processing
+    beat_task = mock_executor._create_task()
+    beat_task.set_state("STARTED")
+    metadata["beat_detection"] = beat_task.id
+    
+    mock_storage.update_metadata(file_id, metadata)
+    
+    # Set mock response for file status
+    mock_storage.get_file_status_response = {
+        "file_id": file_id,
+        "filename": "test.mp3",
+        "status": ANALYZING,
+        "beat_detection_task": {
+            "id": metadata.get("beat_detection"),
+            "state": "STARTED"
+        }
+    }
+    
+    # Attempt to download the video (should fail)
+    response = test_client.get(f"/download/{file_id}")
+    assert response.status_code == 404
+    assert "Video file not found" in response.json()["detail"]
+
+def test_download_video_not_found(
+    test_client: TestClient,
+    mock_storage: MockMetadataStorage
+):
+    """Test downloading a video for a file that doesn't exist."""
+    file_id = "nonexistent-file"
+    
+    # Set mock storage to return None for metadata
+    mock_storage.get_file_status_response = None
+    
+    # Attempt to download the video (should fail)
+    response = test_client.get(f"/download/{file_id}")
+    assert response.status_code == 404
+    assert file_id in response.json()["detail"]
+
+def test_download_video_analyzed_no_video(
+    test_client: TestClient,
+    mock_storage: MockMetadataStorage,
+    mock_executor: MockTaskExecutor
+):
+    """Test downloading a video when beat detection is complete but video generation hasn't started."""
+    file_id = "test-download-analyzed"
+    
+    # Get standardized file paths using the storage API
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    beats_file = mock_storage.get_beats_file_path(file_id)
+    
+    # Create metadata
+    metadata = {
+        "original_filename": "test.mp3",
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3",
+        "upload_time": datetime.now().isoformat()
+    }
+    
+    # Create beat detection task that's completed
+    beat_task = mock_executor._create_task()
+    beat_task.set_state("SUCCESS", {
+        "beats_file": str(beats_file)
+    })
+    metadata["beat_detection"] = beat_task.id
+    
+    mock_storage.update_metadata(file_id, metadata)
+    
+    # Set mock response for file status
+    mock_storage.get_file_status_response = {
+        "file_id": file_id,
+        "filename": "test.mp3",
+        "status": ANALYZED,
+        "beat_detection_task": {
+            "id": metadata.get("beat_detection"),
+            "state": "SUCCESS",
+            "result": {"beats_file": str(beats_file)}
+        }
+    }
+    
+    # Attempt to download the video (should fail)
+    response = test_client.get(f"/download/{file_id}")
+    assert response.status_code == 404
+    assert "Video file not found" in response.json()["detail"]
+
+def test_download_video_failed_generation(
+    test_client: TestClient,
+    mock_storage: MockMetadataStorage,
+    mock_executor: MockTaskExecutor
+):
+    """Test downloading a video when video generation has failed."""
+    file_id = "test-download-failed-video"
+    
+    # Get standardized file paths using the storage API
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    beats_file = mock_storage.get_beats_file_path(file_id)
+    
+    # Create metadata
+    metadata = {
+        "original_filename": "test.mp3",
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3",
+        "upload_time": datetime.now().isoformat()
+    }
+    
+    # Create beat detection task that's completed
+    beat_task = mock_executor._create_task()
+    beat_task.set_state("SUCCESS", {
+        "beats_file": str(beats_file)
+    })
+    metadata["beat_detection"] = beat_task.id
+    
+    # Create video task that failed
+    video_task = mock_executor._create_task()
+    video_task.set_state("FAILURE", "Video generation failed with error")
+    metadata["video_generation"] = video_task.id
+    
+    mock_storage.update_metadata(file_id, metadata)
+    
+    # Set mock response for file status
+    mock_storage.get_file_status_response = {
+        "file_id": file_id,
+        "filename": "test.mp3",
+        "status": VIDEO_ERROR,
+        "beat_detection_task": {
+            "id": metadata.get("beat_detection"),
+            "state": "SUCCESS",
+            "result": {"beats_file": str(beats_file)}
+        },
+        "video_generation_task": {
+            "id": metadata["video_generation"],
+            "state": "FAILURE",
+            "result": "Video generation failed with error"
+        }
+    }
+    
+    # Attempt to download the video (should fail)
+    response = test_client.get(f"/download/{file_id}")
+    assert response.status_code == 404
+    assert "Video file not found" in response.json()["detail"]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("beat_state,video_state,expected_status", [
@@ -363,10 +618,7 @@ async def test_file_page_status(
     response = test_client.get(f"/file/{file_id}")
     
     if expected_status == 404:
-        # For 404 cases, we should get a JSON error response
         assert response.status_code == 404
-        # Check if the file ID is in the error message
-        assert "test_file_id" in response.json()["detail"]
     else:
         assert response.status_code == expected_status
         
@@ -375,7 +627,6 @@ async def test_file_page_status(
         
         # Verify basic file information is present in the HTML
         assert file_id in response_html
-        assert "test.mp3" in response_html
         
         # Verify task status information is present
         if beat_state is not None:

@@ -13,6 +13,7 @@ import shutil
 import uuid
 from datetime import datetime
 from typing import Optional
+import json
 
 # Third-party imports
 import uvicorn
@@ -23,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 # Local imports
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from web_app.storage import MetadataStorage, TaskExecutor, RedisMetadataStorage, CeleryTaskExecutor, FileIDNotFoundError, ANALYZING, ANALYZED, ANALYZING_FAILURE, COMPLETED, ERROR, GENERATING_VIDEO, VIDEO_ERROR
+from web_app.storage import MetadataStorage, TaskExecutor, RedisMetadataStorage, FileMetadataStorage, CeleryTaskExecutor, ANALYZING, ANALYZED, ANALYZING_FAILURE, COMPLETED, ERROR, GENERATING_VIDEO, VIDEO_ERROR
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +42,7 @@ OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 def create_app(
-    metadata_storage: MetadataStorage = RedisMetadataStorage(),
+    metadata_storage: MetadataStorage = FileMetadataStorage(base_dir=str(UPLOAD_DIR)),
     task_executor: TaskExecutor = CeleryTaskExecutor()
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -103,46 +104,42 @@ def create_app(
         # Generate a unique ID for this upload
         file_id = str(uuid.uuid4())
         
-        # Create a directory for this upload
-        upload_path = UPLOAD_DIR / file_id
-        upload_path.mkdir(exist_ok=True)
+        # Use storage to get standardized paths and ensure directories exist
+        job_dir = storage.ensure_job_directory(file_id)
+        audio_file_path = storage.get_audio_file_path(file_id, file_extension)
         
-        # Save the uploaded file
-        file_path = upload_path / filename
-        
-        with open(file_path, "wb") as f:
+        # Save the uploaded file with standardized name
+        with open(audio_file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
         
-        # Store metadata
+        # Create metadata
         metadata = {
-            "filename": filename,
             "original_filename": filename,
-            "file_path": str(file_path),
+            "audio_file_path": str(audio_file_path),
+            "file_extension": file_extension,
             "upload_time": datetime.now().isoformat()
         }
+        
+        # Store metadata in the central storage
         storage.update_metadata(file_id, metadata)
         
-        # Start beat detection task
-        task = executor.execute_beat_detection(file_id, str(file_path))
+        # Start beat detection task (now only needs file_id)
+        task = executor.execute_beat_detection(file_id)
         
         # Update metadata with task ID
-        storage.update_metadata(file_id, {
+        task_metadata = {
             "beat_detection": task.id
-        })
+        }
+        storage.update_metadata(file_id, task_metadata)
         
-        logger.info(f"Started beat detection for file {file_id}, task ID: {task.id}")
-        
-        # Handle response based on request type
+        # Check if this is an AJAX request (XMLHttpRequest)
         is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         
         if is_ajax:
-            return {
-                "file_id": file_id,
-                "filename": filename,
-                "task_id": task.id,
-                "task_type": "beat_detection"
-            }
+            # For AJAX requests, return JSON with file_id
+            return {"file_id": file_id}
         else:
+            # For regular form submissions, redirect to file status page
             return RedirectResponse(url=f"/file/{file_id}", status_code=303)
 
     @app.get("/status/{file_id}")
@@ -152,15 +149,31 @@ def create_app(
         executor: TaskExecutor = Depends(get_task_executor)
     ):
         """Get the processing status for a file."""
-        try:
-            # Use the new get_file_status method from storage
-            status_data = await storage.get_file_status(file_id, executor)
-            return status_data
-        except FileIDNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e))
-        except Exception as e:
-            logger.error(f"Error getting file status: {e}")
-            raise HTTPException(status_code=500, detail="Internal Server Error")
+        # Use the new get_file_status method from storage
+        status_data = await storage.get_file_status(file_id, executor)
+        if not status_data:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Add debugging information
+        if "beat_detection_task" not in status_data and "beat_detection" in status_data:
+            task_id = status_data["beat_detection"]
+            task_status = executor.get_task_status(task_id)
+            status_data["beat_detection_task"] = {
+                "id": task_id,
+                "state": task_status.get("state", "UNKNOWN"),
+                "result": task_status.get("result", None)
+            }
+        
+        if "video_generation_task" not in status_data and "video_generation" in status_data:
+            task_id = status_data["video_generation"]
+            task_status = executor.get_task_status(task_id)
+            status_data["video_generation_task"] = {
+                "id": task_id,
+                "state": task_status.get("state", "UNKNOWN"),
+                "result": task_status.get("result", None)
+            }
+        
+        return status_data
 
     @app.get("/processing_queue", response_class=HTMLResponse)
     async def get_processing_queue(
@@ -176,7 +189,7 @@ def create_app(
         files_with_status = []
         for file_id, file_info in all_metadata.items():
             # Get filename from file metadata
-            filename = file_info.get("filename", "Unknown file")
+            filename = file_info.get("original_filename", "Unknown file")
             
             # Get task statuses
             beat_task_id = file_info.get("beat_detection")
@@ -225,51 +238,40 @@ def create_app(
         storage: MetadataStorage = Depends(get_storage),
         executor: TaskExecutor = Depends(get_task_executor)
     ):
-        """Confirm the beat analysis and generate the video."""
-        # Get the current file status
+        """Confirm analysis and generate visualization video."""
+        # Get file metadata
         metadata = await storage.get_metadata(file_id)
         if not metadata:
             raise HTTPException(status_code=404, detail="File not found")
         
-        # Get task statuses
-        beat_task_id = metadata.get("beat_detection")
-        if not beat_task_id:
-            raise HTTPException(status_code=400, detail="No beat detection task found")
-        
-        beat_task_status = executor.get_task_status(beat_task_id)
-        if beat_task_status["state"] != "SUCCESS":
-            raise HTTPException(status_code=400, detail="Beat detection not completed")
-        
-        # Get required file paths
-        file_path = metadata.get("file_path")
-        beats_file = beat_task_status.get("result", {}).get("beats_file")
-        
-        if not file_path or not beats_file:
-            raise HTTPException(status_code=400, detail="Required file paths not found")
+        # Check if file is in the right state
+        status = await storage.get_file_status(file_id, executor)
+        if status["status"] != ANALYZED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File is not ready for confirmation. Current status: {status['status']}"
+            )
         
         # Start video generation task
-        task = executor.execute_video_generation(file_id, file_path, beats_file)
-        
-        # Update metadata
-        storage.update_metadata(file_id, {
-            "video_generation": task.id,
-            "status": GENERATING_VIDEO
-        })
-        
-        logger.info(f"Started video generation for file {file_id}, task ID: {task.id}")
-        
-        # Handle response based on request type
-        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
-        
-        if is_ajax:
-            return {
-                "status": GENERATING_VIDEO.lower(),
-                "file_id": file_id,
-                "task_id": task.id,
-                "task_type": "video_generation"
-            }
-        else:
-            return RedirectResponse(url=f"/file/{file_id}", status_code=303)
+        try:
+            # Start generation using just the file_id
+            task = executor.execute_video_generation(file_id)
+            
+            # Update metadata
+            storage.update_metadata(file_id, {
+                "video_generation": task.id,
+                "status": GENERATING_VIDEO
+            })
+            
+            # Return success response
+            return {"task_id": task.id}
+            
+        except Exception as e:
+            logger.error(f"Error starting video generation: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error starting video generation: {str(e)}"
+            )
 
     @app.get("/file/{file_id}")
     async def file_page(
@@ -279,24 +281,44 @@ def create_app(
         executor: TaskExecutor = Depends(get_task_executor)
     ):
         """Render the file view page."""
-        try:
-            # Use the new get_file_status method from storage
-            file_status = await storage.get_file_status(file_id, executor)
+        # Get file metadata
+        metadata = await storage.get_metadata(file_id)
+        if not metadata:
+            raise HTTPException(status_code=404, detail=f"File with ID {file_id} not found")
+            
+        # Get complete file status with task information
+        file_status = await storage.get_file_status(file_id, executor)
+        
+        # Add debug information to status
+        if "beat_detection" in metadata and "beat_detection_task" not in file_status:
+            task_id = metadata["beat_detection"]
+            task_status = executor.get_task_status(task_id)
+            file_status["beat_detection_task"] = {
+                "id": task_id,
+                "state": task_status.get("state", "UNKNOWN"),
+                "result": task_status.get("result", None)
+            }
+        
+        if "video_generation" in metadata and "video_generation_task" not in file_status:
+            task_id = metadata["video_generation"]
+            task_status = executor.get_task_status(task_id)
+            file_status["video_generation_task"] = {
+                "id": task_id,
+                "state": task_status.get("state", "UNKNOWN"),
+                "result": task_status.get("result", None)
+            }
+        
+        # Log what we're passing to the template for debugging
+        logger.info(f"Rendering file_view.html with file_id={file_id} and status={file_status}")
 
-            return templates.TemplateResponse(
-                "file_view.html",
-                {
-                    "request": request,
-                    "file_id": file_id,
-                    "file_status": file_status
-                }
-            )
-        except FileIDNotFoundError as e:
-            # Return a 404 not found response using the HTTPException handler
-            raise HTTPException(status_code=404, detail=str(e))
-        except Exception as e:
-            logger.error(f"Error getting file status: {e}")
-            raise HTTPException(status_code=500, detail="Internal Server Error")
+        return templates.TemplateResponse(
+            "file_view.html",
+            {
+                "request": request,
+                "file_id": file_id,
+                "file_status": file_status
+            }
+        )
 
     @app.get("/download/{file_id}")
     async def download_video(
@@ -305,35 +327,27 @@ def create_app(
         executor: TaskExecutor = Depends(get_task_executor)
     ):
         """Download the generated video."""
+        # Get file metadata
         metadata = await storage.get_metadata(file_id)
         if not metadata:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise HTTPException(status_code=404, detail=f"File with ID {file_id} not found")
         
-        # First check if we have a direct video file path
-        video_file = metadata.get("video_file")
-        if video_file and os.path.exists(video_file):
-            return FileResponse(
-                path=video_file,
-                filename=os.path.basename(video_file),
-                media_type="video/mp4"
-            )
+        # Get standardized video file path
+        video_path = storage.get_video_file_path(file_id)
         
-        # If no direct video file, check task status
-        video_task_id = metadata.get("video_generation")
-        if not video_task_id:
-            raise HTTPException(status_code=400, detail="No video generation task found")
-        
-        video_task_status = executor.get_task_status(video_task_id)
-        if video_task_status["state"] != "SUCCESS":
-            raise HTTPException(status_code=400, detail="Video generation not completed")
-        
-        video_file = video_task_status.get("result", {}).get("video_file")
-        if not video_file or not os.path.exists(video_file):
+        # Check if the video file exists
+        if not video_path.exists():
             raise HTTPException(status_code=404, detail="Video file not found")
         
+        # Generate download filename based on the original filename
+        original_filename = metadata.get("original_filename", "audio")
+        base_name = os.path.splitext(original_filename)[0]
+        download_name = f"{base_name}_with_beats.mp4"
+        
+        # Serve the file
         return FileResponse(
-            path=video_file,
-            filename=os.path.basename(video_file),
+            path=str(video_path),
+            filename=download_name,
             media_type="video/mp4"
         )
 
@@ -342,25 +356,11 @@ def create_app(
         task_id: str,
         executor: TaskExecutor = Depends(get_task_executor)
     ):
-        """Get the raw status of a Celery task.
-        
-        Returns the direct Celery task state and result without modification.
-        """
+        """Get the status of a Celery task."""
         task_status = executor.get_task_status(task_id)
         
         # Add the task ID to the response
         task_status["id"] = task_id
-        
-        # Determine task type based on task name if available
-        from celery.result import AsyncResult
-        task_result = AsyncResult(task_id)
-        
-        # Add task type if we can determine it
-        if hasattr(task_result, 'name'):
-            if 'detect_beats_task' in task_result.name:
-                task_status["task_type"] = 'beat_detection'
-            elif 'generate_video_task' in task_result.name:
-                task_status["task_type"] = 'video_generation'
         
         return task_status
 

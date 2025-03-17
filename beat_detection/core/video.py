@@ -42,7 +42,8 @@ class BeatVideoGenerator:
                  font_path: Optional[str] = None,
                  font_size: int = 500,  # Much larger font size
                  fps: int = DEFAULT_FPS,
-                 meter: int = 4):
+                 meter: int = 4,
+                 progress_callback: Optional[Callable[[str, float], None]] = None):
         """
         Initialize the beat video generator.
         
@@ -64,6 +65,8 @@ class BeatVideoGenerator:
             Frames per second for video
         meter : int
             Number of beats per measure (time signature numerator)
+        progress_callback : callable, optional
+            Callback function that takes a status string and progress float (0.0-1.0)
         """
         self.width, self.height = resolution
         self.bg_color = bg_color
@@ -86,6 +89,7 @@ class BeatVideoGenerator:
         self.font_path = font_path
         self.font_size = font_size
         self.fps = fps
+        self.progress_callback = progress_callback
         
         # Frame cache to store pre-generated frames
         # Key: beat count (0 for no beat, 1-4 for beats)
@@ -585,3 +589,58 @@ class BeatVideoGenerator:
             progress_callback("Video generation complete", 1.0)
             
         return output_file_str
+
+    def generate_video(self, audio_path: Union[str, pathlib.Path], 
+                      beats_array: np.ndarray,
+                      output_path: Union[str, pathlib.Path],
+                      downbeats: Optional[np.ndarray] = None,
+                      detected_meter: Optional[int] = None,
+                      sample_beats: Optional[int] = None) -> str:
+        """
+        Generate a beat visualization video.
+        
+        Parameters:
+        -----------
+        audio_path : str or pathlib.Path
+            Path to the audio file
+        beats_array : numpy.ndarray
+            Array of beat timestamps in seconds
+        output_path : str or pathlib.Path
+            Path where to save the output video
+        downbeats : numpy.ndarray, optional
+            Array of indices corresponding to downbeats (1st beat of measure)
+        detected_meter : int, optional
+            Detected meter (time signature numerator)
+        sample_beats : int, optional
+            Number of beats to process (for testing/quick preview)
+        
+        Returns:
+        --------
+        str
+            Path to the generated video file
+        """
+        # Convert to numpy arrays if not already
+        if not isinstance(beats_array, np.ndarray):
+            beats_array = np.array(beats_array)
+            
+        # Handle empty downbeats safely
+        if downbeats is None or (isinstance(downbeats, np.ndarray) and downbeats.size == 0):
+            # If no downbeats provided, assume every Nth beat is a downbeat (where N is meter)
+            meter = detected_meter if detected_meter is not None else self.meter
+            downbeats = np.arange(0, len(beats_array), meter)
+        elif not isinstance(downbeats, np.ndarray):
+            downbeats = np.array(downbeats)
+            
+        # Use detected meter if provided, otherwise use default
+        meter = detected_meter if detected_meter is not None else self.meter
+        
+        # Call the create_counter_video method to generate the video
+        return self.create_counter_video(
+            audio_file=audio_path,
+            output_file=output_path,
+            beat_timestamps=beats_array,
+            downbeats=downbeats,
+            meter=meter,
+            sample_beats=sample_beats,
+            progress_callback=self.progress_callback
+        )

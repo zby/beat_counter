@@ -6,6 +6,8 @@ const fileInput = document.getElementById('file-input');
 const fileName = document.getElementById('file-name');
 const fileInfo = document.getElementById('file-info');
 const uploadProgress = document.getElementById('upload-progress');
+const uploadForm = document.getElementById('upload-form');
+const submitButton = document.getElementById('submit-button');
 
 // Initialize the application
 function init() {
@@ -31,6 +33,11 @@ function setupEventListeners() {
     });
     
     dropArea.addEventListener('drop', handleDrop, false);
+    
+    // Submit button click handler
+    if (submitButton) {
+        submitButton.addEventListener('click', handleSubmit);
+    }
 }
 
 // Prevent default behaviors for drag and drop
@@ -78,58 +85,23 @@ function handleFileSelection() {
         // Display file info
         fileName.textContent = file.name;
         fileInfo.classList.remove('hidden');
-        
-        // Automatically start upload after file selection
-        uploadFile();
     }
 }
 
-// Upload the selected file
-function uploadFile() {
+// Handle form submission
+function handleSubmit() {
     if (!fileInput.files.length) {
         alert('Please select a file first');
         return;
     }
     
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append('file', file);
-    
     // Show upload progress
     fileInfo.classList.add('hidden');
     uploadProgress.classList.remove('hidden');
-    setProgress(uploadProgress, 0);
+    setProgress(uploadProgress, 50);
     
-    // Upload file
-    fetch('/upload', {
-        method: 'POST',
-        headers: {
-            'X-Requested-With': 'XMLHttpRequest'
-        },
-        body: formData
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Network response was not ok');
-        }
-        return response.json();
-    })
-    .then(data => {
-        // Show 100% progress
-        setProgress(uploadProgress, 100);
-        
-        // Small delay to ensure the progress bar is updated before redirect
-        setTimeout(() => {
-            // Redirect to the file view page
-            window.location.href = `/file/${data.file_id}`;
-        }, 100);
-    })
-    .catch(error => {
-        console.error('Error uploading file:', error);
-        alert('Error uploading file. Please try again.');
-        uploadProgress.classList.add('hidden');
-        fileInfo.classList.remove('hidden');
-    });
+    // Submit the form
+    uploadForm.submit();
 }
 
 // Set progress bar value

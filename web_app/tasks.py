@@ -17,6 +17,7 @@ import io
 import os
 import pathlib
 import sys
+import json
 from typing import Any, Dict, Callable, Tuple, List, Optional
 
 # Third-party imports
@@ -187,14 +188,12 @@ def create_progress_updater(celery_task, task_info: dict, output_key: str):
 )
 def detect_beats_task(
     self,
-    file_id: str,
-    file_path: str
+    file_id: str
 ) -> Dict[str, Any]:
     """Celery task for detecting beats in an audio file.
     
     Args:
         file_id: Unique identifier for the file
-        file_path: Path to the audio file
     
     Returns
     -------
@@ -202,8 +201,7 @@ def detect_beats_task(
     """
     # Setup task info
     task_info = {
-        'file_id': file_id,
-        'file_path': file_path,
+        'file_id': file_id
     }
     
     # Setup IO capture
@@ -211,9 +209,31 @@ def detect_beats_task(
     
     with self._io_capture:
         try:
-            # Get the directory of the uploaded file to store output in the same place
-            input_path = pathlib.Path(file_path)
-            output_dir = input_path.parent
+            # Construct job directory path
+            job_dir = pathlib.Path(__file__).parent / "uploads" / file_id
+            
+            # Create metadata.json path
+            metadata_path = job_dir / "metadata.json"
+            
+            # Load metadata if exists
+            if metadata_path.exists():
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {}
+            
+            # Find audio file in the job directory
+            audio_path = None
+            from beat_detection.utils.constants import SUPPORTED_AUDIO_EXTENSIONS
+            for ext in SUPPORTED_AUDIO_EXTENSIONS:
+                potential_path = job_dir / f"original{ext}"
+                if potential_path.exists():
+                    audio_path = str(potential_path.resolve())
+                    break
+            
+            # If no audio file found, raise an error
+            if not audio_path:
+                raise FileNotFoundError(f"No audio file found in directory for file_id: {file_id}")
             
             # Initialize task state
             update_progress = create_progress_updater(
@@ -233,7 +253,7 @@ def detect_beats_task(
             try:
                 # Perform beat detection
                 detection_result = detector.detect_beats(
-                    file_path,
+                    audio_path,
                     skip_intro=True,
                     skip_ending=True
                 )
@@ -244,9 +264,9 @@ def detect_beats_task(
                     intro_end_idx, ending_start_idx, detected_meter
                 ) = detection_result
                 
-                # Generate output file paths in the same directory as the input file
-                beats_file = output_dir / f"{input_path.stem}_beats.txt"
-                stats_file = output_dir / f"{input_path.stem}_beat_stats.json"
+                # Generate standardized output file paths
+                beats_file = job_dir / "beats.txt"
+                stats_file = job_dir / "beat_stats.json"
                 
                 # Save beat timestamps and statistics
                 reporting.save_beat_timestamps(
@@ -257,10 +277,22 @@ def detect_beats_task(
                 
                 reporting.save_beat_statistics(
                     stats, irregular_beats, stats_file, 
-                    filename=input_path.name,
+                    filename=os.path.basename(audio_path),
                     detected_meter=detected_meter,
                     duration=beat_timestamps[-1] if len(beat_timestamps) > 0 else 0
                 )
+                
+                # Update metadata with beat stats
+                with open(stats_file, "r") as f:
+                    beat_stats = json.load(f)
+                    
+                metadata["beat_stats"] = beat_stats
+                metadata["beats_file"] = str(beats_file)
+                metadata["stats_file"] = str(stats_file)
+                
+                # Save updated metadata
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata, f, indent=2)
                 
                 # Final progress update
                 update_progress("Beat detection complete", 1.0)
@@ -271,8 +303,9 @@ def detect_beats_task(
                 # Return the results
                 return {
                     "file_id": file_id,
-                    "file_path": file_path,
+                    "file_path": audio_path,
                     "beats_file": str(beats_file),
+                    "stats_file": str(stats_file),
                     "progress": {
                         "status": "Beat detection complete",
                         "percent": 100
@@ -295,7 +328,6 @@ def detect_beats_task(
                 # Update task state with error information
                 self.update_state(state=states.FAILURE, meta={
                     "file_id": file_id,
-                    "file_path": file_path,
                     "error": str(e),
                     "beat_detection_output": {
                         "stdout": current_stdout,
@@ -303,12 +335,27 @@ def detect_beats_task(
                     }
                 })
                 
-                # Re-raise the exception with proper formatting for Celery
-                raise type(e)(str(e)) from e
+                # Re-raise the exception
+                raise
                 
-        except Exception:
-            # This will be caught by the outer try-except in the context manager
-            raise
+        except Exception as e:
+            # Log the exception
+            safe_error(f"Error in beat detection task: {str(e)}")
+            
+            # If we have an IO capture, get its output
+            stdout, stderr = "", ""
+            if hasattr(self, '_io_capture'):
+                stdout, stderr = self._io_capture.get_output()
+            
+            # Return error information
+            return {
+                "file_id": file_id,
+                "error": str(e),
+                "beat_detection_output": {
+                    "stdout": stdout,
+                    "stderr": stderr
+                }
+            }
 
 @app.task(
     bind=True,
@@ -317,16 +364,12 @@ def detect_beats_task(
 )
 def generate_video_task(
     self,
-    file_id: str,
-    file_path: str,
-    beats_file: str
+    file_id: str
 ) -> Dict[str, Any]:
     """Celery task for generating a beat visualization video.
     
     Args:
         file_id: Unique identifier for the file
-        file_path: Path to the audio file
-        beats_file: Path to the beats file
     
     Returns
     -------
@@ -334,9 +377,7 @@ def generate_video_task(
     """
     # Setup task info
     task_info = {
-        'file_id': file_id,
-        'file_path': file_path,
-        'beats_file': beats_file,
+        'file_id': file_id
     }
     
     # Setup IO capture
@@ -344,9 +385,39 @@ def generate_video_task(
     
     with self._io_capture:
         try:
-            # Get the directory of the uploaded file to store output in the same place
-            input_path = pathlib.Path(file_path)
-            output_dir = input_path.parent
+            # Construct job directory path
+            job_dir = pathlib.Path(__file__).parent / "uploads" / file_id
+            
+            # Create metadata.json path
+            metadata_path = job_dir / "metadata.json"
+            
+            # Load metadata if exists
+            if metadata_path.exists():
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {}
+            
+            # Find audio file in the job directory
+            audio_path = None
+            from beat_detection.utils.constants import SUPPORTED_AUDIO_EXTENSIONS
+            for ext in SUPPORTED_AUDIO_EXTENSIONS:
+                potential_path = job_dir / f"original{ext}"
+                if potential_path.exists():
+                    audio_path = str(potential_path.resolve())
+                    break
+            
+            # If no audio file found, raise an error
+            if not audio_path:
+                raise FileNotFoundError(f"No audio file found in directory for file_id: {file_id}")
+                
+            # Get the beats file
+            beats_file = job_dir / "beats.txt"
+            if not beats_file.exists():
+                raise FileNotFoundError(f"Beats file not found in directory for file_id: {file_id}")
+                
+            # Standardized output video path
+            video_output = job_dir / "video.mp4"
             
             # Initialize task state
             update_progress = create_progress_updater(
@@ -354,189 +425,105 @@ def generate_video_task(
             )
             update_progress("Initializing video generation", 0)
             
-            # Generate output video path in the same directory as the input file
-            video_file = output_dir / f"{input_path.stem}_counter.mp4"
-            
             # Load beat data
-            update_progress("Loading beat data", 0.1)  # 10%
+            beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = load_beat_data(str(beats_file))
             
-            try:
-                # The load_beat_data function returns a tuple directly
-                (
-                    beat_timestamps, downbeats, intro_end_idx,
-                    ending_start_idx, detected_meter
-                ) = load_beat_data(beats_file)
-                
-                # Update progress
-                update_progress("Preparing video generation", 0.3)  # 30%
-                
-                # Create a synchronous wrapper for the video progress callback
-                def sync_video_progress_callback(status, progress):
-                    # Calculate adjusted progress (50% to 90% range)
-                    adjusted_progress = 0.5 + (progress * 0.4)  # Map 0-1 to 0.5-0.9
-                    update_progress(status, adjusted_progress)
-                
-                # Generate video
-                try:
-                    # Create a video generator instance
-                    video_generator = BeatVideoGenerator()
-                    
-                    # Generate the counter video
-                    success = video_generator.create_counter_video(
-                        audio_file=input_path,
-                        output_file=video_file,
-                        beat_timestamps=beat_timestamps,
-                        downbeats=downbeats,
-                        meter=detected_meter,
-                        progress_callback=sync_video_progress_callback
-                    )
-                    
-                    # Update progress to finalizing
-                    update_progress("Finalizing video", 0.9)  # 90%
-                    
-                    # Check if video was created despite warnings
-                    if success or video_file.exists():
-                        # Final progress update
-                        update_progress("Video generation complete", 1.0)  # 100%
-
-                        # Get final stdout and stderr
-                        final_stdout, final_stderr = self._io_capture.get_output()
-
-                        # Log success
-                        safe_info(f"Video generation complete: {video_file}")
-
-                        # Return success result
-                        return {
-                            'file_id': file_id,
-                            'file_path': file_path,
-                            'beats_file': beats_file,
-                            'video_file': str(video_file),
-                            'progress': {
-                                'status': 'Video generation complete',
-                                'percent': 100
-                            },
-                            'video_generation_output': {
-                                'stdout': final_stdout,
-                                'stderr': final_stderr
-                            }
-                        }
-
-                    else:
-                        # Get final stdout and stderr
-                        final_stdout, final_stderr = self._io_capture.get_output()
-
-                        # Log success with warning
-                        warning_msg = "Video generation completed with warnings. Video file not found."
-                        safe_warning(warning_msg)
-
-                        # Return warning result
-                        return {
-                            'file_id': file_id,
-                            'file_path': file_path,
-                            'beats_file': beats_file,
-                            'video_file': str(video_file),
-                            'warning': warning_msg,
-                            'progress': {
-                                'status': 'Video generation completed with warnings',
-                                'percent': 100
-                            },
-                            'video_generation_output': {
-                                'stdout': final_stdout,
-                                'stderr': final_stderr
-                            }
-                        }
-
-                except Exception as video_error:
-                    # Check if the video file was created despite the error
-                    if video_file.exists() and video_file.stat().st_size > 0:
-                        warning_msg = (
-                            f"Warning during video generation: {video_error}, "
-                            "but video file was created successfully"
-                        )
-                        safe_print(warning_msg)
-                        self._io_capture.stdout_capture.write(warning_msg + "\n")
-                        
-                        # Make sure the final progress update is sent
-                        update_progress(
-                            "Video generation complete (with warnings)",
-                            1.0  # 100%
-                        )
-                        
-                        # Get final stdout and stderr
-                        final_stdout, final_stderr = self._io_capture.get_output()
-                            
-                        # Log success with warning
-                        safe_info(f"Successfully generated video for file {file_id} (with warning)")
-                        safe_print(f"Successfully generated video for file {file_id} (with warning)")
-                        
-                        # Return success with warning
-                        return {
-                            'file_id': file_id,
-                            'file_path': file_path,
-                            'beats_file': beats_file,
-                            'video_file': str(video_file),
-                            'warning': str(video_error),
-                            'progress': {
-                                'status': 'Video generation complete (with warnings)',
-                                'percent': 100
-                            },
-                            'video_generation_output': {
-                                'stdout': final_stdout,
-                                'stderr': final_stderr
-                            }
-                        }
-                    else:
-                        # Re-raise the exception if no video was created
-                        raise
-                        
-            except Exception as e:
-                # Log the error
-                error_msg = f"Video generation error: {str(e)}"
-                safe_error(error_msg)
-                self._io_capture.write_stderr(error_msg)
-                
-                # Get current stdout and stderr
-                current_stdout, current_stderr = self._io_capture.get_output()
-                
-                # Update task state with error information
-                self.update_state(state=states.FAILURE, meta={
-                    "file_id": file_id,
-                    "file_path": file_path,
-                    "beats_file": beats_file,
-                    "error": str(e),
-                    "progress": {
-                        "status": "Error: " + str(e),
-                        "percent": 0
-                    },
-                    "video_generation_output": {
-                        "stdout": current_stdout,
-                        "stderr": current_stderr
-                    }
-                })
-                
-                # Log error
-                safe_error(f"Video generation error for file {file_id}: {str(e)}")
-                safe_print(f"Video generation error for file {file_id}: {str(e)}")
-                
-                # Re-raise the exception
-                raise
-                
-        except Exception as e:
+            # Create a dictionary from the returned values for compatibility
+            beat_data = {
+                'beats': beat_timestamps,
+                'downbeats': downbeats,
+                'intro_end_idx': intro_end_idx,
+                'ending_start_idx': ending_start_idx,
+                'detected_meter': detected_meter
+            }
+            
+            # Check if beat data is valid
+            if beat_timestamps is None or len(beat_timestamps) == 0:
+                raise ValueError("No beat data found")
+            
+            # Create beats array
+            beats_array = beat_timestamps
+            
+            # Create video generator
+            def sync_video_progress_callback(status, progress):
+                # Calculate adjusted progress (50% to 90% range)
+                adjusted_progress = 0.5 + (progress * 0.4)
+                update_progress(status, adjusted_progress)
+            
+            # Generate the visualization video
+            update_progress("Generating visualization", 0.5)
+            
+            # Initialize video generator
+            video_generator = BeatVideoGenerator(
+                progress_callback=sync_video_progress_callback
+            )
+            
+            # Generate video
+            video_file = video_generator.generate_video(
+                audio_path, 
+                beats_array,
+                output_path=str(video_output),
+                downbeats=beat_data.get('downbeats', []),
+                detected_meter=beat_data.get('detected_meter', 4)
+            )
+            
+            # Update metadata
+            metadata["video_file"] = str(video_output)
+            
+            # Save updated metadata
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+            
+            # Final progress update
+            update_progress("Video generation complete", 1.0)
+            
             # Get final stdout and stderr
             final_stdout, final_stderr = self._io_capture.get_output()
             
-            # Return failure result with comprehensive information
+            # Return the results
             return {
-                'file_id': file_id,
-                'file_path': file_path,
-                'beats_file': beats_file,
-                'error': str(e),
-                'progress': {
-                    'status': 'Error: ' + str(e),
-                    'percent': 0
+                "file_id": file_id,
+                "audio_file": audio_path,
+                "beats_file": str(beats_file),
+                "video_file": str(video_output),
+                "progress": {
+                    "status": "Video generation complete",
+                    "percent": 100
                 },
-                'video_generation_output': {
-                    'stdout': final_stdout,
-                    'stderr': final_stderr
+                "video_generation_output": {
+                    "stdout": final_stdout,
+                    "stderr": final_stderr
+                }
+            }
+            
+        except Exception as e:
+            # Log the error
+            error_msg = f"Video generation error: {str(e)}"
+            safe_error(error_msg)
+            if hasattr(self, '_io_capture'):
+                self._io_capture.write_stderr(error_msg)
+            
+            # Get current stdout and stderr
+            stdout, stderr = "", ""
+            if hasattr(self, '_io_capture'):
+                stdout, stderr = self._io_capture.get_output()
+            
+            # Update task state with error information
+            self.update_state(state=states.FAILURE, meta={
+                "file_id": file_id,
+                "error": str(e),
+                "video_generation_output": {
+                    "stdout": stdout,
+                    "stderr": stderr
+                }
+            })
+            
+            # Return error information
+            return {
+                "file_id": file_id,
+                "error": str(e),
+                "video_generation_output": {
+                    "stdout": stdout,
+                    "stderr": stderr
                 }
             }

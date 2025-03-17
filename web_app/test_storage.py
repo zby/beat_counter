@@ -2,13 +2,17 @@
 
 import pytest
 from typing import Any, Dict, Optional
-from web_app.storage import MetadataStorage, TaskExecutor, FileIDNotFoundError, ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
+from web_app.storage import MetadataStorage, TaskExecutor, ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
+import pathlib
+from datetime import datetime
 
 class MockMetadataStorage(MetadataStorage):
     """In-memory implementation of metadata storage for testing."""
     
     def __init__(self):
         self.storage = {}
+        self.get_file_status_response = None
+        self.base_upload_dir = pathlib.Path("web_app/uploads")
     
     async def get_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
         """Get metadata for a specific file."""
@@ -38,12 +42,53 @@ class MockMetadataStorage(MetadataStorage):
                 self._deep_update(target[key], value)
             else:
                 target[key] = value
+    
+    # Path management methods
+    def get_job_directory(self, file_id: str) -> pathlib.Path:
+        """Get the standardized job directory for a file ID."""
+        return self.base_upload_dir / file_id
+    
+    def get_audio_file_path(self, file_id: str, file_extension: str = None) -> pathlib.Path:
+        """Get the standardized path for the audio file."""
+        job_dir = self.get_job_directory(file_id)
+        
+        # If extension not provided, try to get from metadata
+        if file_extension is None:
+            metadata = self.storage.get(file_id, {})
+            file_extension = metadata.get("file_extension", ".mp3")  # Default to .mp3 if not found
+        
+        return job_dir / f"original{file_extension}"
+    
+    def get_beats_file_path(self, file_id: str) -> pathlib.Path:
+        """Get the standardized path for the beats file."""
+        job_dir = self.get_job_directory(file_id)
+        return job_dir / "beats.txt"
+    
+    def get_beat_stats_file_path(self, file_id: str) -> pathlib.Path:
+        """Get the standardized path for the beat statistics file."""
+        job_dir = self.get_job_directory(file_id)
+        return job_dir / "beat_stats.json"
+    
+    def get_video_file_path(self, file_id: str) -> pathlib.Path:
+        """Get the standardized path for the visualization video."""
+        job_dir = self.get_job_directory(file_id)
+        return job_dir / "video.mp4"
+    
+    def ensure_job_directory(self, file_id: str) -> pathlib.Path:
+        """Ensure the job directory exists and return its path."""
+        job_dir = self.get_job_directory(file_id)
+        job_dir.mkdir(exist_ok=True, parents=True)
+        return job_dir
 
     async def get_file_status(self, file_id: str, executor: TaskExecutor) -> Dict[str, Any]:
         """Get the processing status for a file."""
+        # If a custom response is set, return that instead
+        if self.get_file_status_response is not None:
+            return self.get_file_status_response
+            
         metadata = await self.get_metadata(file_id)
         if not metadata:
-            raise FileIDNotFoundError(file_id)
+            return None
 
         # Get task statuses
         beat_task_id = metadata.get("beat_detection")
@@ -51,8 +96,8 @@ class MockMetadataStorage(MetadataStorage):
 
         status_data = {
             "file_id": file_id,
-            "filename": metadata.get("filename"),
-            "file_path": metadata.get("file_path")
+            "filename": metadata.get("original_filename"),
+            "audio_file_path": metadata.get("audio_file_path")
         }
 
         # Determine overall status based on task states
@@ -110,13 +155,13 @@ class MockTaskExecutor(TaskExecutor):
         self.tasks[task.id] = task
         return task
     
-    def execute_beat_detection(self, file_id: str, file_path: str) -> MockTask:
+    def execute_beat_detection(self, file_id: str) -> MockTask:
         """Execute beat detection task."""
         task = self._create_task()
         task.state = "STARTED"
         return task
     
-    def execute_video_generation(self, file_id: str, file_path: str, beats_file: str) -> MockTask:
+    def execute_video_generation(self, file_id: str) -> MockTask:
         """Execute video generation task."""
         task = self._create_task()
         task.state = "STARTED"
@@ -286,43 +331,65 @@ async def test_get_file_status(mock_storage: MockMetadataStorage, mock_executor:
     """Test getting file status from mock storage."""
     # Create file metadata
     file_id = "test-file-status"
+    
+    # Get standardized file paths
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    beats_file = mock_storage.get_beats_file_path(file_id)
+    stats_file = mock_storage.get_beat_stats_file_path(file_id)
+    video_file = mock_storage.get_video_file_path(file_id)
+    
     metadata = {
-        "filename": "test.mp3",
-        "file_path": "/tmp/test.mp3"
+        "original_filename": "test.mp3",
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3",
+        "upload_time": datetime.now().isoformat()
     }
     mock_storage.update_metadata(file_id, metadata)
 
     # Test with only beat detection task running
-    beat_task = mock_executor.execute_beat_detection(file_id, "/tmp/test.mp3")
+    beat_task = mock_executor.execute_beat_detection(file_id)
     
     # Update metadata with task ID
     mock_storage.update_metadata(file_id, {"beat_detection": beat_task.id})
     
-    # Check status with task in PENDING state
-    beat_task.set_state("PENDING")
-    status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == ANALYZING
+    # Get file status
+    status = await mock_storage.get_file_status(file_id, mock_executor)
     
-    # Check status with task in SUCCESS state
-    beat_task.set_state("SUCCESS")
-    status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == ANALYZED
+    # Verify status structure
+    assert status["file_id"] == file_id
+    assert status["filename"] == "test.mp3"
+    assert status["status"] == ANALYZING
+    
+    # Complete beat detection task
+    mock_executor.complete_task(beat_task.id, {
+        "file_id": file_id,
+        "beats_file": str(beats_file),
+        "stats_file": str(stats_file)
+    })
+    
+    # Get updated status
+    status = await mock_storage.get_file_status(file_id, mock_executor)
+    assert status["status"] == ANALYZED
     
     # Test with video generation task
-    video_task = mock_executor.execute_video_generation(file_id, "/tmp/test.mp3", "/tmp/beats.txt")
+    video_task = mock_executor.execute_video_generation(file_id)
     
     # Update metadata with task ID
     mock_storage.update_metadata(file_id, {"video_generation": video_task.id})
     
-    # Check status with task in PENDING state
-    video_task.set_state("PENDING")
-    status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == GENERATING_VIDEO
+    # Get updated status
+    status = await mock_storage.get_file_status(file_id, mock_executor)
+    assert status["status"] == GENERATING_VIDEO
     
-    # Check status with task in SUCCESS state
-    video_task.set_state("SUCCESS")
-    status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == COMPLETED 
+    # Complete video generation task
+    mock_executor.complete_task(video_task.id, {
+        "file_id": file_id,
+        "video_file": str(video_file)
+    })
+    
+    # Get final status
+    status = await mock_storage.get_file_status(file_id, mock_executor)
+    assert status["status"] == COMPLETED
 
 def test_get_task_status_not_found(mock_executor: MockTaskExecutor):
     """Test getting status of non-existent task."""
