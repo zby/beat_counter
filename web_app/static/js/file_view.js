@@ -411,10 +411,13 @@ function checkStatus() {
 function updateProgressBar(taskData) {
     // Determine which progress bar to update
     const selector = currentTaskType === 'video_generation' ? 
-        '#video-progress .progress-fill' : 
-        '#analysis-progress .progress-fill';
+        '#video-progress' : 
+        '#analysis-progress';
     
-    const progressBar = document.querySelector(selector);
+    const progressContainer = document.querySelector(selector);
+    if (!progressContainer) return;
+    
+    const progressBar = progressContainer.querySelector('.progress-fill');
     if (!progressBar) return;
     
     // Extract progress value
@@ -442,13 +445,19 @@ function updateProgressBar(taskData) {
     progressBar.style.width = `${progressValue}%`;
     
     // Update progress text if exists
-    const progressText = progressBar.parentElement.querySelector('.progress-text');
+    const progressText = progressContainer.querySelector('p');
     if (progressText) {
-        let text = `${Math.round(progressValue)}%`;
         if (progressStatus) {
-            text += ` - ${progressStatus}`;
+            // Use the detailed status message from the progress field without percentage
+            progressText.textContent = progressStatus;
+        } else {
+            // Fallback message if no detailed status is available
+            if (currentTaskType === 'video_generation') {
+                progressText.textContent = 'Generating video...';
+            } else {
+                progressText.textContent = 'Analyzing beats...';
+            }
         }
-        progressText.textContent = text;
     }
 }
 

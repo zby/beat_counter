@@ -375,46 +375,61 @@ class CeleryTaskExecutor(TaskExecutor):
             # Create a standardized response
             result_dict = {"state": state}
             
-            # Add result or structured data if available
-            if result is not None:
-                # Handle dictionary results
+            # Always try to get task metadata from Redis directly
+            try:
+                from redis import Redis
+                redis_client = Redis(host='localhost', port=6379, db=0, decode_responses=True)
+                redis_key = f"celery-task-meta-{task_id}"
+                
+                raw_result = redis_client.get(redis_key)
+                if raw_result:
+                    try:
+                        import json
+                        parsed = json.loads(raw_result)
+                        
+                        # Update state if available
+                        if "status" in parsed:
+                            result_dict["state"] = parsed["status"]
+                        
+                        # Include all data from Redis
+                        if "result" in parsed:
+                            # For STARTED tasks, the metadata is stored in parsed['result']
+                            if isinstance(parsed["result"], dict):
+                                # Include progress information if available
+                                if "progress" in parsed["result"]:
+                                    result_dict["progress"] = parsed["result"]["progress"]
+                                    
+                                # Include any other metadata fields
+                                for key, value in parsed["result"].items():
+                                    if key not in result_dict:
+                                        result_dict[key] = value
+                                
+                                # Don't store the complete result again to avoid duplication
+                            else:
+                                result_dict["result"] = parsed["result"]
+                        
+                        logger.info(f"Got task result from Redis directly for task {task_id}")
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to parse Redis result: {raw_result}")
+            except Exception as e:
+                logger.error(f"Error accessing Redis directly: {e}")
+            
+            # If we already have a result from AsyncResult and we didn't get one from Redis,
+            # add it to the response
+            if result is not None and "result" not in result_dict:
+                # Add result or structured data
                 if isinstance(result, dict):
-                    # Copy any relevant fields from the result dict
-                    if "error" in result:
-                        result_dict["error"] = result["error"]
-                    if "progress" in result:
-                        result_dict["progress"] = result["progress"]
-                    if "file_id" in result:
-                        result_dict["file_id"] = result["file_id"]
-                    if "video_file" in result:
-                        result_dict["video_file"] = result["video_file"]
-                    # Include the entire result dict
-                    result_dict["result"] = result
+                    # Include all fields from the result dict
+                    for key, value in result.items():
+                        if key not in result_dict:
+                            result_dict[key] = value
+                    # Don't store the complete result again to avoid duplication
                 else:
                     # For non-dict results, just set as result
                     result_dict["result"] = result
             
-            # Attempt to check Redis directly as a fallback
-            if state == "UNKNOWN" or (state == "SUCCESS" and result is None):
-                try:
-                    from redis import Redis
-                    redis_client = Redis(host='localhost', port=6379, db=0, decode_responses=True)
-                    redis_key = f"celery-task-meta-{task_id}"
-                    
-                    raw_result = redis_client.get(redis_key)
-                    if raw_result:
-                        try:
-                            import json
-                            parsed = json.loads(raw_result)
-                            if "status" in parsed:
-                                result_dict["state"] = parsed["status"]
-                            if "result" in parsed:
-                                result_dict["result"] = parsed["result"]
-                            logger.info(f"Got task result from Redis directly for task {task_id}")
-                        except json.JSONDecodeError:
-                            logger.error(f"Failed to parse Redis result: {raw_result}")
-                except Exception as e:
-                    logger.error(f"Error accessing Redis directly: {e}")
+            # Add the task ID to the response
+            result_dict["id"] = task_id
             
             return result_dict
         except Exception as e:
