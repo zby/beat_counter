@@ -75,6 +75,7 @@ def get_beat_statistics_dict(stats: BeatStatistics, irregular_beats: List[int],
         "min_interval": round(stats.min_interval, 3),
         "max_interval": round(stats.max_interval, 3),
         "irregular_beats_count": len(irregular_beats),
+        "total_beats": stats.total_beats,
         "irregularity_percent": round(stats.irregularity_percent, 1),
         "irregular_beat_indices": irregular_beats
     }

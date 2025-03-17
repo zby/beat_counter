@@ -20,7 +20,8 @@ def sample_beat_stats():
         std_interval=0.02,
         min_interval=0.45,
         max_interval=0.55,
-        irregularity_percent=5.2
+        irregularity_percent=5.2,
+        total_beats=10
     )
 
 @pytest.fixture
@@ -76,6 +77,7 @@ def test_save_beat_statistics(sample_beat_stats, sample_irregular_beats):
         assert saved_stats["tempo_bpm"] == 120.5
         assert saved_stats["mean_interval"] == 0.5
         assert saved_stats["irregular_beats_count"] == 3
+        assert saved_stats["total_beats"] == 10
         assert saved_stats["irregular_beat_indices"] == [2, 5, 8]
         assert saved_stats["filename"] == "test.mp3"
         assert saved_stats["detected_meter"] == 4
@@ -101,4 +103,26 @@ def test_rounding_of_values(sample_beat_stats, sample_irregular_beats):
         assert saved_stats["tempo_bpm"] == 120.5  # Rounded to 1 decimal
         assert saved_stats["mean_interval"] == 0.5  # Rounded to 3 decimals
         assert saved_stats["irregularity_percent"] == 5.2  # Rounded to 1 decimal
-        assert saved_stats["duration"] == 180.568  # Rounded to 3 decimals 
+        assert saved_stats["duration"] == 180.568  # Rounded to 3 decimals
+
+def test_missing_stats_file():
+    """Test handling of missing stats file."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        stats_file = pathlib.Path(temp_dir) / "nonexistent_stats.json"
+        
+        # Try to save to a file in a directory that doesn't exist
+        with pytest.raises(FileNotFoundError):
+            save_beat_statistics(
+                BeatStatistics(
+                    tempo_bpm=120.5,
+                    mean_interval=0.5,
+                    median_interval=0.498,
+                    std_interval=0.02,
+                    min_interval=0.45,
+                    max_interval=0.55,
+                    irregularity_percent=5.2,
+                    total_beats=10
+                ),
+                [1, 2, 3],
+                stats_file
+            ) 

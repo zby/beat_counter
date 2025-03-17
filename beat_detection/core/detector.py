@@ -22,6 +22,7 @@ class BeatStatistics:
     max_interval: float
     irregularity_percent: float
     tempo_bpm: float
+    total_beats: int
     
     def to_dict(self) -> Dict[str, float]:
         """Convert to dictionary for easy serialization."""
@@ -32,7 +33,8 @@ class BeatStatistics:
             'min_interval': self.min_interval,
             'max_interval': self.max_interval,
             'irregularity_percent': self.irregularity_percent,
-            'tempo_bpm': self.tempo_bpm
+            'tempo_bpm': self.tempo_bpm,
+            'total_beats': self.total_beats
         }
 
 
@@ -368,7 +370,8 @@ class BeatDetector:
                 min_interval=0,
                 max_interval=0,
                 irregularity_percent=0,
-                tempo_bpm=0
+                tempo_bpm=0,
+                total_beats=0
             ), []
         
         # Calculate intervals between consecutive beats
@@ -399,7 +402,8 @@ class BeatDetector:
             min_interval=min_interval,
             max_interval=max_interval,
             irregularity_percent=(len(irregular_beats) / len(intervals)) * 100,
-            tempo_bpm=60 / median_interval  # Convert interval to BPM
+            tempo_bpm=60 / median_interval,  # Convert interval to BPM
+            total_beats=len(intervals)
         )
         
         return stats, irregular_beats

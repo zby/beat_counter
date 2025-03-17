@@ -273,13 +273,6 @@ def detect_beats_task(
                     "file_id": file_id,
                     "file_path": file_path,
                     "beats_file": str(beats_file),
-                    "stats": {
-                        "bpm": stats.tempo_bpm,
-                        "total_beats": len(beat_timestamps),
-                        "duration": beat_timestamps[-1] if len(beat_timestamps) > 0 else 0,
-                        "irregularity_percent": stats.irregularity_percent,
-                        "detected_meter": detected_meter
-                    },
                     "progress": {
                         "status": "Beat detection complete",
                         "percent": 100
@@ -310,8 +303,8 @@ def detect_beats_task(
                     }
                 })
                 
-                # Re-raise the exception to mark the task as failed
-                raise
+                # Re-raise the exception with proper formatting for Celery
+                raise type(e)(str(e)) from e
                 
         except Exception:
             # This will be caught by the outer try-except in the context manager

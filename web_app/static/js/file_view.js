@@ -186,21 +186,12 @@ function handleStatus(statusData) {
             // Display results
             displayAnalysisResults(statusData);
             
-            // Check if we have valid stats based on task state
-            if (beatTask.state === 'SUCCESS') {
-                const stats = getStats(beatTask);
-                if (Object.keys(stats).length === 0) {
-                    // Show error for no stats even though task was successful
-                    const errorMessage = document.createElement('div');
-                    errorMessage.className = 'error-message';
-                    errorMessage.textContent = 'Error: Beat analysis completed but no statistics were found.';
-                    if (analysisResults) analysisResults.prepend(errorMessage);
-                }
-            } else if (beatTask.state === 'FAILURE' || beatTask.state === 'ERROR') {
-                // Show error for failed task
+            // Check if we have valid stats
+            if (!statusData.beat_stats) {
+                // Show error for no stats even though task was successful
                 const errorMessage = document.createElement('div');
                 errorMessage.className = 'error-message';
-                errorMessage.textContent = `Error: Beat analysis failed with state "${beatTask.state}".`;
+                errorMessage.textContent = 'Error: Beat analysis completed but no statistics were found.';
                 if (analysisResults) analysisResults.prepend(errorMessage);
             }
             
@@ -375,11 +366,8 @@ function updateVideoProgressBar(videoTask) {
 
 // Display analysis results
 function displayAnalysisResults(statusData) {
-    // Get beat detection task data
-    const beatTask = statusData.beat_detection_task || {};
-    
-    // Get stats from the beat detection task
-    const stats = getStats(beatTask);
+    // Get stats from the status data
+    const stats = getStats(statusData);
     
     // Update result display elements
     const resultBpm = document.getElementById('result-bpm');
@@ -470,21 +458,21 @@ function displayVideo(statusData) {
     }
 }
 
-// Extract stats from beat detection task
-function getStats(beatTask) {
-    // First, check if we have a valid task with a successful state
-    if (!beatTask || beatTask.state !== 'SUCCESS') {
-        console.log('Beat task not successful:', beatTask?.state);
-        return {};
+// Extract stats from status data
+function getStats(statusData) {
+    // First, check if we have valid stats in the status data
+    if (statusData && statusData.beat_stats) {
+        console.log('Found stats in status data');
+        return {
+            bpm: statusData.beat_stats.tempo_bpm,
+            total_beats: statusData.beat_stats.total_beats,
+            duration: statusData.beat_stats.duration,
+            irregularity_percent: statusData.beat_stats.irregularity_percent,
+            detected_meter: statusData.beat_stats.detected_meter
+        };
     }
     
-    // If successful, check for stats directly
-    if (beatTask.result && beatTask.result.stats) {
-        console.log('Found stats in beat task result');
-        return beatTask.result.stats;
-    }
-    
-    console.log('No stats found in successful beat task');
+    console.log('No stats found in status data');
     return {};
 }
 
