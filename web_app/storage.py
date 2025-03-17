@@ -195,6 +195,8 @@ class RedisMetadataStorage(MetadataStorage):
 
         if beat_task_id:
             beat_task_status = executor.get_task_status(beat_task_id)
+            # Ensure task ID is included
+            beat_task_status["id"] = beat_task_id
             status_data["beat_detection_task"] = beat_task_status
 
             if beat_task_status["state"] == "SUCCESS":
@@ -206,6 +208,8 @@ class RedisMetadataStorage(MetadataStorage):
 
         if video_task_id:
             video_task_status = executor.get_task_status(video_task_id)
+            # Ensure task ID is included
+            video_task_status["id"] = video_task_id
             status_data["video_generation_task"] = video_task_status
 
             if video_task_status["state"] == "SUCCESS":

@@ -346,7 +346,23 @@ def create_app(
         
         Returns the direct Celery task state and result without modification.
         """
-        return executor.get_task_status(task_id)
+        task_status = executor.get_task_status(task_id)
+        
+        # Add the task ID to the response
+        task_status["id"] = task_id
+        
+        # Determine task type based on task name if available
+        from celery.result import AsyncResult
+        task_result = AsyncResult(task_id)
+        
+        # Add task type if we can determine it
+        if hasattr(task_result, 'name'):
+            if 'detect_beats_task' in task_result.name:
+                task_status["task_type"] = 'beat_detection'
+            elif 'generate_video_task' in task_result.name:
+                task_status["task_type"] = 'video_generation'
+        
+        return task_status
 
     return app
 

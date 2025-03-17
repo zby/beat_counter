@@ -22,6 +22,8 @@ POLLING LOGIC:
 let currentFileId = null;
 let statusCheckInterval = null;
 let debugMode = true;
+let currentTaskId = null;  // Track the currently active task ID
+let currentTaskType = null;  // Track the task type (beat_detection or video_generation)
 
 // Initialize the application when the DOM is fully loaded
 document.addEventListener('DOMContentLoaded', function() {
@@ -159,8 +161,13 @@ function handleStatus(statusData) {
             // Update progress bar
             updateProgressBar(beatTask);
             
-            // Start polling
-            startStatusPolling();
+            // Set the beat detection task ID for polling
+            if (beatTask.id) {
+                currentTaskId = beatTask.id;
+                currentTaskType = 'beat_detection';
+                // Start polling
+                startStatusPolling();
+            }
             break;
             
         case 'ANALYZED':
@@ -196,6 +203,11 @@ function handleStatus(statusData) {
                 errorMessage.textContent = `Error: Beat analysis failed with state "${beatTask.state}".`;
                 if (analysisResults) analysisResults.prepend(errorMessage);
             }
+            
+            // Since analysis is complete, clear the task ID and stop polling
+            currentTaskId = null;
+            currentTaskType = null;
+            stopPolling();
             break;
             
         case 'ANALYZING_FAILURE':
@@ -204,6 +216,11 @@ function handleStatus(statusData) {
             analysisErrorMessage.className = 'error-message';
             analysisErrorMessage.textContent = 'Error: Beat analysis failed.';
             if (analysisResults) analysisResults.prepend(analysisErrorMessage);
+            
+            // Clear task ID and stop polling
+            currentTaskId = null;
+            currentTaskType = null;
+            stopPolling();
             break;
             
         case 'GENERATING_VIDEO':
@@ -228,8 +245,13 @@ function handleStatus(statusData) {
             // Update video progress bar
             updateVideoProgressBar(videoTask);
             
-            // Start polling
-            startStatusPolling();
+            // Set the video generation task ID for polling
+            if (videoTask.id) {
+                currentTaskId = videoTask.id;
+                currentTaskType = 'video_generation';
+                // Start polling
+                startStatusPolling();
+            }
             break;
             
         case 'COMPLETED':
@@ -264,6 +286,11 @@ function handleStatus(statusData) {
                     videoResults.prepend(errorMessage);
                 }
             }
+            
+            // Clear task ID and stop polling
+            currentTaskId = null;
+            currentTaskType = null;
+            stopPolling();
             break;
             
         case 'VIDEO_ERROR':
@@ -272,6 +299,11 @@ function handleStatus(statusData) {
             videoErrorMessage.className = 'error-message';
             videoErrorMessage.textContent = 'Error: Video generation failed.';
             if (videoResults) videoResults.prepend(videoErrorMessage);
+            
+            // Clear task ID and stop polling
+            currentTaskId = null;
+            currentTaskType = null;
+            stopPolling();
             break;
             
         case 'ERROR':
@@ -287,6 +319,11 @@ function handleStatus(statusData) {
             const errorMessage = 'An error occurred during processing: ' +
                 (errorDetails.length ? errorDetails.join(', ') : 'Unknown error');
             alert(errorMessage + '. Please try again or contact support.');
+            
+            // Clear task ID and stop polling
+            currentTaskId = null;
+            currentTaskType = null;
+            stopPolling();
             break;
             
         default:
@@ -474,111 +511,79 @@ function startStatusPolling() {
 
 // Check the current status of the file
 function checkStatus() {
-    if (!currentFileId) {
-        console.error('No file ID available for status check');
+    if (!currentTaskId) {
+        console.error('No task ID available for status check');
+        stopPolling();
         return;
     }
     
-    console.log('Checking status for file:', currentFileId);
+    console.log('Checking task status for task:', currentTaskId, 'type:', currentTaskType);
     
-    // Fetch the current status
-    fetch(`/status/${currentFileId}`)
+    // Fetch the current task status
+    fetch(`/task/${currentTaskId}`)
         .then(response => {
-            // If we get a 404, the file doesn't exist, so stop polling
             if (response.status === 404) {
-                console.error(`File with ID ${currentFileId} not found. Stopping polling.`);
+                console.error(`Task with ID ${currentTaskId} not found. Stopping polling.`);
                 stopPolling();
-                throw new Error('File not found');
+                throw new Error('Task not found');
             }
             
             if (!response.ok) {
-                throw new Error('Failed to fetch status');
+                throw new Error('Failed to fetch task status');
             }
             return response.json();
         })
         .then(data => {
-            // Update global state for debug panel
-            window.initialFileData = {
-                fileId: currentFileId,
-                status: data
-            };
+            console.log('Task status check result:', data);
             
-            // Update debug panel if enabled
-            if (debugMode) {
-                updateDebugPanel();
+            // If task is completed (success or failure), reload the page
+            if (data.state === 'SUCCESS' || data.state === 'FAILURE' || data.state === 'ERROR') {
+                console.log('Task completed, reloading page');
+                window.location.reload();
+                return;
             }
             
-            // Extract relevant information
-            const oldStatus = window.initialFileData.status.status;
-            const newStatus = data.status;
-            const beatTask = data.beat_detection_task || {};
-            const videoTask = data.video_generation_task || {};
+            // Get progress data - check multiple possible locations
+            let progressData = null;
             
-            console.log('Status check result:', { 
-                oldStatus, 
-                newStatus, 
-                beatTaskState: beatTask.state, 
-                videoTaskState: videoTask.state 
-            });
-            
-            // Determine if UI needs updating
-            let shouldUpdateUI = false;
-            
-            // Update UI in these cases:
-            // 1. If top-level status changed
-            if (oldStatus !== newStatus) {
-                console.log('Status changed from', oldStatus, 'to', newStatus);
-                shouldUpdateUI = true;
-            }
-            // 2. If we're in a polling state
-            else if (['ANALYZING', 'GENERATING_VIDEO'].includes(newStatus)) {
-                console.log('In polling state:', newStatus);
-                shouldUpdateUI = true;
-            }
-            // 3. If status is ANALYZED or COMPLETED (to ensure results are displayed)
-            else if (['ANALYZED', 'COMPLETED'].includes(newStatus)) {
-                console.log('In result display state:', newStatus);
-                shouldUpdateUI = true;
+            // Check direct progress field
+            if (data.progress) {
+                progressData = data.progress;
+            } 
+            // Check result.progress field
+            else if (data.result && typeof data.result === 'object' && data.result.progress) {
+                progressData = data.result.progress;
             }
             
-            // Update UI if needed
-            if (shouldUpdateUI) {
-                console.log('Updating UI for status:', newStatus);
-                handleStatus(data);
-            }
-            
-            // Determine if polling should stop
-            let shouldStopPolling = false;
-            
-            // Stop polling logic
-            if (newStatus === 'ANALYZED') {
-                // For ANALYZED, stop polling if beat task is completed successfully with stats
-                if (beatTask.state === 'SUCCESS' && beatTask.result && beatTask.result.stats) {
-                    stopPolling();
-                    console.log('Beat analysis completed successfully with stats');
-                } else {
-                    console.log('Beat analysis completed but no stats found, continuing polling');
+            // Update progress bar if we found progress data
+            if (progressData) {
+                const progressValue = typeof progressData === 'object' && progressData.percent ? 
+                    progressData.percent : progressData;
+                
+                // Update the appropriate progress bar based on current task type
+                const progressBar = document.querySelector(
+                    currentTaskType === 'video_generation' ? 
+                    '#video-progress .progress-fill' : 
+                    '#analysis-progress .progress-fill'
+                );
+                
+                if (progressBar) {
+                    progressBar.style.width = `${progressValue}%`;
+                    
+                    // Update progress text if exists
+                    const progressText = progressBar.parentElement.querySelector('.progress-text');
+                    if (progressText) {
+                        progressText.textContent = `${Math.round(progressValue)}%`;
+                    }
                 }
-            } else if (['FAILURE', 'ERROR'].includes(beatTask.state)) {
-                console.log('Beat analysis failed, stopping polling');
-                shouldStopPolling = true;
-            } else if (newStatus === 'COMPLETED' || newStatus === 'VIDEO_ERROR') {
-                // Stop polling when video generation is completed or fails
-                console.log(`Video generation ${newStatus === 'COMPLETED' ? 'completed' : 'failed'}, stopping polling`);
-                shouldStopPolling = true;
-            }
-            
-            // Stop polling if determined
-            if (shouldStopPolling) {
-                stopPolling();
             }
         })
         .catch(error => {
-            console.error('Error checking status:', error);
+            console.error('Error checking task status:', error);
             
-            // If polling is for a non-existent file, stop polling
-            if (error.message === 'File not found') {
-                console.log('Stopping polling for non-existent file');
+            // If polling is for a non-existent task, stop polling
+            if (error.message === 'Task not found') {
+                console.log('Stopping polling for non-existent task');
                 // Already cleared interval in the 404 handler
             }
         });
