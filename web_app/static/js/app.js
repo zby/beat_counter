@@ -85,6 +85,10 @@ function handleFileSelection() {
         // Display file info
         fileName.textContent = file.name;
         fileInfo.classList.remove('hidden');
+        
+        // IMPORTANT: This automatic upload is intentional and should not be removed.
+        // It provides immediate feedback to users when they select a file.
+        handleSubmit();
     }
 }
 

@@ -6,9 +6,9 @@ import tempfile
 from typing import Dict, Generator, List, Optional, Tuple
 import pytest
 from fastapi.testclient import TestClient
-from web_app.app import create_app, RedisMetadataStorage, CeleryTaskExecutor
+from web_app.app import create_app, CeleryTaskExecutor
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from web_app.storage import ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR, MetadataStorage, TaskExecutor
+from web_app.storage import ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR, MetadataStorage, TaskExecutor, FileMetadataStorage
 from web_app.test_storage import MockMetadataStorage, MockTask, MockTaskExecutor
 import uuid
 from datetime import datetime
@@ -628,13 +628,13 @@ async def test_file_page_status(
         # Verify basic file information is present in the HTML
         assert file_id in response_html
         
-        # Verify task status information is present
+        # Verify the overall status is present in the data attributes
         if beat_state is not None:
-            assert beat_state in response_html
-            if beat_state == "SUCCESS":
-                assert "beats.json" in response_html
-        
-        if video_state is not None:
-            assert video_state in response_html
-            if video_state == "SUCCESS":
-                assert "video.mp4" in response_html 
+            if beat_state == "SUCCESS" and video_state == "SUCCESS":
+                assert 'data-status="COMPLETED"' in response_html
+            elif beat_state == "SUCCESS" and video_state == "PENDING":
+                assert 'data-status="GENERATING_VIDEO"' in response_html
+            elif beat_state == "PENDING":
+                assert 'data-status="ANALYZING"' in response_html
+            elif beat_state == "SUCCESS":
+                assert 'data-status="ANALYZED"' in response_html 

@@ -97,19 +97,33 @@
 
     <div id="debug-panel" class="debug-panel"></div>
     
-    <!-- Pass data directly to JavaScript -->
+    <!-- Pass data to JavaScript via hidden element -->
+    <div id="file-data" 
+         data-file-id="{{ file_id }}"
+         data-status="{{ file_status.status }}"
+         data-beat-detection-task-id="{{ file_status.beat_detection_task.id if file_status.beat_detection_task else '' }}"
+         data-video-generation-task-id="{{ file_status.video_generation_task.id if file_status.video_generation_task else '' }}"
+         data-bpm="{{ file_status.beat_stats.tempo_bpm if file_status.beat_stats and file_status.beat_stats.tempo_bpm else 0 }}"
+         data-total-beats="{{ file_status.beat_stats.total_beats if file_status.beat_stats and file_status.beat_stats.total_beats else 0 }}"
+         data-duration="{{ file_status.beat_stats.duration if file_status.beat_stats and file_status.beat_stats.duration else 0 }}"
+         data-detected-meter="{{ file_status.beat_stats.detected_meter if file_status.beat_stats and file_status.beat_stats.detected_meter else 0 }}"
+         style="display:none;">
+    </div>
+    
+    <!-- Initialize data in JavaScript -->
     <script>
-        // Create the data object on the server side and pass it as JSON
-        window.initialFileData = {{ {
-            "fileId": file_id,
-            "status": file_status.status,
-            "beatDetectionTaskId": file_status.beat_detection_task.id if file_status.beat_detection_task else "",
-            "videoGenerationTaskId": file_status.video_generation_task.id if file_status.video_generation_task else "",
-            "bpm": file_status.beat_stats.tempo_bpm if file_status.beat_stats else 0,
-            "totalBeats": file_status.beat_stats.total_beats if file_status.beat_stats else 0,
-            "duration": file_status.beat_stats.duration if file_status.beat_stats else 0,
-            "detectedMeter": file_status.beat_stats.detected_meter if file_status.beat_stats else 0
-        } | tojson | safe }};
+        // Parse data from HTML attributes
+        const dataElement = document.getElementById('file-data');
+        window.initialFileData = {
+            fileId: dataElement.getAttribute('data-file-id'),
+            status: dataElement.getAttribute('data-status'),
+            beatDetectionTaskId: dataElement.getAttribute('data-beat-detection-task-id'),
+            videoGenerationTaskId: dataElement.getAttribute('data-video-generation-task-id'),
+            bpm: Number(dataElement.getAttribute('data-bpm') || 0),
+            totalBeats: Number(dataElement.getAttribute('data-total-beats') || 0),
+            duration: Number(dataElement.getAttribute('data-duration') || 0),
+            detectedMeter: Number(dataElement.getAttribute('data-detected-meter') || 0)
+        };
     </script>
     
     <!-- Load JavaScript at the end of the body -->

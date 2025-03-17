@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 # Local imports
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from web_app.storage import MetadataStorage, TaskExecutor, RedisMetadataStorage, FileMetadataStorage, CeleryTaskExecutor, ANALYZING, ANALYZED, ANALYZING_FAILURE, COMPLETED, ERROR, GENERATING_VIDEO, VIDEO_ERROR
+from web_app.storage import MetadataStorage, TaskExecutor, FileMetadataStorage, CeleryTaskExecutor, ANALYZING, ANALYZED, ANALYZING_FAILURE, COMPLETED, ERROR, GENERATING_VIDEO, VIDEO_ERROR
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -286,39 +286,18 @@ def create_app(
         if not metadata:
             raise HTTPException(status_code=404, detail=f"File with ID {file_id} not found")
             
-        # Get complete file status with task information
+        # Get simplified file status - we don't need detailed task status in the initial page load
         file_status = await storage.get_file_status(file_id, executor)
         
-        # Add debug information to status
-        if "beat_detection" in metadata and "beat_detection_task" not in file_status:
-            task_id = metadata["beat_detection"]
-            task_status = executor.get_task_status(task_id)
-            file_status["beat_detection_task"] = {
-                "id": task_id,
-                "state": task_status.get("state", "UNKNOWN"),
-                "result": task_status.get("result", None)
-            }
+        # Just add the task IDs directly to the template data
+        # The frontend will poll for task status directly from the /task endpoint
+        template_data = {
+            "request": request,
+            "file_id": file_id,
+            "file_status": file_status
+        }
         
-        if "video_generation" in metadata and "video_generation_task" not in file_status:
-            task_id = metadata["video_generation"]
-            task_status = executor.get_task_status(task_id)
-            file_status["video_generation_task"] = {
-                "id": task_id,
-                "state": task_status.get("state", "UNKNOWN"),
-                "result": task_status.get("result", None)
-            }
-        
-        # Log what we're passing to the template for debugging
-        logger.info(f"Rendering file_view.html with file_id={file_id} and status={file_status}")
-
-        return templates.TemplateResponse(
-            "file_view.html",
-            {
-                "request": request,
-                "file_id": file_id,
-                "file_status": file_status
-            }
-        )
+        return templates.TemplateResponse("file_view.html", template_data)
 
     @app.get("/download/{file_id}")
     async def download_video(
@@ -356,12 +335,14 @@ def create_app(
         task_id: str,
         executor: TaskExecutor = Depends(get_task_executor)
     ):
-        """Get the status of a Celery task."""
+        """Get the raw status of a Celery task.
+        
+        Returns the direct Celery task state and result without modification.
+        """
         task_status = executor.get_task_status(task_id)
         
         # Add the task ID to the response
         task_status["id"] = task_id
-        
         return task_status
 
     return app

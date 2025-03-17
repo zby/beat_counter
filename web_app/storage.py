@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 import json
 import logging
-import redis
 import os
 import pathlib
 from datetime import datetime
@@ -117,289 +116,75 @@ class TaskExecutor(ABC):
         """Get status of a task."""
         pass
 
-class RedisMetadataStorage(MetadataStorage):
-    """Redis implementation of metadata storage."""
+class FileMetadataStorage(MetadataStorage):
+    """File-based metadata storage implementation."""
     
-    def __init__(self, host='localhost', port=6379, db=0, prefix='file_metadata:'):
-        """Initialize Redis connection."""
-        self.client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
-        self.prefix = prefix
-        self.base_upload_dir = pathlib.Path("web_app/uploads")
-        
-        # Test the connection
-        try:
-            self.client.ping()
-            logger.info("Redis connection successful")
-        except redis.exceptions.ConnectionError as e:
-            logger.error(f"Failed to connect to Redis: {e}")
-            raise RuntimeError("Redis connection failed. Make sure Redis is running.")
-
-    def _get_key(self, file_id: str) -> str:
-        """Get the Redis key for a file ID."""
-        return f"{self.prefix}{file_id}"
-
-    def _get_metadata_sync(self, file_id: str) -> Optional[Dict[str, Any]]:
-        """Synchronous version of get_metadata for internal use."""
-        try:
-            redis_key = self._get_key(file_id)
-            metadata_json = self.client.get(redis_key)
-            
-            if metadata_json:
-                return json.loads(metadata_json)
-            return None
-        except Exception as e:
-            logger.error(f"Error getting metadata from Redis: {e}")
-            return None
-
-    async def get_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
-        """Get metadata for a specific file."""
-        return self._get_metadata_sync(file_id)
-
-    def update_metadata(self, file_id: str, metadata: Dict[str, Any]) -> None:
-        """Update metadata for a specific file."""
-        try:
-            redis_key = self._get_key(file_id)
-            # Get existing metadata or initialize empty dict
-            existing = self._get_metadata_sync(file_id) or {}
-            
-            # Deep update the metadata
-            self._deep_update(existing, metadata)
-            
-            # Save updated metadata to Redis
-            self.client.set(redis_key, json.dumps(existing), ex=604800)  # 7 days expiration
-        except Exception as e:
-            logger.error(f"Error updating metadata in Redis: {e}")
-            raise
-
-    async def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
-        """Get metadata for all files."""
-        try:
-            all_metadata = {}
-            
-            # Get all keys matching the file metadata prefix
-            for key in self.client.keys(f"{self.prefix}*"):
-                file_id = key.replace(self.prefix, '')
-                metadata = await self.get_metadata(file_id)
-                if metadata:
-                    all_metadata[file_id] = metadata
-            
-            return all_metadata
-        except Exception as e:
-            logger.error(f"Error getting all metadata from Redis: {e}")
-            return {}
-
-    def delete_metadata(self, file_id: str) -> bool:
-        """Delete metadata for a specific file."""
-        try:
-            redis_key = self._get_key(file_id)
-            return self.client.delete(redis_key) > 0
-        except Exception as e:
-            logger.error(f"Error deleting metadata from Redis: {e}")
-            return False
-
-    def _deep_update(self, target: Dict, source: Dict) -> None:
-        """Helper function for deep updating dictionaries."""
-        for key, value in source.items():
-            if isinstance(value, dict) and key in target and isinstance(target[key], dict):
-                self._deep_update(target[key], value)
-            else:
-                target[key] = value
-
-    def _parse_beat_stats_file(self, stats_file_path: str) -> Dict[str, Any]:
-        """Parse beat statistics from a JSON file.
+    def __init__(self, base_dir: str):
+        """Initialize the file-based metadata storage.
         
         Args:
-            stats_file_path: Path to the beat stats JSON file
-            
-        Returns:
-            Dict containing the parsed beat statistics
+            base_dir: Base directory for file storage
         """
-        if not os.path.exists(stats_file_path):
-            logger.warning(f"Beat stats file not found: {stats_file_path}")
-            return {}
-        
-        try:
-            with open(stats_file_path, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse beat stats file as JSON: {e}")
-            return {}
-        except Exception as e:
-            logger.error(f"Error reading beat stats file: {e}")
-            return {}
-
-    async def get_file_status(self, file_id: str, executor: 'TaskExecutor') -> Dict[str, Any]:
-        """Get the processing status for a file."""
-        metadata = await self.get_metadata(file_id)
-        if not metadata:
-            return None
-
-        # Get task statuses
-        beat_task_id = metadata.get("beat_detection")
-        video_task_id = metadata.get("video_generation")
-
-        status_data = {
-            "file_id": file_id,
-            "filename": metadata.get("original_filename"),
-            "audio_file_path": metadata.get("audio_file_path")
-        }
-
-        # Determine overall status based on task states
-        overall_status = ERROR
-
-        if beat_task_id:
-            beat_task_status = executor.get_task_status(beat_task_id)
-            # Ensure task ID is included
-            beat_task_status["id"] = beat_task_id
-            status_data["beat_detection_task"] = beat_task_status
-
-            if beat_task_status["state"] == "SUCCESS":
-                overall_status = ANALYZED
-            elif beat_task_status["state"] == "FAILURE":
-                overall_status = ANALYZING_FAILURE
-            else:
-                overall_status = ANALYZING
-
-        if video_task_id:
-            video_task_status = executor.get_task_status(video_task_id)
-            # Ensure task ID is included
-            video_task_status["id"] = video_task_id
-            status_data["video_generation_task"] = video_task_status
-
-            if video_task_status["state"] == "SUCCESS":
-                overall_status = COMPLETED
-            elif video_task_status["state"] == "FAILURE":
-                overall_status = VIDEO_ERROR
-            else:
-                overall_status = GENERATING_VIDEO
-
-        # Add overall status to response
-        status_data["status"] = overall_status
-
-        # Check for beat stats file and load it if it exists (regardless of task status)
-        if beat_task_status.get("state") == "SUCCESS":
-            stats_file = self.get_beat_stats_file_path(file_id)
-            if stats_file.exists():
-                stats_data = self._parse_beat_stats_file(str(stats_file))
-                if stats_data:
-                    status_data["beat_stats"] = stats_data
-
-        return status_data
-    
-    # Path management methods
-    def get_job_directory(self, file_id: str) -> pathlib.Path:
-        """Get the standardized job directory for a file ID."""
-        return self.base_upload_dir / file_id
-    
-    def get_audio_file_path(self, file_id: str, file_extension: str = None) -> pathlib.Path:
-        """Get the standardized path for the audio file."""
-        job_dir = self.get_job_directory(file_id)
-        
-        # If extension not provided, try to get from metadata
-        if file_extension is None:
-            metadata = self._get_metadata_sync(file_id) or {}
-            file_extension = metadata.get("file_extension", ".mp3")  # Default to .mp3 if not found
-        
-        return job_dir / f"original{file_extension}"
-    
-    def get_beats_file_path(self, file_id: str) -> pathlib.Path:
-        """Get the standardized path for the beats file."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "beats.txt"
-    
-    def get_beat_stats_file_path(self, file_id: str) -> pathlib.Path:
-        """Get the standardized path for the beat statistics file."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "beat_stats.json"
-    
-    def get_video_file_path(self, file_id: str) -> pathlib.Path:
-        """Get the standardized path for the visualization video."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "video.mp4"
-    
-    def ensure_job_directory(self, file_id: str) -> pathlib.Path:
-        """Ensure the job directory exists and return its path."""
-        job_dir = self.get_job_directory(file_id)
-        job_dir.mkdir(exist_ok=True, parents=True)
-        return job_dir
-
-# Add the new FileMetadataStorage class
-class FileMetadataStorage(MetadataStorage):
-    """File-based implementation of metadata storage with standardized directory structure."""
-    
-    def __init__(self, base_dir: str = "web_app/uploads"):
-        """Initialize the storage with a base directory."""
         self.base_upload_dir = pathlib.Path(base_dir)
-        # Ensure the base directory exists
-        self.base_upload_dir.mkdir(exist_ok=True, parents=True)
-        logger.info(f"File metadata storage initialized with base directory: {self.base_upload_dir}")
+        self.base_upload_dir.mkdir(parents=True, exist_ok=True)
+        self._stats_cache = {}
     
-    def get_metadata_file_path(self, file_id: str) -> pathlib.Path:
-        """Get the path to the metadata JSON file for a file ID."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "metadata.json"
-    
-    async def get_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
+    # Metadata management methods
+    async def get_metadata(self, file_id: str) -> Dict[str, Any]:
         """Get metadata for a specific file."""
-        metadata_file = self.get_metadata_file_path(file_id)
-        
+        metadata_file = self.get_job_directory(file_id) / "metadata.json"
         if not metadata_file.exists():
             return None
         
-        try:
-            async with aiofiles.open(metadata_file, 'r') as f:
-                metadata_json = await f.read()
-                return json.loads(metadata_json)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse metadata file as JSON: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Error reading metadata file: {e}")
-            return None
+        async with aiofiles.open(metadata_file, "r") as f:
+            content = await f.read()
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse metadata for file {file_id}")
+                return None
     
-    def get_metadata_sync(self, file_id: str) -> Optional[Dict[str, Any]]:
-        """Synchronous version of get_metadata for internal use."""
-        metadata_file = self.get_metadata_file_path(file_id)
-        
+    def get_metadata_sync(self, file_id: str) -> Dict[str, Any]:
+        """Synchronous version of get_metadata."""
+        metadata_file = self.get_job_directory(file_id) / "metadata.json"
         if not metadata_file.exists():
             return None
         
         try:
-            with open(metadata_file, 'r') as f:
+            with open(metadata_file, "r") as f:
                 return json.load(f)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse metadata file as JSON: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Error reading metadata file: {e}")
+        except (json.JSONDecodeError, IOError):
+            logger.error(f"Failed to parse metadata for file {file_id}")
             return None
     
     def update_metadata(self, file_id: str, metadata: Dict[str, Any]) -> None:
         """Update metadata for a specific file."""
+        job_dir = self.get_job_directory(file_id)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        
+        metadata_file = job_dir / "metadata.json"
+        
+        # If metadata file exists, merge with existing data
+        existing = self.get_metadata_sync(file_id) or {}
+        
+        # Update existing metadata with new data
+        for key, value in metadata.items():
+            existing[key] = value
+        
         try:
-            # Ensure job directory exists
-            job_dir = self.ensure_job_directory(file_id)
-            metadata_file = self.get_metadata_file_path(file_id)
-            
-            # Get existing metadata or initialize empty dict
-            existing = self.get_metadata_sync(file_id) or {}
-            
-            # Deep update the metadata
-            self._deep_update(existing, metadata)
-            
-            # Save updated metadata to file
-            with open(metadata_file, 'w') as f:
+            with open(metadata_file, "w") as f:
                 json.dump(existing, f, indent=2)
-        except Exception as e:
-            logger.error(f"Error updating metadata file: {e}")
+        except IOError:
+            logger.exception(f"Failed to write metadata for file {file_id}")
             raise
     
     async def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
         """Get metadata for all files."""
         all_metadata = {}
         
-        # Find all job directories
+        # Find all job directories in the base directory
         try:
+            # List all directories in the base directory
             for job_dir in self.base_upload_dir.iterdir():
                 if job_dir.is_dir():
                     file_id = job_dir.name
@@ -413,39 +198,14 @@ class FileMetadataStorage(MetadataStorage):
     
     def delete_metadata(self, file_id: str) -> bool:
         """Delete metadata for a specific file."""
-        try:
-            metadata_file = self.get_metadata_file_path(file_id)
-            if metadata_file.exists():
+        metadata_file = self.get_job_directory(file_id) / "metadata.json"
+        if metadata_file.exists():
+            try:
                 metadata_file.unlink()
                 return True
-            return False
-        except Exception as e:
-            logger.error(f"Error deleting metadata file: {e}")
-            return False
-    
-    def _deep_update(self, target: Dict, source: Dict) -> None:
-        """Helper function for deep updating dictionaries."""
-        for key, value in source.items():
-            if isinstance(value, dict) and key in target and isinstance(target[key], dict):
-                self._deep_update(target[key], value)
-            else:
-                target[key] = value
-    
-    def _parse_beat_stats_file(self, stats_file_path: str) -> Dict[str, Any]:
-        """Parse beat statistics from a JSON file."""
-        if not os.path.exists(stats_file_path):
-            logger.warning(f"Beat stats file not found: {stats_file_path}")
-            return {}
-        
-        try:
-            with open(stats_file_path, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse beat stats file as JSON: {e}")
-            return {}
-        except Exception as e:
-            logger.error(f"Error reading beat stats file: {e}")
-            return {}
+            except IOError:
+                logger.exception(f"Failed to delete metadata for file {file_id}")
+        return False
     
     async def get_file_status(self, file_id: str, executor: 'TaskExecutor') -> Dict[str, Any]:
         """Get the processing status for a file."""
@@ -496,6 +256,7 @@ class FileMetadataStorage(MetadataStorage):
         status_data["status"] = overall_status
 
         # Check for beat stats file and load it if it exists (regardless of task status)
+        beat_task_status = status_data.get("beat_detection_task", {})
         if beat_task_status.get("state") == "SUCCESS":
             stats_file = self.get_beat_stats_file_path(file_id)
             if stats_file.exists():
@@ -504,6 +265,25 @@ class FileMetadataStorage(MetadataStorage):
                     status_data["beat_stats"] = stats_data
 
         return status_data
+    
+    def _parse_beat_stats_file(self, filepath: str) -> Dict[str, Any]:
+        """Parse a beats statistics file and return the data.
+        
+        The stats file is expected to be a JSON file with beat statistics.
+        """
+        # Check cache first
+        if filepath in self._stats_cache:
+            return self._stats_cache[filepath]
+            
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+                # Cache the parsed data
+                self._stats_cache[filepath] = data
+                return data
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to parse beat stats file {filepath}: {e}")
+            return None
     
     # Path management methods
     def get_job_directory(self, file_id: str) -> pathlib.Path:
