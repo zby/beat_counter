@@ -4,6 +4,7 @@ Reporting and statistics utilities.
 
 import numpy as np
 import pathlib
+import json
 from typing import List, Dict, Tuple, Any, Optional, Union
 from ..core.detector import BeatStatistics
 
@@ -41,11 +42,62 @@ def save_beat_timestamps(timestamps: np.ndarray, output_file: Union[str, pathlib
     save_beat_data(timestamps, output_file, downbeats, intro_end_idx, ending_start_idx, detected_meter)
 
 
+def get_beat_statistics_dict(stats: BeatStatistics, irregular_beats: List[int], 
+                            filename: Optional[str] = None,
+                            detected_meter: Optional[int] = None,
+                            duration: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Convert beat statistics to a dictionary for JSON serialization.
+    
+    Parameters:
+    -----------
+    stats : BeatStatistics
+        Beat statistics object
+    irregular_beats : list of int
+        List of indices of irregular beats
+    filename : str, optional
+        Original filename to include in the report
+    detected_meter : int, optional
+        Detected meter (time signature numerator)
+    duration : float, optional
+        Duration of the audio in seconds
+        
+    Returns:
+    --------
+    dict
+        Dictionary containing beat statistics
+    """
+    stats_dict = {
+        "tempo_bpm": round(stats.tempo_bpm, 1),
+        "mean_interval": round(stats.mean_interval, 3),
+        "median_interval": round(stats.median_interval, 3),
+        "std_interval": round(stats.std_interval, 3),
+        "min_interval": round(stats.min_interval, 3),
+        "max_interval": round(stats.max_interval, 3),
+        "irregular_beats_count": len(irregular_beats),
+        "irregularity_percent": round(stats.irregularity_percent, 1),
+        "irregular_beat_indices": irregular_beats
+    }
+    
+    if filename:
+        stats_dict["filename"] = filename
+        
+    if detected_meter is not None:
+        stats_dict["detected_meter"] = detected_meter
+        
+    if duration is not None:
+        stats_dict["duration"] = round(duration, 3)
+    
+    return stats_dict
+
+
 def save_beat_statistics(stats: BeatStatistics, irregular_beats: List[int], 
                          output_file: Union[str, pathlib.Path], 
-                         filename: Optional[str] = None) -> None:
+                         filename: Optional[str] = None,
+                         detected_meter: Optional[int] = None,
+                         duration: Optional[float] = None) -> None:
     """
-    Save beat statistics to a text file.
+    Save beat statistics to a JSON file.
     
     Parameters:
     -----------
@@ -57,20 +109,17 @@ def save_beat_statistics(stats: BeatStatistics, irregular_beats: List[int],
         Path to the output file
     filename : str, optional
         Original filename to include in the report
+    detected_meter : int, optional
+        Detected meter (time signature numerator)
+    duration : float, optional
+        Duration of the audio in seconds
     """
+    # Convert stats to a dictionary and save as JSON
+    stats_dict = get_beat_statistics_dict(stats, irregular_beats, filename, detected_meter, duration)
+    
+    # Save to JSON file
     with open(output_file, 'w') as f:
-        if filename:
-            f.write(f"File: {filename}\n")
-        f.write(f"Tempo: {stats.tempo_bpm:.1f} BPM\n")
-        f.write(f"Mean interval: {stats.mean_interval:.3f} seconds\n")
-        f.write(f"Median interval: {stats.median_interval:.3f} seconds\n")
-        f.write(f"Standard deviation: {stats.std_interval:.3f} seconds\n")
-        f.write(f"Min interval: {stats.min_interval:.3f} seconds\n")
-        f.write(f"Max interval: {stats.max_interval:.3f} seconds\n")
-        f.write(f"Irregular beats: {len(irregular_beats)} ({stats.irregularity_percent:.1f}%)\n")
-        if irregular_beats:
-            f.write("\nIrregular beats (indices):\n")
-            f.write(", ".join(map(str, irregular_beats)))
+        json.dump(stats_dict, f, indent=2)
 
 
 def save_batch_summary(file_stats: List[Tuple[str, Tuple[BeatStatistics, List[int]]]], 

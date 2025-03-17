@@ -246,7 +246,7 @@ def detect_beats_task(
                 
                 # Generate output file paths in the same directory as the input file
                 beats_file = output_dir / f"{input_path.stem}_beats.txt"
-                stats_file = output_dir / f"{input_path.stem}_beat_stats.txt"
+                stats_file = output_dir / f"{input_path.stem}_beat_stats.json"
                 
                 # Save beat timestamps and statistics
                 reporting.save_beat_timestamps(
@@ -257,7 +257,9 @@ def detect_beats_task(
                 
                 reporting.save_beat_statistics(
                     stats, irregular_beats, stats_file, 
-                    filename=input_path.name
+                    filename=input_path.name,
+                    detected_meter=detected_meter,
+                    duration=beat_timestamps[-1] if len(beat_timestamps) > 0 else 0
                 )
                 
                 # Final progress update

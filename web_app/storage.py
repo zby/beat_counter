@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import json
 import logging
 import redis
+import os
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -174,6 +175,29 @@ class RedisMetadataStorage(MetadataStorage):
             else:
                 target[key] = value
 
+    def _parse_beat_stats_file(self, stats_file_path: str) -> Dict[str, Any]:
+        """Parse beat statistics from a JSON file.
+        
+        Args:
+            stats_file_path: Path to the beat stats JSON file
+            
+        Returns:
+            Dict containing the parsed beat statistics
+        """
+        if not os.path.exists(stats_file_path):
+            logger.warning(f"Beat stats file not found: {stats_file_path}")
+            return {}
+        
+        try:
+            with open(stats_file_path, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse beat stats file as JSON: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error reading beat stats file: {e}")
+            return {}
+
     async def get_file_status(self, file_id: str, executor: 'TaskExecutor') -> Dict[str, Any]:
         """Get the processing status for a file."""
         metadata = await self.get_metadata(file_id)
@@ -221,6 +245,21 @@ class RedisMetadataStorage(MetadataStorage):
 
         # Add overall status to response
         status_data["status"] = overall_status
+
+        # Check for beat stats file and load it if it exists (regardless of task status)
+        file_path = metadata.get("file_path")
+        if file_path:
+            # Construct the expected path to the beat stats file
+            filename_with_ext = os.path.basename(file_path)
+            filename_without_ext = os.path.splitext(filename_with_ext)[0]
+            upload_dir = os.path.dirname(file_path)
+            stats_filename = f"{filename_without_ext}_beat_stats.json"
+            stats_file_path = os.path.join(upload_dir, stats_filename)
+            
+            # Parse the beat stats file
+            stats = self._parse_beat_stats_file(stats_file_path)
+            if stats:
+                status_data["beat_stats"] = stats
 
         return status_data
 
