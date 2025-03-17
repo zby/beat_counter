@@ -76,10 +76,6 @@ def safe_debug(message, *args, **kwargs):
 
 # We'll use Celery's built-in task state management instead of a separate metadata store
 
-# Set output directory
-OUTPUT_DIR = pathlib.Path(__file__).parent.absolute() / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
-
 # Maximum size for log output (10KB)
 MAX_LOG_SIZE = 10000
 
@@ -215,9 +211,9 @@ def detect_beats_task(
     
     with self._io_capture:
         try:
-            # Create output directory
-            output_path = OUTPUT_DIR / file_id
-            output_path.mkdir(exist_ok=True)
+            # Get the directory of the uploaded file to store output in the same place
+            input_path = pathlib.Path(file_path)
+            output_dir = input_path.parent
             
             # Initialize task state
             update_progress = create_progress_updater(
@@ -248,10 +244,9 @@ def detect_beats_task(
                     intro_end_idx, ending_start_idx, detected_meter
                 ) = detection_result
                 
-                # Generate output file paths
-                input_path = pathlib.Path(file_path)
-                beats_file = output_path / f"{input_path.stem}_beats.txt"
-                stats_file = output_path / f"{input_path.stem}_beat_stats.txt"
+                # Generate output file paths in the same directory as the input file
+                beats_file = output_dir / f"{input_path.stem}_beats.txt"
+                stats_file = output_dir / f"{input_path.stem}_beat_stats.txt"
                 
                 # Save beat timestamps and statistics
                 reporting.save_beat_timestamps(
@@ -354,9 +349,9 @@ def generate_video_task(
     
     with self._io_capture:
         try:
-            # Create output directory
-            output_path = OUTPUT_DIR / file_id
-            output_path.mkdir(exist_ok=True)
+            # Get the directory of the uploaded file to store output in the same place
+            input_path = pathlib.Path(file_path)
+            output_dir = input_path.parent
             
             # Initialize task state
             update_progress = create_progress_updater(
@@ -364,9 +359,8 @@ def generate_video_task(
             )
             update_progress("Initializing video generation", 0)
             
-            # Generate output video path
-            input_path = pathlib.Path(file_path)
-            video_file = output_path / f"{input_path.stem}_counter.mp4"
+            # Generate output video path in the same directory as the input file
+            video_file = output_dir / f"{input_path.stem}_counter.mp4"
             
             # Load beat data
             update_progress("Loading beat data", 0.1)  # 10%
