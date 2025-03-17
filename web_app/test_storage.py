@@ -2,7 +2,7 @@
 
 import pytest
 from typing import Any, Dict, Optional
-from web_app.storage import MetadataStorage, TaskExecutor, FileIDNotFoundError
+from web_app.storage import MetadataStorage, TaskExecutor, FileIDNotFoundError, ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
 
 class MockMetadataStorage(MetadataStorage):
     """In-memory implementation of metadata storage for testing."""
@@ -56,29 +56,29 @@ class MockMetadataStorage(MetadataStorage):
         }
 
         # Determine overall status based on task states
-        overall_status = "UNKNOWN"
+        overall_status = ERROR
 
         if beat_task_id:
             beat_task_status = executor.get_task_status(beat_task_id)
             status_data["beat_detection_task"] = beat_task_status
 
             if beat_task_status["state"] == "SUCCESS":
-                overall_status = "ANALYZED"
+                overall_status = ANALYZED
             elif beat_task_status["state"] == "FAILURE":
-                overall_status = "FAILED"
+                overall_status = ANALYZING_FAILURE
             else:
-                overall_status = "ANALYZING"
+                overall_status = ANALYZING
 
         if video_task_id:
             video_task_status = executor.get_task_status(video_task_id)
             status_data["video_generation_task"] = video_task_status
 
             if video_task_status["state"] == "SUCCESS":
-                overall_status = "COMPLETED"
+                overall_status = COMPLETED
             elif video_task_status["state"] == "FAILURE":
-                overall_status = "FAILED"
+                overall_status = VIDEO_ERROR
             else:
-                overall_status = "GENERATING_VIDEO"
+                overall_status = GENERATING_VIDEO
 
         # Add overall status to response
         status_data["status"] = overall_status
@@ -90,7 +90,7 @@ class MockTask:
     
     def __init__(self):
         self.id = str(id(self))
-        self.state = "PENDING"
+        self.state = "STARTED"
         self.result = None
     
     def set_state(self, state: str, result: Any = None) -> None:
@@ -111,27 +111,26 @@ class MockTaskExecutor(TaskExecutor):
         return task
     
     def execute_beat_detection(self, file_id: str, file_path: str) -> MockTask:
-        """Execute beat detection on a file."""
+        """Execute beat detection task."""
         task = self._create_task()
-        task.set_state("STARTED")
+        task.state = "STARTED"
         return task
     
     def execute_video_generation(self, file_id: str, file_path: str, beats_file: str) -> MockTask:
-        """Execute video generation for a file."""
+        """Execute video generation task."""
         task = self._create_task()
-        task.set_state("STARTED")
+        task.state = "STARTED"
         return task
     
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """Get the status of a task."""
+        """Get status of a task."""
         task = self.tasks.get(task_id)
         if not task:
-            return {"state": "UNKNOWN", "result": None}
-        
-        return {
-            "state": task.state,
-            "result": task.result
-        }
+            return {"state": ERROR, "result": None}
+        try:
+            return {"state": task.state, "result": task.result}
+        except Exception as e:
+            return {"state": ERROR, "error": str(e)}
     
     def complete_task(self, task_id: str, result: Any = None) -> None:
         """Complete a task with success state."""
@@ -198,7 +197,7 @@ def test_mock_task_methods():
     task = MockTask()
     
     # Test initial state
-    assert task.state == "PENDING"
+    assert task.state == "STARTED"
     assert task.result is None
     assert isinstance(task.id, str)
     
@@ -250,7 +249,7 @@ def test_task_status_structure():
     status = executor.get_task_status(task.id)
     assert isinstance(status, dict)
     assert "state" in status
-    assert status["state"] == "PENDING"
+    assert status["state"] == "STARTED"
     assert "result" in status
     assert status["result"] is None
     
@@ -278,57 +277,54 @@ def test_task_status_structure():
     status = executor.get_task_status("nonexistent")
     assert isinstance(status, dict)
     assert "state" in status
-    assert status["state"] == "UNKNOWN"
+    assert status["state"] == "ERROR"
     assert "result" in status
     assert status["result"] is None
 
 @pytest.mark.asyncio
 async def test_get_file_status(mock_storage: MockMetadataStorage, mock_executor: MockTaskExecutor):
-    """Test the get_file_status method in MockMetadataStorage."""
-    file_id = "test_file"
+    """Test getting file status from mock storage."""
+    # Create file metadata
+    file_id = "test-file-status"
     metadata = {
         "filename": "test.mp3",
-        "file_path": "/path/to/test.mp3"
+        "file_path": "/tmp/test.mp3"
     }
-    
-    # Test with no tasks
     mock_storage.update_metadata(file_id, metadata)
-    status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == "UNKNOWN"
+
+    # Test with only beat detection task running
+    beat_task = mock_executor.execute_beat_detection(file_id, "/tmp/test.mp3")
     
-    # Test with beat detection task in progress
-    beat_task = mock_executor._create_task()
-    beat_task.set_state("STARTED")
-    metadata["beat_detection"] = beat_task.id
-    mock_storage.update_metadata(file_id, metadata)
-    status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == "ANALYZING"
+    # Update metadata with task ID
+    mock_storage.update_metadata(file_id, {"beat_detection": beat_task.id})
     
-    # Test with beat detection task completed
+    # Check status with task in PENDING state
+    beat_task.set_state("PENDING")
+    status_data = await mock_storage.get_file_status(file_id, mock_executor)
+    assert status_data["status"] == ANALYZING
+    
+    # Check status with task in SUCCESS state
     beat_task.set_state("SUCCESS")
     status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == "ANALYZED"
+    assert status_data["status"] == ANALYZED
     
-    # Test with video generation task in progress
-    video_task = mock_executor._create_task()
-    video_task.set_state("STARTED")
-    metadata["video_generation"] = video_task.id
-    mock_storage.update_metadata(file_id, metadata)
+    # Test with video generation task
+    video_task = mock_executor.execute_video_generation(file_id, "/tmp/test.mp3", "/tmp/beats.txt")
+    
+    # Update metadata with task ID
+    mock_storage.update_metadata(file_id, {"video_generation": video_task.id})
+    
+    # Check status with task in PENDING state
+    video_task.set_state("PENDING")
     status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == "GENERATING_VIDEO"
+    assert status_data["status"] == GENERATING_VIDEO
     
-    # Test with video generation task completed
+    # Check status with task in SUCCESS state
     video_task.set_state("SUCCESS")
     status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == "COMPLETED"
-    
-    # Test with failed beat detection task
-    beat_task.set_state("FAILURE")
-    status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == "FAILED"
-    
-    # Test with failed video generation task
-    beat_task.set_state("SUCCESS")  # Reset beat task to success
-    video_task.set_state("FAILURE")
-    status_data = await mock_storage.get_file_status(file_id, mock_executor)
-    assert status_data["status"] == "FAILED" 
+    assert status_data["status"] == COMPLETED 
+
+def test_get_task_status_not_found(mock_executor: MockTaskExecutor):
+    """Test getting status of non-existent task."""
+    status = mock_executor.get_task_status("nonexistent")
+    assert status["state"] == "ERROR" 

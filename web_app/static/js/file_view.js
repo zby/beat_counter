@@ -12,7 +12,7 @@ POLLING LOGIC:
 2. When polling stops:
    - When status is 'ANALYZED' with valid stats and no video generation in progress - polling stops
    - When status is 'COMPLETED' - polling stops
-   - When status is 'ERROR' or 'FAILURE' - polling stops
+   - When status is 'ERROR', 'ANALYZING_FAILURE', or 'VIDEO_ERROR' - polling stops
 
 3. Error states (no polling):
    - When status is 'ANALYZED' but no valid stats are found - this is an error state, polling does not start
@@ -198,6 +198,14 @@ function handleStatus(statusData) {
             }
             break;
             
+        case 'ANALYZING_FAILURE':
+            // Show error for failed beat analysis
+            const analysisErrorMessage = document.createElement('div');
+            analysisErrorMessage.className = 'error-message';
+            analysisErrorMessage.textContent = 'Error: Beat analysis failed.';
+            if (analysisResults) analysisResults.prepend(analysisErrorMessage);
+            break;
+            
         case 'GENERATING_VIDEO':
             console.log('Showing video generation progress UI');
             // Show analysis results and video progress
@@ -258,8 +266,15 @@ function handleStatus(statusData) {
             }
             break;
             
+        case 'VIDEO_ERROR':
+            // Show error for failed video generation
+            const videoErrorMessage = document.createElement('div');
+            videoErrorMessage.className = 'error-message';
+            videoErrorMessage.textContent = 'Error: Video generation failed.';
+            if (videoResults) videoResults.prepend(videoErrorMessage);
+            break;
+            
         case 'ERROR':
-        case 'FAILURE':
             console.error('Processing error state:', status);
             // Show error message with more details
             const errorDetails = [];
@@ -269,15 +284,13 @@ function handleStatus(statusData) {
             if (videoTask.state === 'FAILURE' || videoTask.state === 'ERROR') {
                 errorDetails.push(`Video generation: ${videoTask.state}`);
             }
-            
-            const errorMessage = 'An error occurred during processing: ' + 
+            const errorMessage = 'An error occurred during processing: ' +
                 (errorDetails.length ? errorDetails.join(', ') : 'Unknown error');
-            
             alert(errorMessage + '. Please try again or contact support.');
             break;
             
         default:
-            console.warn('Unknown status:', status);
+            console.warn('Unexpected status:', status);
     }
 }
 
@@ -438,12 +451,19 @@ function getStats(beatTask) {
     return {};
 }
 
+// Stop polling for status updates
+function stopPolling() {
+    if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+        statusCheckInterval = null;
+        console.log('Polling stopped');
+    }
+}
+
 // Start polling for status updates
 function startStatusPolling() {
     // Clear any existing interval
-    if (statusCheckInterval) {
-        clearInterval(statusCheckInterval);
-    }
+    stopPolling();
     
     // Set up new polling interval (every 2 seconds)
     statusCheckInterval = setInterval(checkStatus, 2000);
@@ -467,10 +487,7 @@ function checkStatus() {
             // If we get a 404, the file doesn't exist, so stop polling
             if (response.status === 404) {
                 console.error(`File with ID ${currentFileId} not found. Stopping polling.`);
-                if (statusCheckInterval) {
-                    clearInterval(statusCheckInterval);
-                    statusCheckInterval = null;
-                }
+                stopPolling();
                 throw new Error('File not found');
             }
             
@@ -536,32 +553,24 @@ function checkStatus() {
             // Stop polling logic
             if (newStatus === 'ANALYZED') {
                 // For ANALYZED, stop polling if beat task is completed successfully with stats
-                if (beatTask.state === 'SUCCESS') {
-                    const stats = getStats(beatTask);
-                    if (Object.keys(stats).length > 0) {
-                        console.log('Beat analysis completed successfully with stats');
-                        shouldStopPolling = true;
-                    } else {
-                        console.log('Beat analysis completed but no stats found, continuing polling');
-                    }
-                } else if (['FAILURE', 'ERROR'].includes(beatTask.state)) {
-                    console.log('Beat analysis failed, stopping polling');
-                    shouldStopPolling = true;
+                if (beatTask.state === 'SUCCESS' && beatTask.result && beatTask.result.stats) {
+                    stopPolling();
+                    console.log('Beat analysis completed successfully with stats');
+                } else {
+                    console.log('Beat analysis completed but no stats found, continuing polling');
                 }
-            } 
-            // Always stop polling for these states
-            else if (['COMPLETED', 'ERROR', 'FAILURE'].includes(newStatus)) {
-                console.log('Terminal state reached:', newStatus);
+            } else if (['FAILURE', 'ERROR'].includes(beatTask.state)) {
+                console.log('Beat analysis failed, stopping polling');
+                shouldStopPolling = true;
+            } else if (newStatus === 'COMPLETED' || newStatus === 'VIDEO_ERROR') {
+                // Stop polling when video generation is completed or fails
+                console.log(`Video generation ${newStatus === 'COMPLETED' ? 'completed' : 'failed'}, stopping polling`);
                 shouldStopPolling = true;
             }
             
             // Stop polling if determined
             if (shouldStopPolling) {
-                console.log('Stopping polling');
-                if (statusCheckInterval) {
-                    clearInterval(statusCheckInterval);
-                    statusCheckInterval = null;
-                }
+                stopPolling();
             }
         })
         .catch(error => {

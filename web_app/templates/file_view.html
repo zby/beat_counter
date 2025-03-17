@@ -12,7 +12,6 @@
     <div class="container">
         <header>
             <h1>Beat Detection & Video Generator</h1>
-            <p>File: {{ file_status.get('filename', 'Unknown file') }}</p>
             <div class="navigation-links">
                 <a href="/" class="nav-link">Upload New File</a>
                 <a href="/processing_queue" class="nav-link">View Processing Queue</a>
@@ -20,6 +19,7 @@
         </header>
 
         <main>
+
             <!-- Analysis Section -->
             <section id="analysis-section" class="card">
                 <h2>Beat Analysis</h2>
@@ -54,8 +54,6 @@
                             <p id="result-meter">--</p>
                         </div>
                     </div>
-                    
-                    <!-- Beat chart visualization removed as requested -->
                     
                     <div class="button-group" id="analysis-buttons">
                         <button id="confirm-button" class="primary-button">Generate Video</button>

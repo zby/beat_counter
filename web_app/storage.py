@@ -9,6 +9,32 @@ import redis
 # Set up logger
 logger = logging.getLogger(__name__)
 
+# Define file processing states as string constants
+ANALYZING = "ANALYZING"
+ANALYZED = "ANALYZED"
+ANALYZING_FAILURE = "ANALYZING_FAILURE"
+GENERATING_VIDEO = "GENERATING_VIDEO"
+COMPLETED = "COMPLETED"
+VIDEO_ERROR = "VIDEO_ERROR"
+ERROR = "ERROR"
+
+# Set of all valid states for validation
+VALID_STATES = {
+    ANALYZING, ANALYZED, ANALYZING_FAILURE,
+    GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
+}
+
+def is_in_progress(state: str) -> bool:
+    """Check if a state indicates work is in progress.
+    
+    Args:
+        state: The state to check
+        
+    Returns:
+        bool: True if the state indicates work is in progress
+    """
+    return state in {ANALYZING, GENERATING_VIDEO}
+
 class MetadataStorage(ABC):
     """Abstract base class for metadata storage."""
     
@@ -165,29 +191,29 @@ class RedisMetadataStorage(MetadataStorage):
         }
 
         # Determine overall status based on task states
-        overall_status = "UNKNOWN"
+        overall_status = ERROR
 
         if beat_task_id:
             beat_task_status = executor.get_task_status(beat_task_id)
             status_data["beat_detection_task"] = beat_task_status
 
             if beat_task_status["state"] == "SUCCESS":
-                overall_status = "ANALYZED"
+                overall_status = ANALYZED
             elif beat_task_status["state"] == "FAILURE":
-                overall_status = "FAILED"
+                overall_status = ANALYZING_FAILURE
             else:
-                overall_status = "ANALYZING"
+                overall_status = ANALYZING
 
         if video_task_id:
             video_task_status = executor.get_task_status(video_task_id)
             status_data["video_generation_task"] = video_task_status
 
             if video_task_status["state"] == "SUCCESS":
-                overall_status = "COMPLETED"
+                overall_status = COMPLETED
             elif video_task_status["state"] == "FAILURE":
-                overall_status = "FAILED"
+                overall_status = VIDEO_ERROR
             else:
-                overall_status = "GENERATING_VIDEO"
+                overall_status = GENERATING_VIDEO
 
         # Add overall status to response
         status_data["status"] = overall_status
@@ -252,7 +278,7 @@ class TaskStatusManager:
             return result
         except Exception as e:
             logger.error(f"Error extracting task data: {e}")
-            return {"state": "UNKNOWN", "error": str(e)}
+            return {"state": ERROR, "error": str(e)}
 
     @staticmethod
     async def get_beat_detection_status(beat_detection_task_id: str) -> Dict[str, Any]:
@@ -263,7 +289,7 @@ class TaskStatusManager:
             return {
                 "id": beat_detection_task_id,
                 "type": "beat_detection",
-                "state": "UNKNOWN"
+                "state": ERROR
             }
         
         # Get basic task data
@@ -284,7 +310,7 @@ class TaskStatusManager:
             return {
                 "id": video_task_id,
                 "type": "video_generation",
-                "state": "UNKNOWN"
+                "state": ERROR
             }
         
         # Get basic task data

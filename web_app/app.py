@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 
 # Local imports
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from web_app.storage import MetadataStorage, TaskExecutor, RedisMetadataStorage, CeleryTaskExecutor, FileIDNotFoundError
+from web_app.storage import MetadataStorage, TaskExecutor, RedisMetadataStorage, CeleryTaskExecutor, FileIDNotFoundError, ANALYZING, ANALYZED, ANALYZING_FAILURE, COMPLETED, ERROR, GENERATING_VIDEO, VIDEO_ERROR
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -182,24 +182,24 @@ def create_app(
             beat_task_id = file_info.get("beat_detection")
             video_task_id = file_info.get("video_generation")
             
-            status = "unknown"
+            status = ERROR.lower()
             if beat_task_id:
                 beat_status = executor.get_task_status(beat_task_id)
                 if beat_status["state"] == "SUCCESS":
-                    status = "analyzed"
+                    status = ANALYZED.lower()
                 elif beat_status["state"] == "FAILURE":
-                    status = "failed"
+                    status = ERROR.lower()
                 else:
-                    status = "processing"
+                    status = ANALYZING.lower()
             
             if video_task_id:
                 video_status = executor.get_task_status(video_task_id)
                 if video_status["state"] == "SUCCESS":
-                    status = "completed"
+                    status = COMPLETED.lower()
                 elif video_status["state"] == "FAILURE":
-                    status = "failed"
+                    status = VIDEO_ERROR.lower()
                 else:
-                    status = "generating_video"
+                    status = GENERATING_VIDEO.lower()
             
             # Add to the list of files
             files_with_status.append({
@@ -253,7 +253,7 @@ def create_app(
         # Update metadata
         storage.update_metadata(file_id, {
             "video_generation": task.id,
-            "status": "GENERATING_VIDEO"
+            "status": GENERATING_VIDEO
         })
         
         logger.info(f"Started video generation for file {file_id}, task ID: {task.id}")
@@ -263,7 +263,7 @@ def create_app(
         
         if is_ajax:
             return {
-                "status": "generating_video",
+                "status": GENERATING_VIDEO.lower(),
                 "file_id": file_id,
                 "task_id": task.id,
                 "task_type": "video_generation"
@@ -309,6 +309,16 @@ def create_app(
         if not metadata:
             raise HTTPException(status_code=404, detail="File not found")
         
+        # First check if we have a direct video file path
+        video_file = metadata.get("video_file")
+        if video_file and os.path.exists(video_file):
+            return FileResponse(
+                path=video_file,
+                filename=os.path.basename(video_file),
+                media_type="video/mp4"
+            )
+        
+        # If no direct video file, check task status
         video_task_id = metadata.get("video_generation")
         if not video_task_id:
             raise HTTPException(status_code=400, detail="No video generation task found")
