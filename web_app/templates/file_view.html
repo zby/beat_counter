@@ -15,10 +15,39 @@
             <div class="navigation-links">
                 <a href="/" class="nav-link">Upload New File</a>
                 <a href="/processing_queue" class="nav-link">View Processing Queue</a>
+                {% if user %}
+                <span class="user-info">Welcome, {{ user.username }}</span>
+                <a href="/logout" class="nav-link">Logout</a>
+                {% else %}
+                <a href="/login" class="nav-link">Login</a>
+                {% endif %}
             </div>
         </header>
 
         <main>
+
+            <!-- File Information Section -->
+            <section id="file-info-section" class="card">
+                <h2>File Information</h2>
+                <div class="file-info-grid">
+                    <div class="info-item">
+                        <h3>Filename</h3>
+                        <p>{{ file_status.original_filename if file_status.original_filename else "Unknown file" }}</p>
+                    </div>
+                    <div class="info-item">
+                        <h3>Uploaded On</h3>
+                        <p>{{ file_status.upload_timestamp if file_status.upload_timestamp else "Unknown" }}</p>
+                    </div>
+                    <div class="info-item">
+                        <h3>Uploaded From</h3>
+                        <p>{{ file_status.user_ip if file_status.user_ip else "Unknown IP" }}</p>
+                    </div>
+                    <div class="info-item">
+                        <h3>File ID</h3>
+                        <p>{{ file_id }}</p>
+                    </div>
+                </div>
+            </section>
 
             <!-- Analysis Section -->
             <section id="analysis-section" class="card">

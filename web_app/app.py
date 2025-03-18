@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any, Callable, Protocol
 
 # Third-party imports
 import uvicorn
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, Cookie, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,6 +26,7 @@ from beat_detection.utils.constants import AUDIO_EXTENSIONS
 from web_app.celery_app import app as celery_app
 from web_app.storage import MetadataStorage, FileMetadataStorage
 from web_app.tasks import detect_beats_task, generate_video_task
+from web_app.auth import auth_manager, require_auth, get_current_user_from_cookie
 
 # Constants for task states
 ANALYZING = "ANALYZING"
@@ -35,6 +36,9 @@ GENERATING_VIDEO = "GENERATING_VIDEO"
 COMPLETED = "COMPLETED"
 VIDEO_ERROR = "VIDEO_ERROR"
 ERROR = "ERROR"
+
+# Number of files to show in processing queue
+MAX_QUEUE_FILES = 50
 
 # Set of all valid states for validation
 VALID_STATES = {
@@ -160,9 +164,82 @@ def create_app(
         return service
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    async def index(
+        request: Request,
+        user: Dict[str, Any] = Depends(get_current_user_from_cookie)
+    ):
         """Render the main page."""
-        return templates.TemplateResponse("index.html", {"request": request})
+        # Redirect to login if not authenticated
+        if not user:
+            return RedirectResponse(url="/login", status_code=303)
+            
+        return templates.TemplateResponse(
+            "index.html", 
+            {"request": request, "user": user}
+        )
+
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page(
+        request: Request,
+        next: Optional[str] = None
+    ):
+        """Render the login page."""
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "next_url": next or "/"}
+        )
+
+    @app.post("/login")
+    async def login(
+        request: Request,
+        response: Response,
+        username: str = Form(...),
+        password: str = Form(...),
+        next: str = Form("/")
+    ):
+        """Process login form submission."""
+        # Authenticate user
+        user = auth_manager.authenticate_user(username, password)
+        
+        if not user:
+            # Authentication failed
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "Invalid username or password",
+                    "next_url": next
+                },
+                status_code=401
+            )
+        
+        # Create JWT token
+        token_data = {
+            "sub": user["username"],
+            "is_admin": user.get("is_admin", False)
+        }
+        access_token = auth_manager.create_access_token(token_data)
+        
+        # Set cookie
+        response = RedirectResponse(url=next, status_code=303)
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            max_age=60 * 60 * 24,  # 1 day
+            path="/"
+        )
+        
+        return response
+
+    @app.get("/logout")
+    async def logout(response: Response):
+        """Log out the current user."""
+        # Clear the cookie
+        response = RedirectResponse(url="/login", status_code=303)
+        response.delete_cookie(key="access_token", path="/")
+        
+        return response
 
     @app.post("/upload")
     async def upload_audio(
@@ -171,7 +248,8 @@ def create_app(
         analyze: Optional[bool] = Form(False),
         generate_video: Optional[bool] = Form(False),
         storage: MetadataStorage = Depends(get_storage),
-        service: TaskServiceProvider = Depends(get_task_service)
+        service: TaskServiceProvider = Depends(get_task_service),
+        user: Dict[str, Any] = Depends(require_auth)
     ):
         """Upload an audio file for processing."""
         # Validate file extension
@@ -188,15 +266,21 @@ def create_app(
         # Generate a unique ID for this upload
         file_id = str(uuid.uuid4())
         
+        # Get user's IP address
+        client_host = request.client.host if request.client else "unknown"
+        
         # Save the uploaded file using the storage, which also saves the basic metadata
         audio_file_path = storage.save_audio_file(file_id, file_extension, file.file, filename=filename)
         
         # Start beat detection task directly with file_id
         task = service.detect_beats(file_id)
         
-        # Update metadata with task ID
+        # Update metadata with task ID, user IP, and username
         task_metadata = {
-            "beat_detection": task.id
+            "beat_detection": task.id,
+            "user_ip": client_host,
+            "upload_timestamp": datetime.now().isoformat(),
+            "uploaded_by": user["username"]
         }
         storage.update_metadata(file_id, task_metadata)
         
@@ -214,7 +298,8 @@ def create_app(
     async def get_file_status(
         file_id: str,
         storage: MetadataStorage = Depends(get_storage),
-        service: TaskServiceProvider = Depends(get_task_service)
+        service: TaskServiceProvider = Depends(get_task_service),
+        user: Dict[str, Any] = Depends(require_auth)
     ):
         """Get the processing status for a file."""
         # Get file metadata from storage
@@ -278,7 +363,8 @@ def create_app(
     async def get_processing_queue(
         request: Request,
         storage: MetadataStorage = Depends(get_storage),
-        service: TaskServiceProvider = Depends(get_task_service)
+        service: TaskServiceProvider = Depends(get_task_service),
+        user: Dict[str, Any] = Depends(require_auth)
     ):
         """Get the list of files currently in processing."""
         # Get all file metadata
@@ -298,6 +384,9 @@ def create_app(
             # Get task statuses
             beat_task_id = file_metadata.get("beat_detection")
             video_task_id = file_metadata.get("video_generation")
+            
+            # Get upload timestamp (default to current time if not available)
+            upload_time = file_info.get("upload_timestamp", datetime.now().isoformat())
             
             status = ERROR.lower()
             if beat_task_id:
@@ -329,23 +418,29 @@ def create_app(
                 "file_id": file_id,
                 "filename": filename,
                 "status": status,
-                "link": f"/file/{file_id}"
+                "link": f"/file/{file_id}",
+                "upload_time": upload_time,
+                "uploaded_by": file_info.get("uploaded_by", "Unknown")
             })
         
-        # Sort files by status (to group similar statuses together)
-        files_with_status.sort(key=lambda x: x["status"])
+        # Sort files by upload time (newest first)
+        files_with_status.sort(key=lambda x: x.get("upload_time", ""), reverse=True)
+        
+        # Limit to MAX_QUEUE_FILES most recent files
+        files_with_status = files_with_status[:MAX_QUEUE_FILES]
         
         # Render the template with the file list
         return templates.TemplateResponse(
             "processing_queue.html", 
-            {"request": request, "files": files_with_status}
+            {"request": request, "files": files_with_status, "user": user}
         )
 
     @app.post("/confirm/{file_id}")
     async def confirm_analysis(
         file_id: str, 
         storage: MetadataStorage = Depends(get_storage),
-        service: TaskServiceProvider = Depends(get_task_service)
+        service: TaskServiceProvider = Depends(get_task_service),
+        user: Dict[str, Any] = Depends(require_auth)
     ):
         """Confirm successful analysis and generate visualization video."""
         # Get file metadata
@@ -405,7 +500,8 @@ def create_app(
         request: Request,
         file_id: str,
         storage: MetadataStorage = Depends(get_storage),
-        service: TaskServiceProvider = Depends(get_task_service)
+        service: TaskServiceProvider = Depends(get_task_service),
+        user: Dict[str, Any] = Depends(require_auth)
     ):
         """Render the file view page."""
         # Get file metadata
@@ -414,14 +510,15 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"File with ID {file_id} not found")
             
         # Calculate full file status for the template
-        file_status = await get_file_status(file_id, storage, service)
+        file_status = await get_file_status(file_id, storage, service, user)
         
         # Just add the task IDs directly to the template data
         # The frontend will poll for task status directly from the /task endpoint
         template_data = {
             "request": request,
             "file_id": file_id,
-            "file_status": file_status
+            "file_status": file_status,
+            "user": user
         }
         
         return templates.TemplateResponse("file_view.html", template_data)
@@ -429,7 +526,8 @@ def create_app(
     @app.get("/download/{file_id}")
     async def download_video(
         file_id: str,
-        storage: MetadataStorage = Depends(get_storage)
+        storage: MetadataStorage = Depends(get_storage),
+        user: Dict[str, Any] = Depends(require_auth)
     ):
         """Download the generated video."""
         # Get file metadata
@@ -459,7 +557,8 @@ def create_app(
     @app.get("/task/{task_id}")
     async def get_task_status_endpoint(
         task_id: str,
-        service: TaskServiceProvider = Depends(get_task_service)
+        service: TaskServiceProvider = Depends(get_task_service),
+        user: Dict[str, Any] = Depends(require_auth)
     ):
         """Get the raw status of a Celery task.
         

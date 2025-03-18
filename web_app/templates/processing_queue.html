@@ -75,10 +75,19 @@
         <header>
             <h1>Processing Queue</h1>
             <p>Current status of all files in the system</p>
+            <div class="navigation-links">
+                <a href="/" class="nav-link">Back to Home</a>
+                {% if user %}
+                <span class="user-info">Welcome, {{ user.username }}</span>
+                <a href="/logout" class="nav-link">Logout</a>
+                {% else %}
+                <a href="/login" class="nav-link">Login</a>
+                {% endif %}
+            </div>
         </header>
 
         <main class="queue-container">
-            <a href="/" class="back-link">← Back to Home</a>
+            <h2>Latest {{ files|length }} Files</h2>
             
             {% if files %}
                 <table class="file-list">
@@ -86,6 +95,8 @@
                         <tr>
                             <th>File ID</th>
                             <th>Filename</th>
+                            <th>Uploaded By</th>
+                            <th>Upload Time</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -95,6 +106,8 @@
                             <tr>
                                 <td>{{ file.file_id }}</td>
                                 <td>{{ file.filename }}</td>
+                                <td>{{ file.uploaded_by }}</td>
+                                <td>{{ file.upload_time }}</td>
                                 <td>
                                     <span class="status-badge status-{{ file.status }}">
                                         {{ file.status | replace('_', ' ') | title }}

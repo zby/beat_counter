@@ -358,6 +358,21 @@ class FileMetadataStorage(MetadataStorage):
         """Get the standardized job directory for a file ID."""
         return self.base_upload_dir / file_id
     
+    def get_job_directory_creation_time(self, file_id: str) -> float:
+        """Get the creation time of the job directory.
+        
+        Returns:
+            Float timestamp representing creation time, or 0 if directory doesn't exist
+        """
+        try:
+            job_dir = self.get_job_directory(file_id)
+            if job_dir.exists():
+                return job_dir.stat().st_ctime
+            return 0
+        except Exception as e:
+            logger.error(f"Error getting job directory creation time: {e}")
+            return 0
+    
     def get_audio_file_path(self, file_id: str, file_extension: str = None) -> pathlib.Path:
         """Get the standardized path for the audio file."""
         # If extension provided, return direct path
