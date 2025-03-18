@@ -31,6 +31,9 @@ from beat_detection.utils import reporting
 from beat_detection.utils.beat_file import load_beat_data
 from web_app.celery_app import app
 
+# Add import for storage
+from web_app.storage import FileMetadataStorage
+
 # Set up task logger
 logger = get_task_logger(__name__)
 
@@ -209,8 +212,11 @@ def detect_beats_task(
     
     with self._io_capture:
         try:
+            # Get a storage instance
+            storage = FileMetadataStorage(base_dir=str(pathlib.Path(__file__).parent / "uploads"))
+            
             # Construct job directory path
-            job_dir = pathlib.Path(__file__).parent / "uploads" / file_id
+            job_dir = storage.get_job_directory(file_id)
             
             # Create metadata.json path
             metadata_path = job_dir / "metadata.json"
@@ -222,18 +228,13 @@ def detect_beats_task(
             else:
                 metadata = {}
             
-            # Find audio file in the job directory
-            audio_path = None
-            from beat_detection.utils.constants import SUPPORTED_AUDIO_EXTENSIONS
-            for ext in SUPPORTED_AUDIO_EXTENSIONS:
-                potential_path = job_dir / f"original{ext}"
-                if potential_path.exists():
-                    audio_path = str(potential_path.resolve())
-                    break
+            # Get the audio file path using storage interface
+            audio_file_path = storage.get_audio_file_path(file_id)
+            if not audio_file_path.exists():
+                raise FileNotFoundError(f"No audio file found for file_id: {file_id}")
             
-            # If no audio file found, raise an error
-            if not audio_path:
-                raise FileNotFoundError(f"No audio file found in directory for file_id: {file_id}")
+            # Convert to string for compatibility with downstream code
+            audio_path = str(audio_file_path.resolve())
             
             # Initialize task state
             update_progress = create_progress_updater(
@@ -265,8 +266,8 @@ def detect_beats_task(
                 ) = detection_result
                 
                 # Generate standardized output file paths
-                beats_file = job_dir / "beats.txt"
-                stats_file = job_dir / "beat_stats.json"
+                beats_file = storage.get_beats_file_path(file_id)
+                stats_file = storage.get_beat_stats_file_path(file_id)
                 
                 # Save beat timestamps and statistics
                 reporting.save_beat_timestamps(
@@ -385,8 +386,11 @@ def generate_video_task(
     
     with self._io_capture:
         try:
+            # Get a storage instance
+            storage = FileMetadataStorage(base_dir=str(pathlib.Path(__file__).parent / "uploads"))
+            
             # Construct job directory path
-            job_dir = pathlib.Path(__file__).parent / "uploads" / file_id
+            job_dir = storage.get_job_directory(file_id)
             
             # Create metadata.json path
             metadata_path = job_dir / "metadata.json"
@@ -398,26 +402,21 @@ def generate_video_task(
             else:
                 metadata = {}
             
-            # Find audio file in the job directory
-            audio_path = None
-            from beat_detection.utils.constants import SUPPORTED_AUDIO_EXTENSIONS
-            for ext in SUPPORTED_AUDIO_EXTENSIONS:
-                potential_path = job_dir / f"original{ext}"
-                if potential_path.exists():
-                    audio_path = str(potential_path.resolve())
-                    break
+            # Get the audio file path using storage interface
+            audio_file_path = storage.get_audio_file_path(file_id)
+            if not audio_file_path.exists():
+                raise FileNotFoundError(f"No audio file found for file_id: {file_id}")
             
-            # If no audio file found, raise an error
-            if not audio_path:
-                raise FileNotFoundError(f"No audio file found in directory for file_id: {file_id}")
-                
+            # Convert to string for compatibility with downstream code
+            audio_path = str(audio_file_path.resolve())
+            
             # Get the beats file
-            beats_file = job_dir / "beats.txt"
+            beats_file = storage.get_beats_file_path(file_id)
             if not beats_file.exists():
-                raise FileNotFoundError(f"Beats file not found in directory for file_id: {file_id}")
+                raise FileNotFoundError(f"Beats file not found for file_id: {file_id}")
                 
             # Standardized output video path
-            video_output = job_dir / "video.mp4"
+            video_output = storage.get_video_file_path(file_id)
             
             # Initialize task state
             update_progress = create_progress_updater(
@@ -425,7 +424,7 @@ def generate_video_task(
             )
             update_progress("Initializing video generation", 0)
             
-            # Load beat data
+            # Load beat data from the text file
             beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = load_beat_data(str(beats_file))
             
             # Create a dictionary from the returned values for compatibility
