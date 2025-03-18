@@ -89,7 +89,7 @@ beat-webapp = "web_app.app:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["web_app/test_app.py"]
+testpaths = ["web_app", "beat_detection"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v"

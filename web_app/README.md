@@ -76,6 +76,24 @@ cd web_app
 
 This prevents issues with Celery running old code from its cache.
 
+## Troubleshooting
+
+### Confirm Endpoint Issues
+
+If you're experiencing a 400 Bad Request error when using the `/confirm/{file_id}` endpoint, it could be due to one of the following reasons:
+
+1. **Beat detection task not completed successfully**: The beat detection task must have a "SUCCESS" state before video generation can be initiated.
+
+2. **Missing beat file**: The beats file (containing the detected beat timestamps) is required for video generation. The application now includes better checking and error handling to validate that beat files exist.
+
+3. **Metadata inconsistency**: In some cases, the metadata might not be properly updated. The application now includes automatic metadata validation and repair, which should fix most issues.
+
+If you still experience issues, check the application logs for more detailed error messages:
+
+```bash
+tail -f web_app/celery.log
+```
+
 ## Integration with Existing Code
 
 This web application integrates with the existing beat detection and video generation code:
@@ -86,19 +104,22 @@ This web application integrates with the existing beat detection and video gener
 ## Architecture
 
 - **FastAPI**: Web framework for handling HTTP requests
-- **Celery**: Task queue for handling long-running operations
-- **Redis**: Used as both a message broker for Celery and a shared storage for file metadata
-- **Object-Oriented Design**: 
-  - `RedisManager` class encapsulates all Redis operations with consistent error handling
-  - `TaskResultManager` class handles Celery task result operations
+- **Celery**: Task queue for handling long-running operations with integrated Redis configuration
+- **Redis**: Used as a message broker for Celery and as a backend for storing task results
+- **File-Based Storage Design**: 
+  - `FileMetadataStorage` class handles persistent storage of file metadata
+  - `StateManager` class manages task state persistence using the filesystem
+  - Both provide consistent error handling and standardized file paths
 
 ## Project Structure
 
 - `app.py`: Main FastAPI application
-- `metadata.py`: Redis operations and task status management
+- `storage.py`: File-based metadata storage implementation
+- `state_manager.py`: File-based state management
 - `tasks.py`: Celery task definitions
-- `celery_app.py`: Celery application configuration
-- `celery_config.py`: Celery settings
+- `celery_app.py`: Celery application initialization
+- `celery_config.py`: Celery and Redis settings (consolidated)
+- `task_executor.py`: Task state constants
 - `templates/`: HTML templates
   - `index.html`: Main page template
 - `static/`: Static files
@@ -106,6 +127,31 @@ This web application integrates with the existing beat detection and video gener
   - `js/app.js`: Client-side JavaScript
 - `uploads/`: Temporary directory for uploaded files
 - `output/`: Directory for processed files and generated videos
+
+## Redis Configuration
+
+The application uses Redis for Celery's task queue and result backend. All Redis configuration is now consolidated in the `celery_config.py` module.
+
+### Environment Variables
+
+You can configure Redis connection through environment variables:
+
+- `REDIS_HOST`: Redis host (default: 'localhost')
+- `REDIS_PORT`: Redis port (default: 6379)
+- `REDIS_DB`: Redis database number (default: 0)
+- `REDIS_PASSWORD`: Redis password (default: None)
+
+### Docker Configuration
+
+When using Docker, set these variables in the docker-compose.yml file:
+
+```yaml
+environment:
+  - REDIS_HOST=redis
+  - REDIS_PORT=6379
+  - REDIS_DB=0
+  # - REDIS_PASSWORD=your_password_if_needed
+```
 
 ## API Endpoints
 

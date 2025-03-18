@@ -14,14 +14,18 @@ import time
 # Add the current directory to the Python path to ensure imports work correctly
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import the Celery app after setting up the path
+# Import the Celery app and Redis configuration after setting up the path
 from web_app.celery_app import app
+from web_app.celery_config import get_redis_connection_params, REDIS_HOST, REDIS_PORT
 
 def check_redis_connection():
     """Check if Redis is accessible before starting the worker."""
     import redis
     try:
-        r = redis.Redis(host='localhost', port=6379, db=0)
+        # Use centralized Redis configuration
+        conn_params = get_redis_connection_params()
+        r = redis.Redis(**conn_params)
+        
         if r.ping():
             print("Redis connection successful")
             return True
@@ -45,7 +49,7 @@ def main():
     
     # Check Redis connection before starting the worker
     if not check_redis_connection():
-        print("Cannot connect to Redis. Make sure Redis is running on localhost:6379")
+        print(f"Cannot connect to Redis. Make sure Redis is running on {REDIS_HOST}:{REDIS_PORT}")
         print("You can start Redis using: docker-compose up -d redis")
         sys.exit(1)
     

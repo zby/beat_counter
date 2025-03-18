@@ -352,33 +352,53 @@ def create_app(
         metadata = await storage.get_file_metadata(file_id)
         
         if not metadata:
+            logger.error(f"File {file_id} not found")
             raise HTTPException(status_code=404, detail=f"File {file_id} not found")
+        
+        # Log metadata for debugging
+        #logger.info(f"Metadata for file {file_id}: {metadata}")
         
         # Get task statuses to determine overall status
         beat_task_id = metadata.get("beat_detection")
-        
-        # Determine if analysis is complete
-        status = ANALYZING
-        
-        if beat_task_id:
-            beat_task_status = service.get_task_status(beat_task_id)
-            if beat_task_status["state"] == "SUCCESS" and 'beats_file' in metadata:
-                status = ANALYZED
-        
-        # Check if analysis is complete
-        if status != ANALYZED:
+        if not beat_task_id:
+            logger.error(f"No beat detection task found for file {file_id}")
             raise HTTPException(
                 status_code=400, 
-                detail=f"File {file_id} not ready for confirmation (status: {status})"
+                detail=f"No beat detection task found for file {file_id}"
             )
         
-        # Start video generation task
-        task = service.generate_video(file_id)
+        # Get beat task status
+        beat_task_status = service.get_task_status(beat_task_id)
+        logger.info(f"Beat task status for {file_id}: {beat_task_status}")
         
-        # Update metadata with video generation task
-        storage.update_metadata(file_id, {"video_generation": task.id})
+        # Check if the file is ready for confirmation
+        if isinstance(storage, FileMetadataStorage):
+            is_ready = storage.check_ready_for_confirmation(file_id, beat_task_status)
+        else:
+            # Fallback for other storage implementations
+            is_ready = (beat_task_status.get("state") == "SUCCESS" and 'beats_file' in metadata)
         
-        return {"status": "ok", "message": "Video generation initiated", "task_id": task.id}
+        if not is_ready:
+            logger.error(f"File {file_id} not ready for confirmation")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"File {file_id} not ready for confirmation. Beat detection must be completed successfully."
+            )
+        
+        try:
+            # Start video generation task
+            task = service.generate_video(file_id)
+            
+            # Update metadata with video generation task
+            storage.update_metadata(file_id, {"video_generation": task.id})
+            
+            return {"status": "ok", "message": "Video generation initiated", "task_id": task.id}
+        except Exception as e:
+            logger.exception(f"Error starting video generation for {file_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error starting video generation: {str(e)}"
+            )
 
     @app.get("/file/{file_id}")
     async def file_page(

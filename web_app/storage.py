@@ -202,6 +202,68 @@ class FileMetadataStorage(MetadataStorage):
             logger.error(f"Error updating metadata file: {e}")
             raise
     
+    def check_ready_for_confirmation(self, file_id: str, beat_task_status: Dict[str, Any]) -> bool:
+        """Check if a file is ready for video generation confirmation.
+        
+        Args:
+            file_id: The ID of the file to check
+            beat_task_status: The status of the beat detection task
+            
+        Returns:
+            bool: True if ready for confirmation, False otherwise
+        """
+        try:
+            # Check if beat detection task was successful
+            if beat_task_status.get("state") != "SUCCESS":
+                logger.info(f"Beat detection task for {file_id} not successful: {beat_task_status.get('state')}")
+                return False
+                
+            # Check if beats file exists
+            beats_file_path = self.get_beats_file_path(file_id)
+            if not beats_file_path.exists():
+                logger.info(f"Beats file for {file_id} does not exist")
+                return False
+                
+            # Get current metadata
+            metadata = self.get_metadata_sync(file_id)
+            if not metadata:
+                logger.info(f"No metadata found for {file_id}")
+                return False
+                
+            # If beats_file is not in metadata but exists on disk, update metadata
+            if 'beats_file' not in metadata and beats_file_path.exists():
+                logger.info(f"Updating metadata with beats_file for {file_id}")
+                self.update_metadata(file_id, {"beats_file": str(beats_file_path)})
+                
+            # If beat_stats_file exists but not in metadata, update metadata
+            stats_file_path = self.get_beat_stats_file_path(file_id)
+            if 'stats_file' not in metadata and stats_file_path.exists():
+                logger.info(f"Updating metadata with stats_file for {file_id}")
+                
+                try:
+                    # Try to parse the beat stats file
+                    with open(stats_file_path, 'r') as f:
+                        beat_stats = json.load(f)
+                    
+                    # Update metadata with stats and file path
+                    self.update_metadata(file_id, {
+                        "stats_file": str(stats_file_path),
+                        "beat_stats": beat_stats
+                    })
+                except Exception as e:
+                    logger.error(f"Error parsing beat stats file: {e}")
+            
+            # Check again after potential updates
+            metadata = self.get_metadata_sync(file_id)
+            if 'beats_file' not in metadata:
+                logger.info(f"Beats file still not in metadata for {file_id} after update attempt")
+                return False
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error checking if file {file_id} is ready for confirmation: {e}")
+            return False
+    
     async def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
         """Get metadata for all files."""
         all_metadata = {}
