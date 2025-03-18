@@ -10,34 +10,12 @@ from datetime import datetime
 import aiofiles
 import asyncio
 
+# Import constants from task_executor.py
+from web_app.task_executor import ANALYZING, ANALYZED, ANALYZING_FAILURE, \
+    GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR, VALID_STATES
+
 # Set up logger
 logger = logging.getLogger(__name__)
-
-# Define file processing states as string constants
-ANALYZING = "ANALYZING"
-ANALYZED = "ANALYZED"
-ANALYZING_FAILURE = "ANALYZING_FAILURE"
-GENERATING_VIDEO = "GENERATING_VIDEO"
-COMPLETED = "COMPLETED"
-VIDEO_ERROR = "VIDEO_ERROR"
-ERROR = "ERROR"
-
-# Set of all valid states for validation
-VALID_STATES = {
-    ANALYZING, ANALYZED, ANALYZING_FAILURE,
-    GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
-}
-
-def is_in_progress(state: str) -> bool:
-    """Check if a state indicates work is in progress.
-    
-    Args:
-        state: The state to check
-        
-    Returns:
-        bool: True if the state indicates work is in progress
-    """
-    return state in {ANALYZING, GENERATING_VIDEO}
 
 class MetadataStorage(ABC):
     """Abstract base class for metadata storage."""
@@ -63,7 +41,7 @@ class MetadataStorage(ABC):
         pass
 
     @abstractmethod
-    async def get_file_status(self, file_id: str, executor: 'TaskExecutor') -> Dict[str, Any]:
+    async def get_file_status(self, file_id: str) -> Dict[str, Any]:
         """Get the processing status for a file."""
         pass
     
@@ -96,24 +74,6 @@ class MetadataStorage(ABC):
     @abstractmethod
     def ensure_job_directory(self, file_id: str) -> pathlib.Path:
         """Ensure the job directory exists and return its path."""
-        pass
-
-class TaskExecutor(ABC):
-    """Abstract base class for task execution."""
-    
-    @abstractmethod
-    def execute_beat_detection(self, file_id: str) -> Any:
-        """Execute beat detection task."""
-        pass
-    
-    @abstractmethod
-    def execute_video_generation(self, file_id: str) -> Any:
-        """Execute video generation task."""
-        pass
-    
-    @abstractmethod
-    def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """Get status of a task."""
         pass
 
 class FileMetadataStorage(MetadataStorage):
@@ -207,8 +167,11 @@ class FileMetadataStorage(MetadataStorage):
                 logger.exception(f"Failed to delete metadata for file {file_id}")
         return False
     
-    async def get_file_status(self, file_id: str, executor: 'TaskExecutor') -> Dict[str, Any]:
+    async def get_file_status(self, file_id: str) -> Dict[str, Any]:
         """Get the processing status for a file."""
+        # Import here to avoid circular imports
+        from web_app.app import get_task_status
+        
         metadata = await self.get_metadata(file_id)
         if not metadata:
             return None
@@ -227,7 +190,7 @@ class FileMetadataStorage(MetadataStorage):
         overall_status = ERROR
 
         if beat_task_id:
-            beat_task_status = executor.get_task_status(beat_task_id)
+            beat_task_status = get_task_status(beat_task_id)
             # Ensure task ID is included
             beat_task_status["id"] = beat_task_id
             status_data["beat_detection_task"] = beat_task_status
@@ -240,7 +203,7 @@ class FileMetadataStorage(MetadataStorage):
                 overall_status = ANALYZING
 
         if video_task_id:
-            video_task_status = executor.get_task_status(video_task_id)
+            video_task_status = get_task_status(video_task_id)
             # Ensure task ID is included
             video_task_status["id"] = video_task_id
             status_data["video_generation_task"] = video_task_status
@@ -252,39 +215,51 @@ class FileMetadataStorage(MetadataStorage):
             else:
                 overall_status = GENERATING_VIDEO
 
-        # Add overall status to response
+        # Use the highest priority status (video success > beat success > error states)
         status_data["status"] = overall_status
 
-        # Check for beat stats file and load it if it exists (regardless of task status)
-        beat_task_status = status_data.get("beat_detection_task", {})
-        if beat_task_status.get("state") == "SUCCESS":
-            stats_file = self.get_beat_stats_file_path(file_id)
-            if stats_file.exists():
-                stats_data = self._parse_beat_stats_file(str(stats_file))
-                if stats_data:
-                    status_data["beat_stats"] = stats_data
+        # Check if the file exists on disk
+        beats_file = self.get_beats_file_path(file_id)
+        video_file = self.get_video_file_path(file_id)
+        
+        status_data["beats_file_exists"] = beats_file.exists()
+        status_data["video_file_exists"] = video_file.exists()
 
+        # If video file exists, it's completed regardless of task state
+        if status_data["video_file_exists"]:
+            status_data["status"] = COMPLETED
+        # If beats file exists but no video task, it's just analyzed
+        elif status_data["beats_file_exists"] and not video_task_id:
+            status_data["status"] = ANALYZED
+
+        # Attempt to get beat statistics if they exist
+        if status_data["beats_file_exists"]:
+            beat_stats_file = self.get_beat_stats_file_path(file_id)
+            if beat_stats_file.exists():
+                try:
+                    beat_stats = self._parse_beat_stats_file(str(beat_stats_file))
+                    status_data["beat_stats"] = beat_stats
+                except Exception as e:
+                    logger.error(f"Error parsing beat stats: {e}")
+        
         return status_data
     
     def _parse_beat_stats_file(self, filepath: str) -> Dict[str, Any]:
-        """Parse a beats statistics file and return the data.
-        
-        The stats file is expected to be a JSON file with beat statistics.
-        """
-        # Check cache first
+        """Parse beat statistics file."""
+        # Check if already cached
         if filepath in self._stats_cache:
             return self._stats_cache[filepath]
             
         try:
             with open(filepath, 'r') as f:
-                data = json.load(f)
-                # Cache the parsed data
-                self._stats_cache[filepath] = data
-                return data
+                stats = json.load(f)
+                # Cache the result
+                self._stats_cache[filepath] = stats
+                return stats
         except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"Failed to parse beat stats file {filepath}: {e}")
-            return None
-    
+            logger.error(f"Error reading beat stats file: {e}")
+            return {}
+
     # Path management methods
     def get_job_directory(self, file_id: str) -> pathlib.Path:
         """Get the standardized job directory for a file ID."""
@@ -292,228 +267,34 @@ class FileMetadataStorage(MetadataStorage):
     
     def get_audio_file_path(self, file_id: str, file_extension: str = None) -> pathlib.Path:
         """Get the standardized path for the audio file."""
-        job_dir = self.get_job_directory(file_id)
-        
-        # If extension not provided, try to get from metadata
-        if file_extension is None:
-            metadata = self.get_metadata_sync(file_id) or {}
-            file_extension = metadata.get("file_extension", ".mp3")  # Default to .mp3 if not found
-        
-        return job_dir / f"original{file_extension}"
+        # If extension provided, return direct path
+        if file_extension:
+            return self.get_job_directory(file_id) / f"original{file_extension}"
+            
+        # Otherwise, check for files with supported extensions
+        from beat_detection.utils.constants import SUPPORTED_AUDIO_EXTENSIONS
+        for ext in SUPPORTED_AUDIO_EXTENSIONS:
+            path = self.get_job_directory(file_id) / f"original{ext}"
+            if path.exists():
+                return path
+                
+        # Default to mp3 if no file found
+        return self.get_job_directory(file_id) / "original.mp3"
     
     def get_beats_file_path(self, file_id: str) -> pathlib.Path:
         """Get the standardized path for the beats file."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "beats.txt"
+        return self.get_job_directory(file_id) / "beats.json"
     
     def get_beat_stats_file_path(self, file_id: str) -> pathlib.Path:
         """Get the standardized path for the beat statistics file."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "beat_stats.json"
+        return self.get_job_directory(file_id) / "beat_stats.json"
     
     def get_video_file_path(self, file_id: str) -> pathlib.Path:
         """Get the standardized path for the visualization video."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "video.mp4"
+        return self.get_job_directory(file_id) / "visualization.mp4"
     
     def ensure_job_directory(self, file_id: str) -> pathlib.Path:
         """Ensure the job directory exists and return its path."""
         job_dir = self.get_job_directory(file_id)
         job_dir.mkdir(exist_ok=True, parents=True)
-        return job_dir
-
-class CeleryTaskExecutor(TaskExecutor):
-    """Celery implementation of task execution."""
-    
-    def __init__(self):
-        """Initialize the task executor."""
-        pass
-    
-    def execute_beat_detection(self, file_id: str) -> Any:
-        """Execute beat detection task."""
-        from web_app.tasks import detect_beats_task
-        return detect_beats_task.delay(file_id)
-    
-    def execute_video_generation(self, file_id: str) -> Any:
-        """Execute video generation task."""
-        from web_app.tasks import generate_video_task
-        return generate_video_task.delay(file_id)
-    
-    def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """Get status of a task."""
-        async_result = TaskStatusManager.create_async_result(task_id)
-        if not async_result:
-            return {"state": ERROR, "result": None, "error": "Failed to create AsyncResult"}
-        
-        try:
-            # Get state and result without accessing backend methods directly
-            state = "UNKNOWN"
-            
-            # First try to get the state from AsyncResult.state
-            try:
-                state = async_result.state
-            except Exception as e:
-                logger.error(f"Error getting task state: {e}")
-                state = ERROR
-            
-            result = None
-            
-            # Only try to get result if task appears to be ready
-            # and avoid calling .ready() which might cause another backend error
-            if state in ["SUCCESS", "FAILURE"]:
-                try:
-                    if state == "SUCCESS":
-                        result = async_result.result
-                    else:
-                        # For failed tasks, get the error message
-                        error = str(async_result.result)
-                        return {"state": state, "error": error}
-                except Exception as e:
-                    logger.error(f"Error getting task result: {e}")
-                    return {"state": ERROR, "error": str(e)}
-            
-            # Create a standardized response
-            result_dict = {"state": state}
-            
-            # Always try to get task metadata from Redis directly
-            try:
-                from redis import Redis
-                redis_client = Redis(host='localhost', port=6379, db=0, decode_responses=True)
-                redis_key = f"celery-task-meta-{task_id}"
-                
-                raw_result = redis_client.get(redis_key)
-                if raw_result:
-                    try:
-                        import json
-                        parsed = json.loads(raw_result)
-                        
-                        # Update state if available
-                        if "status" in parsed:
-                            result_dict["state"] = parsed["status"]
-                        
-                        # Include all data from Redis
-                        if "result" in parsed:
-                            # For STARTED tasks, the metadata is stored in parsed['result']
-                            if isinstance(parsed["result"], dict):
-                                # Include progress information if available
-                                if "progress" in parsed["result"]:
-                                    result_dict["progress"] = parsed["result"]["progress"]
-                                    
-                                # Include any other metadata fields
-                                for key, value in parsed["result"].items():
-                                    if key not in result_dict:
-                                        result_dict[key] = value
-                                
-                                # Don't store the complete result again to avoid duplication
-                            else:
-                                result_dict["result"] = parsed["result"]
-                        
-                        logger.info(f"Got task result from Redis directly for task {task_id}")
-                    except json.JSONDecodeError:
-                        logger.error(f"Failed to parse Redis result: {raw_result}")
-            except Exception as e:
-                logger.error(f"Error accessing Redis directly: {e}")
-            
-            # If we already have a result from AsyncResult and we didn't get one from Redis,
-            # add it to the response
-            if result is not None and "result" not in result_dict:
-                # Add result or structured data
-                if isinstance(result, dict):
-                    # Include all fields from the result dict
-                    for key, value in result.items():
-                        if key not in result_dict:
-                            result_dict[key] = value
-                    # Don't store the complete result again to avoid duplication
-                else:
-                    # For non-dict results, just set as result
-                    result_dict["result"] = result
-            
-            # Add the task ID to the response
-            result_dict["id"] = task_id
-            
-            return result_dict
-        except Exception as e:
-            logger.error(f"Error getting task status: {e}")
-            return {"state": ERROR, "error": str(e)}
-
-class TaskStatusManager:
-    """Class to manage task status retrieval."""
-    
-    @staticmethod
-    def create_async_result(task_id: str):
-        """Create an AsyncResult object for a task."""
-        try:
-            from celery.result import AsyncResult
-            # Make sure the backend is properly specified
-            from web_app.celery_app import app
-            # Create AsyncResult using our app instance that has properly configured backend
-            result = app.AsyncResult(task_id)
-            return result
-        except Exception as e:
-            logger.error(f"Error creating AsyncResult: {e}")
-            return None
-
-    @staticmethod
-    def extract_task_data(task_result) -> Dict[str, Any]:
-        """Extract basic data from a task result."""
-        try:
-            # Check if task_result is None
-            if task_result is None:
-                return {"state": ERROR, "error": "Task result is None"}
-                
-            # Return minimal task information
-            result = {"state": task_result.state}
-            
-            # Add result or error if available
-            if task_result.ready():
-                if task_result.successful():
-                    result["result"] = task_result.result
-                else:
-                    result["error"] = str(task_result.result) 
-            
-            return result
-        except Exception as e:
-            logger.error(f"Error extracting task data: {e}")
-            return {"state": ERROR, "error": str(e)}
-
-    @staticmethod
-    async def get_beat_detection_status(beat_detection_task_id: str) -> Dict[str, Any]:
-        """Get the status of a beat detection task."""
-        # Create AsyncResult
-        task_result = TaskStatusManager.create_async_result(beat_detection_task_id)
-        if not task_result:
-            return {
-                "id": beat_detection_task_id,
-                "type": "beat_detection",
-                "state": ERROR
-            }
-        
-        # Get basic task data
-        task_data = TaskStatusManager.extract_task_data(task_result)
-        
-        # Add task identification
-        task_data["id"] = beat_detection_task_id
-        task_data["type"] = "beat_detection"
-        
-        return task_data
-
-    @staticmethod
-    async def get_video_generation_status(video_task_id: str) -> Dict[str, Any]:
-        """Get the status of a video generation task."""
-        # Create AsyncResult
-        task_result = TaskStatusManager.create_async_result(video_task_id)
-        if not task_result:
-            return {
-                "id": video_task_id,
-                "type": "video_generation",
-                "state": ERROR
-            }
-        
-        # Get basic task data
-        task_data = TaskStatusManager.extract_task_data(task_result)
-        
-        # Add task identification
-        task_data["id"] = video_task_id
-        task_data["type"] = "video_generation"
-        
-        return task_data 
+        return job_dir 

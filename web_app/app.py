@@ -11,9 +11,9 @@ import os
 import pathlib
 import shutil
 import uuid
-from datetime import datetime
-from typing import Optional
 import json
+from datetime import datetime
+from typing import Optional, Dict, Any
 
 # Third-party imports
 import uvicorn
@@ -24,7 +24,10 @@ from fastapi.templating import Jinja2Templates
 
 # Local imports
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from web_app.storage import MetadataStorage, TaskExecutor, FileMetadataStorage, CeleryTaskExecutor, ANALYZING, ANALYZED, ANALYZING_FAILURE, COMPLETED, ERROR, GENERATING_VIDEO, VIDEO_ERROR
+from web_app.storage import MetadataStorage, FileMetadataStorage
+from web_app.task_executor import ANALYZING, ANALYZED, ANALYZING_FAILURE, COMPLETED, ERROR, GENERATING_VIDEO, VIDEO_ERROR
+from web_app.tasks import detect_beats_task, generate_video_task
+from web_app.celery_app import app as celery_app
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -41,9 +44,86 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+# Task status utility functions
+def get_task_status(task_id: str) -> Dict[str, Any]:
+    """Get the status of a Celery task.
+    
+    Args:
+        task_id: The ID of the task to check
+        
+    Returns:
+        Dict with task status information
+    """
+    # Create initial response with task ID
+    result_dict = {"id": task_id, "state": ERROR}
+    
+    try:
+        # Get AsyncResult object
+        async_result = celery_app.AsyncResult(task_id)
+        
+        # Get state
+        result_dict["state"] = async_result.state
+        
+        # For completed tasks, get result details
+        if async_result.state == "SUCCESS":
+            result = async_result.result
+            if isinstance(result, dict):
+                # Merge dictionary results
+                for key, value in result.items():
+                    if key not in result_dict:
+                        result_dict[key] = value
+            else:
+                result_dict["result"] = result
+        elif async_result.state == "FAILURE":
+            result_dict["error"] = str(async_result.result)
+        
+        # Try to get additional metadata from Redis
+        redis_info = _get_redis_task_info(task_id)
+        if redis_info:
+            # Merge Redis data
+            for key, value in redis_info.items():
+                if key not in result_dict:
+                    result_dict[key] = value
+        
+        return result_dict
+    except Exception as e:
+        logger.error(f"Error getting task status: {e}")
+        result_dict["error"] = str(e)
+        return result_dict
+
+def _get_redis_task_info(task_id: str) -> Optional[Dict[str, Any]]:
+    """Get task information directly from Redis."""
+    try:
+        # Try to connect to Redis
+        from redis import Redis
+        redis_client = Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        
+        # Get task data from Redis
+        redis_key = f"celery-task-meta-{task_id}"
+        raw_result = redis_client.get(redis_key)
+        if not raw_result:
+            return None
+        
+        # Parse JSON data
+        parsed = json.loads(raw_result)
+        result_dict = {}
+        
+        # Extract state
+        if "status" in parsed:
+            result_dict["state"] = parsed["status"]
+        
+        # Extract result data
+        if "result" in parsed and isinstance(parsed["result"], dict):
+            for key, value in parsed["result"].items():
+                result_dict[key] = value
+        
+        return result_dict
+    except Exception:
+        # Just return None on any error - Redis access is optional
+        return None
+
 def create_app(
-    metadata_storage: MetadataStorage = FileMetadataStorage(base_dir=str(UPLOAD_DIR)),
-    task_executor: TaskExecutor = CeleryTaskExecutor()
+    metadata_storage: MetadataStorage = FileMetadataStorage(base_dir=str(UPLOAD_DIR))
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
@@ -68,12 +148,9 @@ def create_app(
     # Set up templates
     templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
-    # Dependency to get storage and task executor
+    # Dependency to get storage
     def get_storage() -> MetadataStorage:
         return metadata_storage
-
-    def get_task_executor() -> TaskExecutor:
-        return task_executor
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -86,8 +163,7 @@ def create_app(
         file: UploadFile = File(...),
         analyze: Optional[bool] = Form(False),
         generate_video: Optional[bool] = Form(False),
-        storage: MetadataStorage = Depends(get_storage),
-        executor: TaskExecutor = Depends(get_task_executor),
+        storage: MetadataStorage = Depends(get_storage)
     ):
         """Upload an audio file for processing."""
         # Validate file extension
@@ -123,8 +199,8 @@ def create_app(
         # Store metadata in the central storage
         storage.update_metadata(file_id, metadata)
         
-        # Start beat detection task (now only needs file_id)
-        task = executor.execute_beat_detection(file_id)
+        # Start beat detection task directly with file_id
+        task = detect_beats_task.delay(file_id)
         
         # Update metadata with task ID
         task_metadata = {
@@ -145,41 +221,31 @@ def create_app(
     @app.get("/status/{file_id}")
     async def get_file_status(
         file_id: str,
-        storage: MetadataStorage = Depends(get_storage),
-        executor: TaskExecutor = Depends(get_task_executor)
+        storage: MetadataStorage = Depends(get_storage)
     ):
         """Get the processing status for a file."""
         # Use the new get_file_status method from storage
-        status_data = await storage.get_file_status(file_id, executor)
+        status_data = await storage.get_file_status(file_id)
         if not status_data:
             raise HTTPException(status_code=404, detail="File not found")
         
         # Add debugging information
         if "beat_detection_task" not in status_data and "beat_detection" in status_data:
             task_id = status_data["beat_detection"]
-            task_status = executor.get_task_status(task_id)
-            status_data["beat_detection_task"] = {
-                "id": task_id,
-                "state": task_status.get("state", "UNKNOWN"),
-                "result": task_status.get("result", None)
-            }
+            task_status = get_task_status(task_id)
+            status_data["beat_detection_task"] = task_status
         
         if "video_generation_task" not in status_data and "video_generation" in status_data:
             task_id = status_data["video_generation"]
-            task_status = executor.get_task_status(task_id)
-            status_data["video_generation_task"] = {
-                "id": task_id,
-                "state": task_status.get("state", "UNKNOWN"),
-                "result": task_status.get("result", None)
-            }
+            task_status = get_task_status(task_id)
+            status_data["video_generation_task"] = task_status
         
         return status_data
 
     @app.get("/processing_queue", response_class=HTMLResponse)
     async def get_processing_queue(
         request: Request,
-        storage: MetadataStorage = Depends(get_storage),
-        executor: TaskExecutor = Depends(get_task_executor)
+        storage: MetadataStorage = Depends(get_storage)
     ):
         """Get the list of files currently in processing."""
         # Get all file metadata
@@ -197,7 +263,7 @@ def create_app(
             
             status = ERROR.lower()
             if beat_task_id:
-                beat_status = executor.get_task_status(beat_task_id)
+                beat_status = get_task_status(beat_task_id)
                 if beat_status["state"] == "SUCCESS":
                     status = ANALYZED.lower()
                 elif beat_status["state"] == "FAILURE":
@@ -206,7 +272,7 @@ def create_app(
                     status = ANALYZING.lower()
             
             if video_task_id:
-                video_status = executor.get_task_status(video_task_id)
+                video_status = get_task_status(video_task_id)
                 if video_status["state"] == "SUCCESS":
                     status = COMPLETED.lower()
                 elif video_status["state"] == "FAILURE":
@@ -235,8 +301,7 @@ def create_app(
     async def confirm_analysis(
         request: Request,
         file_id: str,
-        storage: MetadataStorage = Depends(get_storage),
-        executor: TaskExecutor = Depends(get_task_executor)
+        storage: MetadataStorage = Depends(get_storage)
     ):
         """Confirm analysis and generate visualization video."""
         # Get file metadata
@@ -245,7 +310,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="File not found")
         
         # Check if file is in the right state
-        status = await storage.get_file_status(file_id, executor)
+        status = await storage.get_file_status(file_id)
         if status["status"] != ANALYZED:
             raise HTTPException(
                 status_code=400,
@@ -255,7 +320,7 @@ def create_app(
         # Start video generation task
         try:
             # Start generation using just the file_id
-            task = executor.execute_video_generation(file_id)
+            task = generate_video_task.delay(file_id)
             
             # Update metadata
             storage.update_metadata(file_id, {
@@ -277,8 +342,7 @@ def create_app(
     async def file_page(
         request: Request,
         file_id: str,
-        storage: MetadataStorage = Depends(get_storage),
-        executor: TaskExecutor = Depends(get_task_executor)
+        storage: MetadataStorage = Depends(get_storage)
     ):
         """Render the file view page."""
         # Get file metadata
@@ -287,7 +351,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"File with ID {file_id} not found")
             
         # Get simplified file status - we don't need detailed task status in the initial page load
-        file_status = await storage.get_file_status(file_id, executor)
+        file_status = await storage.get_file_status(file_id)
         
         # Just add the task IDs directly to the template data
         # The frontend will poll for task status directly from the /task endpoint
@@ -302,8 +366,7 @@ def create_app(
     @app.get("/download/{file_id}")
     async def download_video(
         file_id: str,
-        storage: MetadataStorage = Depends(get_storage),
-        executor: TaskExecutor = Depends(get_task_executor)
+        storage: MetadataStorage = Depends(get_storage)
     ):
         """Download the generated video."""
         # Get file metadata
@@ -332,17 +395,14 @@ def create_app(
 
     @app.get("/task/{task_id}")
     async def get_task_status(
-        task_id: str,
-        executor: TaskExecutor = Depends(get_task_executor)
+        task_id: str
     ):
         """Get the raw status of a Celery task.
         
         Returns the direct Celery task state and result without modification.
         """
-        task_status = executor.get_task_status(task_id)
+        task_status = get_task_status(task_id)
         
-        # Add the task ID to the response
-        task_status["id"] = task_id
         return task_status
 
     return app

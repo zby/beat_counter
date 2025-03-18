@@ -3,15 +3,56 @@
 import os
 import pathlib
 import tempfile
-from typing import Dict, Generator, List, Optional, Tuple
+from typing import Dict, Generator, List, Optional, Tuple, Any
 import pytest
 from fastapi.testclient import TestClient
-from web_app.app import create_app, CeleryTaskExecutor
+from web_app.app import create_app
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from web_app.storage import ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR, MetadataStorage, TaskExecutor, FileMetadataStorage
-from web_app.test_storage import MockMetadataStorage, MockTask, MockTaskExecutor
+from web_app.storage import MetadataStorage, FileMetadataStorage
+from web_app.task_executor import ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
+from web_app.test_storage import MockMetadataStorage, MockTask
 import uuid
 from datetime import datetime
+import json
+
+# Mock functions for task operations
+MOCK_TASKS = {}
+
+def mock_get_task_status(task_id: str) -> Dict[str, Any]:
+    """Mock implementation of get_task_status for testing."""
+    task = MOCK_TASKS.get(task_id)
+    if not task:
+        return {"id": task_id, "state": ERROR, "error": "Task not found"}
+    
+    result_dict = {"id": task_id, "state": task.state}
+    
+    # Add result for success or error for failure
+    if task.state == "SUCCESS" and task.result is not None:
+        result_dict["result"] = task.result
+    elif task.state == "FAILURE" and task.result is not None:
+        result_dict["error"] = task.result
+        
+    return result_dict
+
+def create_mock_task(state: str = "STARTED", result: Any = None) -> MockTask:
+    """Create a mock task for testing."""
+    task = MockTask()
+    task.state = state
+    task.result = result
+    MOCK_TASKS[task.id] = task
+    return task
+
+def complete_mock_task(task_id: str, result: Any = None) -> None:
+    """Complete a mock task with success state."""
+    task = MOCK_TASKS.get(task_id)
+    if task:
+        task.set_state("SUCCESS", result)
+
+def fail_mock_task(task_id: str, error: str = "Task failed") -> None:
+    """Fail a mock task with error state."""
+    task = MOCK_TASKS.get(task_id)
+    if task:
+        task.set_state("FAILURE", error)
 
 # Test data
 TEST_FILES = [
@@ -36,15 +77,39 @@ def mock_storage() -> MockMetadataStorage:
     return MockMetadataStorage()
 
 @pytest.fixture
-def mock_executor() -> MockTaskExecutor:
-    """Create a fresh mock task executor instance for each test."""
-    return MockTaskExecutor()
-
-@pytest.fixture
-def test_client(mock_storage: MockMetadataStorage, mock_executor: MockTaskExecutor) -> TestClient:
+def test_client(mock_storage: MockMetadataStorage) -> TestClient:
     """Create a test client with mock dependencies."""
-    app = create_app(metadata_storage=mock_storage, task_executor=mock_executor)
-    return TestClient(app)
+    # Patch the app to use our mock get_task_status function
+    import web_app.app
+    original_get_task_status = web_app.app.get_task_status
+    web_app.app.get_task_status = mock_get_task_status
+    
+    # Mock Celery tasks
+    from web_app.tasks import detect_beats_task, generate_video_task
+    
+    # Save original methods
+    original_detect_beats_delay = detect_beats_task.delay
+    
+    # Define mock methods
+    def mock_detect_beats_delay(file_id):
+        # Create a mock task and add it to MOCK_TASKS
+        task = create_mock_task()
+        # Update task with metadata that identifies it as a beat detection task
+        task.task_type = "beat_detection"
+        task.file_id = file_id
+        return task
+    
+    # Apply patches
+    detect_beats_task.delay = mock_detect_beats_delay
+    
+    app = create_app(metadata_storage=mock_storage)
+    client = TestClient(app)
+    
+    yield client
+    
+    # Restore original functions after the test
+    web_app.app.get_task_status = original_get_task_status
+    detect_beats_task.delay = original_detect_beats_delay
 
 @pytest.fixture
 def test_file(test_dir: pathlib.Path, request: pytest.FixtureRequest) -> pathlib.Path:
@@ -55,10 +120,7 @@ def test_file(test_dir: pathlib.Path, request: pytest.FixtureRequest) -> pathlib
     return file_path
 
 @pytest.fixture
-def sample_file_with_task(
-    mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor
-) -> Tuple[str, str, MockTask]:
+def sample_file_with_task(mock_storage: MockMetadataStorage) -> Tuple[str, str, MockTask]:
     """Create a sample file entry with an associated task."""
     file_id = "test_file"
     
@@ -73,8 +135,8 @@ def sample_file_with_task(
         "upload_time": datetime.now().isoformat()
     }
     
-    # Create task and update metadata
-    task = mock_executor._create_task()
+    # Create mock task and update metadata
+    task = create_mock_task()
     metadata["beat_detection"] = task.id
     
     # Store metadata
@@ -86,7 +148,6 @@ def sample_file_with_task(
 def test_upload_audio(
     test_client: TestClient,
     mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor,
     test_file: pathlib.Path,
     filename: str,
     content_type: str,
@@ -124,7 +185,7 @@ def test_upload_audio(
         # Verify that beat detection task was started
         assert "beat_detection" in metadata
         task_id = metadata["beat_detection"]
-        assert task_id in mock_executor.tasks
+        assert task_id in MOCK_TASKS
     else:
         assert "Unsupported file format" in response.json()["detail"]
 
@@ -165,7 +226,7 @@ async def test_get_file_status_failure(
     assert response.status_code == 200
     data = response.json()
     assert data["beat_detection_task"]["state"] == "FAILURE"
-    assert data["beat_detection_task"]["result"] == "Processing error"
+    assert data["beat_detection_task"]["error"] == "Processing error"
 
 def test_file_not_found(test_client: TestClient):
     """Test handling of non-existent files."""
@@ -175,8 +236,7 @@ def test_file_not_found(test_client: TestClient):
 @pytest.mark.asyncio
 async def test_confirm_analysis_success(
     test_client: TestClient,
-    mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor
+    mock_storage: MockMetadataStorage
 ):
     """Test confirming analysis and generating a visualization video."""
     # Create a file in ANALYZED state
@@ -196,7 +256,7 @@ async def test_confirm_analysis_success(
     }
     
     # Create beat detection task
-    beat_task = mock_executor._create_task()
+    beat_task = create_mock_task()
     beat_task.set_state("SUCCESS", {
         "file_id": file_id,
         "beats_file": str(beats_file),
@@ -249,19 +309,18 @@ async def test_confirm_analysis_success(
     }
     
     # Verify status was updated
-    file_status = await mock_storage.get_file_status(file_id, mock_executor)
+    file_status = await mock_storage.get_file_status(file_id)
     assert file_status["status"] == GENERATING_VIDEO
 
 @pytest.mark.asyncio
 async def test_confirm_analysis_not_ready(
     test_client: TestClient,
-    mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor
+    mock_storage: MockMetadataStorage
 ):
     """Test confirmation when beat analysis is not complete."""
     # Setup with pending beat detection
     file_id = "test_file"
-    beat_task = mock_executor._create_task()
+    beat_task = create_mock_task()
     
     # Get standardized file path using the storage API
     audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
@@ -297,7 +356,6 @@ async def test_confirm_analysis_not_ready(
 def test_download_video_success(
     test_client: TestClient,
     mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor,
     test_dir: pathlib.Path
 ):
     """Test successfully downloading a generated video."""
@@ -317,7 +375,7 @@ def test_download_video_success(
     mock_storage.update_metadata(file_id, metadata)
     
     # Create beat detection task
-    beat_task = mock_executor._create_task()
+    beat_task = create_mock_task()
     beat_task.set_state("SUCCESS")
     metadata["beat_detection"] = beat_task.id
     
@@ -327,7 +385,7 @@ def test_download_video_success(
     video_file.touch()
     
     # Create video task
-    video_task = mock_executor._create_task()
+    video_task = create_mock_task()
     video_task.set_state("SUCCESS", {
         "video_file": str(video_file)
     })
@@ -363,8 +421,7 @@ def test_download_video_success(
 
 def test_download_video_not_ready(
     test_client: TestClient,
-    mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor
+    mock_storage: MockMetadataStorage
 ):
     """Test downloading a video that's not ready yet."""
     file_id = "test-download-not-ready"
@@ -381,7 +438,7 @@ def test_download_video_not_ready(
     }
     
     # Create beat detection task that's still processing
-    beat_task = mock_executor._create_task()
+    beat_task = create_mock_task()
     beat_task.set_state("STARTED")
     metadata["beat_detection"] = beat_task.id
     
@@ -420,8 +477,7 @@ def test_download_video_not_found(
 
 def test_download_video_analyzed_no_video(
     test_client: TestClient,
-    mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor
+    mock_storage: MockMetadataStorage
 ):
     """Test downloading a video when beat detection is complete but video generation hasn't started."""
     file_id = "test-download-analyzed"
@@ -439,7 +495,7 @@ def test_download_video_analyzed_no_video(
     }
     
     # Create beat detection task that's completed
-    beat_task = mock_executor._create_task()
+    beat_task = create_mock_task()
     beat_task.set_state("SUCCESS", {
         "beats_file": str(beats_file)
     })
@@ -466,8 +522,7 @@ def test_download_video_analyzed_no_video(
 
 def test_download_video_failed_generation(
     test_client: TestClient,
-    mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor
+    mock_storage: MockMetadataStorage
 ):
     """Test downloading a video when video generation has failed."""
     file_id = "test-download-failed-video"
@@ -485,14 +540,14 @@ def test_download_video_failed_generation(
     }
     
     # Create beat detection task that's completed
-    beat_task = mock_executor._create_task()
+    beat_task = create_mock_task()
     beat_task.set_state("SUCCESS", {
         "beats_file": str(beats_file)
     })
     metadata["beat_detection"] = beat_task.id
     
     # Create video task that failed
-    video_task = mock_executor._create_task()
+    video_task = create_mock_task()
     video_task.set_state("FAILURE", "Video generation failed with error")
     metadata["video_generation"] = video_task.id
     
@@ -533,7 +588,6 @@ def test_download_video_failed_generation(
 async def test_get_file_status_overall_status(
     test_client: TestClient,
     mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor,
     beat_state: Optional[str],
     video_state: Optional[str],
     expected_status: str
@@ -547,12 +601,12 @@ async def test_get_file_status_overall_status(
     }
     
     if beat_state:
-        beat_task = mock_executor._create_task()
+        beat_task = create_mock_task()
         beat_task.set_state(beat_state)
         metadata["beat_detection"] = beat_task.id
     
     if video_state:
-        video_task = mock_executor._create_task()
+        video_task = create_mock_task()
         video_task.set_state(video_state)
         metadata["video_generation"] = video_task.id
     
@@ -585,7 +639,6 @@ async def test_get_file_status_overall_status(
 async def test_file_page_status(
     test_client: TestClient,
     mock_storage: MockMetadataStorage,
-    mock_executor: MockTaskExecutor,
     beat_state: str,
     video_state: str,
     expected_status: int
@@ -595,7 +648,7 @@ async def test_file_page_status(
     
     if beat_state is not None:
         # Create metadata with beat detection task
-        beat_task = mock_executor._create_task()
+        beat_task = create_mock_task()
         metadata = {
             "filename": "test.mp3",
             "file_path": "/path/to/test.mp3",
@@ -607,7 +660,7 @@ async def test_file_page_status(
         
         if video_state is not None:
             # Add video generation task
-            video_task = mock_executor._create_task()
+            video_task = create_mock_task()
             metadata["video_generation"] = video_task.id
             video_task.set_state(video_state, {"video_file": "video.mp4"} if video_state == "SUCCESS" else None)
         
