@@ -12,7 +12,7 @@ import pathlib
 import uuid
 import json
 from datetime import datetime
-from typing import Optional, Dict, Any, Callable, Protocol
+from typing import Optional, Dict, Any, Callable, Protocol, List
 
 # Third-party imports
 import uvicorn
@@ -20,13 +20,14 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi import status
 
 # Local imports
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
 from web_app.celery_app import app as celery_app
 from web_app.storage import MetadataStorage, FileMetadataStorage
 from web_app.tasks import detect_beats_task, generate_video_task
-from web_app.auth import auth_manager, require_auth, get_current_user_from_cookie
+from web_app.auth import auth_manager, AuthManager
 from web_app.config import get_config, get_users
 
 # Constants for task states
@@ -130,13 +131,16 @@ get_task_status = task_service.get_task_status
 
 def create_app(
     metadata_storage: Optional[MetadataStorage] = None,
-    task_provider: Optional[TaskServiceProvider] = None
+    task_provider: Optional[TaskServiceProvider] = None,
+    auth_manager_instance: Optional[AuthManager] = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
     
     Args:
         metadata_storage: Optional MetadataStorage implementation to use
         task_provider: Optional TaskServiceProvider to use for task operations
+        auth_manager_instance: Optional AuthManager instance to use for authentication.
+                             If not provided, the global auth_manager will be used.
         
     Returns:
         Configured FastAPI application
@@ -150,6 +154,7 @@ def create_app(
     # Configure services
     storage = metadata_storage or FileMetadataStorage(base_dir=str(UPLOAD_DIR))
     service = task_provider or task_service
+    app_auth = auth_manager_instance or auth_manager
     
     # Mount static files directory
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -164,6 +169,40 @@ def create_app(
     # Dependency for getting task service provider
     def get_task_service():
         return service
+        
+    # Dependency for getting auth manager
+    def get_auth_manager():
+        return app_auth
+        
+    # Update auth dependencies to use app-specific auth manager
+    async def get_current_user_from_cookie(request: Request) -> Optional[Dict[str, Any]]:
+        """Get the current user from the session cookie."""
+        return app_auth.get_current_user(request)
+        
+    async def require_auth(request: Request) -> Dict[str, Any]:
+        """Dependency that requires a valid authentication."""
+        user = app_auth.get_current_user(request)
+        
+        if not user:
+            # Check if this is an AJAX request
+            is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            
+            if is_ajax:
+                # For AJAX requests, always return 401 Unauthorized
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Not authenticated"
+                )
+            else:
+                # For web requests, redirect to login page
+                redirect_url = f"/login?next={request.url.path}"
+                raise HTTPException(
+                    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                    headers={"Location": redirect_url},
+                    detail="Not authenticated"
+                )
+        
+        return user
 
     @app.get("/", response_class=HTMLResponse)
     async def index(

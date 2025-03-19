@@ -6,7 +6,7 @@ import tempfile
 from typing import Dict, Generator, List, Optional, Tuple, Any
 import pytest
 from fastapi.testclient import TestClient
-from web_app.app import create_app, TaskServiceProvider
+from web_app.app import create_app, TaskServiceProvider, AuthManager
 from web_app.app import ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
 from web_app.storage import MetadataStorage, FileMetadataStorage
@@ -233,10 +233,28 @@ class MockMetadataStorage(MetadataStorage):
 
 # Test data
 TEST_FILES = [
-    ("test.mp3", "audio/mpeg", True, 303),  # Valid audio file - expect redirect
-    ("test.wav", "audio/wav", True, 303),   # Valid audio file - expect redirect
-    ("test.txt", "text/plain", False, 400), # Invalid file type - expect error
+    ("test.mp3", "audio/mpeg", True, 303, 200),  # Valid audio file - expect redirect for form, 200 for AJAX
+    ("test.wav", "audio/wav", True, 303, 200),   # Valid audio file - expect redirect for form, 200 for AJAX
+    ("test.txt", "text/plain", False, 400, 400), # Invalid file type - expect error for both
 ]
+
+# Test users
+TEST_USERS = {
+    "users": [
+        {
+            "username": "admin",
+            "password": "admin123",
+            "is_admin": True,
+            "created_at": "2023-10-01T12:00:00Z"
+        },
+        {
+            "username": "testuser",
+            "password": "test123",
+            "is_admin": False,
+            "created_at": "2023-10-01T12:00:00Z"
+        }
+    ]
+}
 
 @pytest.fixture(scope="session")
 def test_dir() -> Generator[pathlib.Path, None, None]:
@@ -259,15 +277,38 @@ def mock_task_service() -> MockTaskServiceProvider:
     return MockTaskServiceProvider()
 
 @pytest.fixture
-def test_client(mock_storage: MockMetadataStorage, mock_task_service: MockTaskServiceProvider) -> TestClient:
+def test_auth_manager() -> AuthManager:
+    """Create a test auth manager with test users."""
+    return AuthManager(users=TEST_USERS)
+
+@pytest.fixture
+def test_client(
+    mock_storage: MockMetadataStorage,
+    mock_task_service: MockTaskServiceProvider,
+    test_auth_manager: AuthManager
+) -> TestClient:
     """Create a test client with mock dependencies."""
     # Create app with dependency injection
     app = create_app(
         metadata_storage=mock_storage,
-        task_provider=mock_task_service
+        task_provider=mock_task_service,
+        auth_manager_instance=test_auth_manager
     )
     
-    return TestClient(app)
+    client = TestClient(app)
+    
+    # Login as admin user
+    client.post(
+        "/login",
+        data={
+            "username": "admin",
+            "password": "admin123",
+            "next": "/"
+        },
+        follow_redirects=False
+    )
+    
+    return client
 
 @pytest.fixture
 def test_file(test_dir: pathlib.Path, request: pytest.FixtureRequest) -> pathlib.Path:
@@ -302,7 +343,7 @@ def sample_file_with_task(mock_storage: MockMetadataStorage, mock_task_service: 
     
     return file_id, task.id, task
 
-@pytest.mark.parametrize("filename,content_type,is_valid,expected_status", TEST_FILES)
+@pytest.mark.parametrize("filename,content_type,is_valid,expected_status_form,expected_status_ajax", TEST_FILES)
 def test_upload_audio(
     test_client: TestClient,
     mock_storage: MockMetadataStorage,
@@ -311,9 +352,11 @@ def test_upload_audio(
     filename: str,
     content_type: str,
     is_valid: bool,
-    expected_status: int
+    expected_status_form: int,
+    expected_status_ajax: int
 ):
     """Test uploading audio files with various formats."""
+    # Test regular form submission
     with open(test_file, "rb") as f:
         response = test_client.post(
             "/upload",
@@ -322,11 +365,44 @@ def test_upload_audio(
             follow_redirects=False  # Don't follow redirects to check status code
         )
     
-    assert response.status_code == expected_status
+    assert response.status_code == expected_status_form
     
     if is_valid:
         # Get file ID from redirect URL
         file_id = response.headers["location"].split("/")[-1]
+        
+        # Verify metadata storage
+        metadata = mock_storage.storage.get(file_id)
+        assert metadata is not None
+        assert metadata["original_filename"] == filename
+        
+        # Verify file_extension is correctly stored
+        file_extension = pathlib.Path(filename).suffix.lower()
+        assert metadata["file_extension"] == file_extension
+        
+        # Verify that beat detection task was started
+        assert "beat_detection" in metadata
+        task_id = metadata["beat_detection"]
+        assert task_id in mock_task_service.tasks
+    else:
+        assert "Unsupported file format" in response.json()["detail"]
+    
+    # Test AJAX request
+    with open(test_file, "rb") as f:
+        response = test_client.post(
+            "/upload",
+            files={"file": (filename, f, content_type)},
+            data={"analyze": "true"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            follow_redirects=False
+        )
+    
+    assert response.status_code == expected_status_ajax
+    
+    if is_valid:
+        # For AJAX, we should get a JSON response with file_id
+        assert "file_id" in response.json()
+        file_id = response.json()["file_id"]
         
         # Verify metadata storage
         metadata = mock_storage.storage.get(file_id)
@@ -370,7 +446,15 @@ async def test_get_file_status(
 
 def test_file_not_found(test_client: TestClient):
     """Test handling of non-existent files."""
+    # Test regular request
     response = test_client.get("/status/nonexistent")
+    assert response.status_code == 404
+    
+    # Test AJAX request
+    response = test_client.get(
+        "/status/nonexistent",
+        headers={"X-Requested-With": "XMLHttpRequest"}
+    )
     assert response.status_code == 404
 
 @pytest.mark.asyncio
@@ -666,3 +750,43 @@ async def test_file_page(
         # For files that don't exist, just verify the 404 response
         response = test_client.get(f"/file/{file_id}")
         assert response.status_code == expected_status 
+
+def test_unauthenticated_ajax(
+    mock_storage: MockMetadataStorage,
+    mock_task_service: MockTaskServiceProvider,
+    test_auth_manager: AuthManager
+):
+    """Test that unauthenticated AJAX requests get a 401 response."""
+    # Create app with dependency injection but don't login
+    app = create_app(
+        metadata_storage=mock_storage,
+        task_provider=mock_task_service,
+        auth_manager_instance=test_auth_manager
+    )
+    client = TestClient(app)
+    
+    # Test AJAX request to status endpoint
+    response = client.get(
+        "/status/some-id",
+        headers={"X-Requested-With": "XMLHttpRequest"}
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Not authenticated"
+    
+    # Test AJAX request to upload endpoint
+    with open(__file__, "rb") as f:  # Just use this file as a test file
+        response = client.post(
+            "/upload",
+            files={"file": ("test.mp3", f, "audio/mpeg")},
+            headers={"X-Requested-With": "XMLHttpRequest"}
+        )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Not authenticated"
+    
+    # Test AJAX request to confirm endpoint
+    response = client.post(
+        "/confirm/some-id",
+        headers={"X-Requested-With": "XMLHttpRequest"}
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Not authenticated" 

@@ -33,17 +33,27 @@ security = HTTPBearer()
 class AuthManager:
     """Handles authentication-related operations."""
     
-    def __init__(self):
-        """Initialize the auth manager."""
-        pass
+    def __init__(self, users: Optional[Dict[str, List[Dict[str, Any]]]] = None):
+        """Initialize the auth manager.
+        
+        Args:
+            users: Optional dictionary of users in the format {"users": [{"username": str, "password": str, ...}, ...]}
+                  If not provided, users will be loaded from the config file.
+        """
+        self._users = users
     
     def get_users(self) -> List[Dict[str, Any]]:
-        """Get all users from the users file."""
+        """Get all users from the users file or memory."""
+        if self._users is not None:
+            return self._users.get("users", [])
         users_data = get_users()
         return users_data.get("users", [])
     
     def save_users(self, users: List[Dict[str, Any]]) -> bool:
-        """Save the users list to the users file."""
+        """Save the users list to the users file or memory."""
+        if self._users is not None:
+            self._users = {"users": users}
+            return True
         return save_users({"users": users})
     
     def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
@@ -112,9 +122,11 @@ async def require_auth(request: Request) -> Dict[str, Any]:
     user = auth_manager.get_current_user(request)
     
     if not user:
-        # Redirect to login page for web requests
-        if request.url.path.startswith("/api"):
-            # For API requests, return 401 Unauthorized
+        # Check if this is an AJAX request
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        
+        if is_ajax:
+            # For AJAX requests, always return 401 Unauthorized
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated"
