@@ -1,0 +1,42 @@
+# Beat Detection App Development Rules
+
+## Environment Management
+
+- **Use uv exclusively**: All package management and virtual environment operations must use uv, not pip or pipenv
+- Install with: `uv pip install .` or `uv pip install ".[dev]"`
+- Create environments with: `uv venv`
+
+## Development Philosophy: Fail Fast
+
+- **No defensive coding patterns**: This is a first version, we want errors to be clear and immediate
+- **No backward compatibility code**: Only focus on current functionality
+- **Let errors surface quickly**: Don't hide issues with try/except blocks unless you have a specific recovery strategy
+- **No silent failures**: All errors should be explicit and visible
+- **No implicit defaults**: Configuration should be explicit; missing values should cause errors
+
+## Coding Practices
+
+1. Validate inputs explicitly and early
+2. Don't add fallback mechanisms - if something fails, let it fail clearly
+3. Use Dependency Injection when reasonable to make the code easier to test
+4. Limit usage of monkey patching to extraordinary cases only
+5. Use clear error messages that indicate what went wrong
+6. Don't add complexity for future-proofing - we can modify the code later when needs arise
+
+## Testing
+
+Write tests that verify correct behavior but don't spend time writing tests for edge cases that should simply raise appropriate exceptions according to our fail-fast principle.
+
+## Code Formatting and Linting
+
+Use the tools configured in `pyproject.toml`:
+- Format code with black: `uv pip install black && black .`
+- Sort imports with isort: `uv pip install isort && isort .`
+
+## Commits and PRs
+
+1. Keep commits focused on single changes
+2. Use descriptive commit messages
+3. PRs should be small and focused on a single feature or fix
+
+Remember: It's better to have a clear failure that points directly to the issue than silent degradation that's hard to diagnose. 

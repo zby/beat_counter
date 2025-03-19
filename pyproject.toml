@@ -1,100 +1,49 @@
 [build-system]
-requires = [
-    "setuptools>=61.0", 
-    "wheel", 
-    "Cython>=0.29.36", 
-    "numpy>=1.24.0"
-]
+requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "beat-detection"
+name = "beat-detection-app"
 version = "0.1.0"
-description = "Music beat detection and metronome overlay tool"
-requires-python = ">=3.12"
-authors = [
-    {name = "Beat Detection Team"}
-]
+description = "Web application for audio beat detection and visualization"
 readme = "README.md"
-
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [
+    {name = "Beat Detection App Team"}
+]
 dependencies = [
-    "madmom @ git+https://github.com/CPJKU/madmom.git",
-    #"librosa>=0.10.0",
-    "soundfile>=0.12.1",
-    "numpy>=1.24.0",
-    "moviepy>=1.0.3",
-    "pillow>=9.0.0",
-    "fastapi>=0.104.1",
-    "uvicorn>=0.23.2",
-    "python-multipart>=0.0.6",
-    "jinja2>=3.1.2",
-    "aiofiles>=23.2.1"
+    "fastapi>=0.68.0",
+    "uvicorn>=0.15.0",
+    "jinja2>=3.0.1",
+    "aiofiles>=0.7.0",
+    "python-multipart>=0.0.5",
+    "pydantic>=1.8.2",
+    "celery>=5.2.0",
+    "redis>=4.0.0",
+    "pyjwt>=2.3.0"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.1",
-    "pytest-cov>=4.1.0",
-    "httpx>=0.25.0",
-    "black>=23.7.0",
-    "ruff>=0.0.285",
-    "mypy>=1.5.1",
-    "Cython>=0.29.36"
+    "pytest>=6.0.0",
+    "black>=21.5b2",
+    "flake8>=3.9.2",
+    "isort>=5.9.1"
 ]
+
+[tool.setuptools]
+packages = ["web_app", "beat_detection"]
 
 [tool.black]
 line-length = 88
-target-version = ["py312"]
+target-version = ["py37", "py38", "py39"]
+include = '\.pyi?$'
 
-[tool.ruff]
-line-length = 88
-target-version = "py312"
-
-[tool.ruff.lint]
-# Enable specific rules
-select = [
-    "E",  # pycodestyle errors
-    "F",  # pyflakes
-    "D",  # pydocstyle
-]
-
-# Disable specific rules
-ignore = [
-    "D100",  # Missing docstring in public module
-    "D104",  # Missing docstring in public package
-    "D107",  # Missing docstring in __init__
-    "D203",  # 1 blank line required before class docstring
-    "D213",  # Multi-line docstring summary should start at the second line
-    "D401",  # First line of docstring should be in imperative mood
-]
-
-[tool.ruff.lint.pydocstyle]
-convention = "numpy"
-
-[tool.mypy]
-python_version = "3.12"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-
-[tool.setuptools]
-packages = ["beat_detection", "beat_detection.core", "beat_detection.utils", "beat_detection.cli", "web_app"]
-
-[project.scripts]
-detect-beats = "beat_detection.cli.detect_beats:main"
-generate-videos = "beat_detection.cli.generate_videos:main"
-beat-webapp = "web_app.app:main"
+[tool.isort]
+profile = "black"
+line_length = 88
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["web_app", "beat_detection"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-addopts = "-v"
-
-[dependency-groups]
-dev = [
-    "ruff>=0.9.10",
-]
+testpaths = ["tests"]
+python_files = "test_*.py"

@@ -1,179 +1,139 @@
-# Beat Detection
+# Beat Detection Web Application
 
-A Python package for detecting beats in music files with optional video visualization.
+A web application for audio beat detection and visualization. This application allows users to:
+
+1. Upload audio files
+2. Detect beats automatically
+3. Generate visualization videos with beat markers
 
 ## Features
 
-- Detect beats in various audio formats (MP3, WAV, FLAC, M4A, OGG)
-- Detect and mark downbeats (first beat of each measure)
-- Analyze beat intervals for irregularities
-- Skip intro sections with inconsistent beat patterns
-- Generate statistics about detected beats (tempo, regularity)
-- Process individual files or entire directories in batch mode (including subdirectories)
-- Preserve directory structure in output files
-- Generate summary statistics across multiple files
-- Create visualization videos:
-  - Counter videos: displays beat count (1-4 or custom pattern)
-  - Optional flash videos: background flashes on each beat
+- User authentication system
+- File upload and management
+- Beat detection for various audio formats
+- Video generation with beat markers
+- Processing queue for multiple files
 
 ## Installation
 
-Requires Python 3.12 or newer:
+First, install [uv](https://github.com/astral-sh/uv), a fast Python package installer and resolver:
 
 ```bash
-# Install the package
-pip install -e .
-
-# Install development dependencies
-pip install -e '.[dev]'
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-## Usage
-
-### Command Line
-
-#### Beat Detection (using detect-beats)
-
-Detect beats in audio files:
+### Setting up a virtual environment
 
 ```bash
-# Process a single file
-detect-beats path/to/file.mp3
-
-# Process a directory (including all subdirectories)
-detect-beats path/to/directory
-
-# Process the default directory (data/original)
-detect-beats
-
-# The directory structure is preserved in the output
-# For example, if you have audio files in data/original/salsa/,
-# the output will be created in data/beats/salsa/
+# Create and activate a virtual environment with uv
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
-Beat detection options:
+### Installing dependencies
 
 ```bash
-# Beat detection options
-detect-beats --min-bpm 110 --max-bpm 150 file.mp3
-detect-beats --no-skip-intro file.mp3
-detect-beats --tolerance 15.0 file.mp3
+# Install dependencies from pyproject.toml
+uv pip install .
 
-# Output options
-detect-beats --output-dir data/custom_beats file.mp3
-detect-beats --quiet file.mp3
+# For development, install with dev dependencies
+uv pip install ".[dev]"
 ```
 
-#### Video Generation (using generate-videos)
+## Running the Application
 
-Generate videos from beat timestamp files:
+### Development Server
 
 ```bash
-# Generate counter videos from a single beat file (default)
-generate-videos path/to/file_beats.txt
-
-# Generate videos for all beat files in a directory
-generate-videos path/to/directory
-
-# You can also use the original audio file - it will find the corresponding beats file
-generate-videos path/to/original_audio.mp3
-
-# Specify custom options
-generate-videos --meter 3 --resolution 1920x1080 path/to/file_beats.txt
+python -m web_app.app
 ```
 
-Video generation options:
+### Configuration
+
+The application uses a config directory structure for storing configuration files:
+
+- `web_app/config/config.json` - Application settings and parameters
+- `web_app/config/users.json` - User credentials and information
+
+These files are created automatically on first run with default values.
+
+### User Management
+
+The application includes a user management script to manage user accounts from the command line:
 
 ```bash
-# Video type options
-generate-videos --flash beats.txt        # Also generate flash video (off by default)
-generate-videos --no-counter beats.txt   # Skip counter video
+# List all users
+python tools/manage_users.py list
 
-# Video format options
-generate-videos --resolution 1920x1080 beats.txt  # Set resolution
-generate-videos --fps 60 beats.txt               # Higher framerate
-generate-videos --flash-duration 0.2 beats.txt   # Longer flash effect
+# Add a new user (password will be generated if not provided)
+python tools/manage_users.py add username [--password PASSWORD] [--admin]
 
-# Time signature options
-generate-videos --meter 3 beats.txt              # Use 3/4 time signature
+# Delete a user
+python tools/manage_users.py delete username
 
-# Output control
-generate-videos --output-dir path beats.txt  # Custom output directory
+# Change a user's password
+python tools/manage_users.py password username new_password
 ```
 
-### As a Library
+### Command-line Tools
+
+The application provides command-line tools for processing files directly:
 
 #### Beat Detection
 
-```python
-from beat_detection.core.detector import BeatDetector
-import numpy as np
+```bash
+# Run beat detection on a file by ID
+python tools/run_beat_detection.py [file_id] --wait
 
-# Create detector with custom parameters
-detector = BeatDetector(min_bpm=110, max_bpm=140, tolerance_percent=10.0)
+# Run beat detection on a file by path
+python tools/run_beat_detection.py /path/to/file.mp3 --wait
 
-# Process a single file
-input_file = "input.mp3"
-beats_file = "output/input_beats.txt"
-
-# Detect beats
-beat_timestamps, stats, irregular_beats = detector.detect_beats(input_file)
-
-# Save beat timestamps for later use
-np.savetxt(beats_file, beat_timestamps, fmt='%.3f')
+# Specify a custom upload directory
+python tools/run_beat_detection.py [file_id] --upload-dir /custom/path/to/uploads
 ```
 
 #### Video Generation
 
-```python
-from beat_detection.core.video import BeatVideoGenerator
-import numpy as np
+```bash
+# Generate video for a file by ID
+python tools/run_video_generation.py [file_id] --wait
 
-# Create video generator with custom settings
-video_gen = BeatVideoGenerator(
-    resolution=(1920, 1080),
-    fps=30,
-    bg_color=(20, 20, 20),
-    flash_color=(255, 255, 255),
-    count_colors=[(255, 0, 0), (0, 255, 0), (0, 0, 255)],  # For custom time signatures
-    font_size=200
-)
+# Generate video for a file by path
+python tools/run_video_generation.py /path/to/file.mp3 --wait
 
-# Load beat timestamps from file
-beats_file = "output/input_beats.txt"
-beat_timestamps = np.loadtxt(beats_file)
-
-# Generate counter video (default output)
-video_gen.create_counter_video(
-    audio_file="input.mp3",
-    beat_timestamps=beat_timestamps,
-    output_file="output/input_counter.mp4",
-    meter=3  # For 3/4 time
-)
-
-# Optionally generate flash video
-video_gen.create_flash_video(
-    audio_file="input.mp3",
-    beat_timestamps=beat_timestamps,
-    output_file="output/input_flash.mp4",
-    flash_duration=0.1
-)
+# Run immediately after beat detection (waits for beat file to be created)
+python tools/run_video_generation.py [file_id] --after-beat-detection --wait
 ```
 
-## Output Files
+#### Batch Processing
 
-### Beat Detection (`detect-beats`)
+```bash
+# Process all files in the uploads directory (both beat detection and video generation)
+python tools/process_batch.py --wait-beats --wait-video
 
-For each processed file, the tool generates:
-- Text file with beat timestamps and downbeat flags (`*_beats.txt`)
-  - Format: `<timestamp> <downbeat_flag>` (1=downbeat, 0=regular beat)
-- Text file with beat statistics (`*_beat_stats.txt`)
-- Text file with beat intervals for debugging (`*_intervals.txt`)
+# Skip files that already have beat or video files
+python tools/process_batch.py --skip-existing
 
-When processing multiple files, it also generates a summary file with statistics across all files (`batch_summary.txt`).
+# Process only a limited number of files
+python tools/process_batch.py --limit 5
 
-### Video Generation (`generate-videos`)
+# Specify a custom upload directory
+python tools/process_batch.py --upload-dir /custom/path/to/uploads
+```
 
-For each beat timestamp file, the tool can generate:
-- Flash video: screen flashes on each beat (`*_flash.mp4`)
-- Counter video: displays beat numbers (1-N) in sequence (`*_counter.mp4`)
+### Production Deployment
+
+For detailed deployment instructions, see the [Deployment Guide](DEPLOYMENT.md).
+
+## Dependencies
+
+- FastAPI - Web framework
+- Uvicorn - ASGI server
+- Celery - Task queue for background processing
+- Redis - Message broker for Celery
+- PyJWT - JWT tokens for authentication
+
+## License
+
+MIT

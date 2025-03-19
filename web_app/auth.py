@@ -4,9 +4,7 @@ This module provides functions for user authentication, session management,
 and protecting routes that require authentication.
 """
 
-import json
 import os
-import pathlib
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -16,12 +14,14 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import RedirectResponse
 
+# Import config module
+from web_app.config import get_users, save_users, get_config
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-USERS_FILE = pathlib.Path(__file__).parent / "users.json"
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "a_very_secret_key_for_development_only")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
@@ -33,51 +33,18 @@ security = HTTPBearer()
 class AuthManager:
     """Handles authentication-related operations."""
     
-    def __init__(self, users_file_path: pathlib.Path = USERS_FILE):
-        """Initialize the auth manager with a path to the users file."""
-        self.users_file_path = users_file_path
-        self._ensure_users_file_exists()
-    
-    def _ensure_users_file_exists(self) -> None:
-        """Ensure the users file exists, creating it if necessary."""
-        if not self.users_file_path.exists():
-            # Create default users file
-            default_users = {
-                "users": [
-                    {
-                        "username": "admin",
-                        "password": "admin123",
-                        "is_admin": True,
-                        "created_at": datetime.now().isoformat()
-                    }
-                ]
-            }
-            
-            # Write to file
-            with open(self.users_file_path, "w") as f:
-                json.dump(default_users, f, indent=4)
-            
-            logger.info(f"Created default users file at {self.users_file_path}")
+    def __init__(self):
+        """Initialize the auth manager."""
+        pass
     
     def get_users(self) -> List[Dict[str, Any]]:
         """Get all users from the users file."""
-        try:
-            with open(self.users_file_path, "r") as f:
-                data = json.load(f)
-                return data.get("users", [])
-        except Exception as e:
-            logger.error(f"Error reading users file: {e}")
-            return []
+        users_data = get_users()
+        return users_data.get("users", [])
     
     def save_users(self, users: List[Dict[str, Any]]) -> bool:
         """Save the users list to the users file."""
-        try:
-            with open(self.users_file_path, "w") as f:
-                json.dump({"users": users}, f, indent=4)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving users file: {e}")
-            return False
+        return save_users({"users": users})
     
     def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         """Authenticate a user with username and password."""

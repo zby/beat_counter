@@ -27,6 +27,7 @@ from web_app.celery_app import app as celery_app
 from web_app.storage import MetadataStorage, FileMetadataStorage
 from web_app.tasks import detect_beats_task, generate_video_task
 from web_app.auth import auth_manager, require_auth, get_current_user_from_cookie
+from web_app.config import get_config, get_users
 
 # Constants for task states
 ANALYZING = "ANALYZING"
@@ -37,8 +38,9 @@ COMPLETED = "COMPLETED"
 VIDEO_ERROR = "VIDEO_ERROR"
 ERROR = "ERROR"
 
-# Number of files to show in processing queue
-MAX_QUEUE_FILES = 50
+# Number of files to show in processing queue - from config
+config = get_config()
+MAX_QUEUE_FILES = config.get("queue", {}).get("max_files", 50)
 
 # Set of all valid states for validation
 VALID_STATES = {
