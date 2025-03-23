@@ -22,7 +22,8 @@ dependencies = [
     "celery>=5.2.0",
     "redis>=4.0.0",
     "pyjwt>=2.3.0",
-    "madmom @ git+https://github.com/CPJKU/madmom.git"
+    "madmom @ git+https://github.com/CPJKU/madmom.git",
+    "tqdm>=4.64.0",
 ]
 
 [project.optional-dependencies]
@@ -33,8 +34,12 @@ dev = [
     "isort>=5.9.1"
 ]
 
+[project.scripts]
+detect-beats = "tools.run_beat_detection:main"
+generate-videos = "tools.run_video_generation:main"
+
 [tool.setuptools]
-packages = ["web_app", "beat_detection"]
+packages = ["web_app", "beat_detection", "beat_detection.core", "beat_detection.utils", "beat_detection.cli"]
 
 [tool.black]
 line-length = 88
