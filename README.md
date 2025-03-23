@@ -23,6 +23,15 @@ First, install [uv](https://github.com/astral-sh/uv), a fast Python package inst
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+### System Requirements
+
+```bash
+# Install ffmpeg (required for video generation)
+sudo apt-get install ffmpeg  # On Ubuntu/Debian
+# OR
+brew install ffmpeg  # On macOS
+```
+
 ### Setting up a virtual environment
 
 ```bash
@@ -133,6 +142,7 @@ For detailed deployment instructions, see the [Deployment Guide](DEPLOYMENT.md).
 - Celery - Task queue for background processing
 - Redis - Message broker for Celery
 - PyJWT - JWT tokens for authentication
+- Pillow - Python Imaging Library for image processing
 
 ## License
 

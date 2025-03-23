@@ -25,6 +25,7 @@ The Beat Detection Web Application is built with FastAPI and relies on several c
 - **Background Worker**: Processes audio files and generates videos (Celery)
 - **Message Broker**: Coordinates between web server and workers (Redis)
 - **File Storage**: Stores uploaded audio files and generated videos
+- **Video Processing**: Requires ffmpeg for video generation
 
 Each component must be properly configured for a reliable production deployment.
 
@@ -37,16 +38,27 @@ Ensure you have:
 - Server IP address
 - SSL certificate (optional for development)
 
-### Installing Python and Setting Up Environment
+### System Requirements
 
-1. **Install uv** (fast Python package installer):
+1. **Install ffmpeg** (required for video generation):
+
+```bash
+# On Ubuntu/Debian
+sudo apt update
+sudo apt install -y ffmpeg
+
+# Verify installation
+ffmpeg -version
+```
+
+2. **Install uv** (fast Python package installer):
 
 ```bash
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-2. **Install Python 3.10+** (required for librosa):
+3. **Install Python 3.10+** (required for librosa):
 
 ```bash
 # Install Python 3.10 using uv
