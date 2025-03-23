@@ -87,10 +87,32 @@ git clone https://your-repo-url.git
 uv pip install .
 ```
 
-3. **Create essential directories**:
+3. **Create essential directories and set permissions**:
 
 ```bash
-mkdir -p web_app/uploads
+# Create required directories
+mkdir -p web_app/uploads web_app/output web_app/config
+
+# Set proper permissions for uploads directory
+# This ensures the web process can write to the uploads directory
+sudo chown -R www-data:www-data web_app/uploads
+sudo chmod -R 755 web_app/uploads
+
+# Set permissions for other directories
+sudo chown -R www-data:www-data web_app/output
+sudo chmod -R 755 web_app/output
+```
+
+4. **Set up configuration files**:
+
+```bash
+# Copy example configuration files
+cp web_app/config/config.json.example web_app/config/config.json
+cp web_app/config/users.json.example web_app/config/users.json
+
+# Set proper permissions for config files
+sudo chown www-data:www-data web_app/config/*.json
+sudo chmod 644 web_app/config/*.json
 ```
 
 ## Deployment Options
