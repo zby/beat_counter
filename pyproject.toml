@@ -27,9 +27,6 @@ dependencies = [
     "Pillow>=10.0.0",
 ]
 
-[project.system-dependencies]
-ffmpeg = ">=4.2.0"
-
 [project.optional-dependencies]
 dev = [
     "pytest>=6.0.0",
