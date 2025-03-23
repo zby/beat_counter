@@ -143,6 +143,7 @@ For detailed deployment instructions, see the [Deployment Guide](DEPLOYMENT.md).
 - Redis - Message broker for Celery
 - PyJWT - JWT tokens for authentication
 - Pillow - Python Imaging Library for image processing
+- MoviePy - Video editing library for Python
 
 ## License
 

@@ -25,7 +25,7 @@ dependencies = [
     "madmom @ git+https://github.com/CPJKU/madmom.git",
     "tqdm>=4.64.0",
     "Pillow>=10.0.0",
-    "moviepy>=1.0.3",
+    "moviepy>=2.1.2",
 ]
 
 [project.optional-dependencies]
