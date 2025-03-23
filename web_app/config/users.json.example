@@ -1,0 +1,22 @@
+{
+    "users": [
+        {
+            "username": "admin",
+            "password": "admin123",
+            "is_admin": true,
+            "created_at": "2023-10-01T12:00:00Z"
+        },
+        {
+            "username": "user",
+            "password": "password123",
+            "is_admin": false,
+            "created_at": "2023-10-01T12:00:00Z"
+        },
+        {
+            "username": "testuser",
+            "password": "4YV4DNbFb18",
+            "is_admin": false,
+            "created_at": "2025-03-19T08:36:24.847217"
+        }
+    ]
+}

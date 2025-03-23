@@ -62,10 +62,30 @@ python -m web_app.app
 
 The application uses a config directory structure for storing configuration files:
 
-- `web_app/config/config.json` - Application settings and parameters
-- `web_app/config/users.json` - User credentials and information
+```bash
+# Copy example configuration files
+cp web_app/config/config.json.example web_app/config/config.json
+cp web_app/config/users.json.example web_app/config/users.json
 
-These files are created automatically on first run with default values.
+# Edit the configuration files with your settings
+nano web_app/config/config.json  # Application settings
+nano web_app/config/users.json   # User credentials
+```
+
+The configuration files contain:
+
+- `config.json` - Application settings and parameters:
+  - App settings (debug mode, host, port, workers)
+  - Celery configuration (Redis connection, serialization)
+  - Storage settings (upload/output directories, file limits)
+  - Video generation parameters (resolution, codecs)
+
+- `users.json` - User credentials and information:
+  - Username and password hashes
+  - Admin privileges
+  - Account creation timestamps
+
+These files are gitignored to prevent committing sensitive information. The example files (`config.json.example` and `users.json.example`) are included in the repository as templates.
 
 ### User Management
 
