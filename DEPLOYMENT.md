@@ -32,11 +32,32 @@ Each component must be properly configured for a reliable production deployment.
 
 Ensure you have:
 
-- Python 3.7+ installed
 - Basic familiarity with Linux server administration
 - SSH access to your server (for VPS deployments)
-- Domain name configured to point to your server
-- SSL certificate (recommended for production)
+- Server IP address
+- SSL certificate (optional for development)
+
+### Installing Python and Setting Up Environment
+
+1. **Install uv** (fast Python package installer):
+
+```bash
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+2. **Install Python 3.10+** (required for librosa):
+
+```bash
+# Install Python 3.10 using uv
+uv venv --python 3.10.13
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Verify installation
+python --version
+```
 
 ## Preparing Your Application
 
@@ -50,9 +71,7 @@ git clone https://your-repo-url.git
 2. **Install dependencies**:
 
 ```bash
-# Create a virtual environment and install dependencies
-uv venv
-source .venv/bin/activate
+# Install dependencies from pyproject.toml
 uv pip install .
 ```
 
@@ -75,34 +94,20 @@ This option gives you full control over the environment and is recommended for a
 sudo apt update && sudo apt upgrade -y
 
 # Install required system packages
-sudo apt install -y python3 python3-pip python3-venv nginx supervisor redis-server
+sudo apt install -y nginx supervisor redis-server
 
 # Install uv (fast Python package installer)
 curl -LsSf https://astral.sh/uv/install.sh | sudo sh
 ```
 
-#### 2. Create a Python Virtual Environment
-
-```bash
-# Navigate to your application directory
-cd /path/to/your/app
-
-# Create and activate virtual environment with uv
-uv venv
-source .venv/bin/activate
-
-# Install dependencies from pyproject.toml
-uv pip install .
-```
-
-#### 3. Configure Nginx
+#### 2. Configure Nginx
 
 Create `/etc/nginx/sites-available/beats-app.conf`:
 
 ```nginx
 server {
     listen 80;
-    server_name your-domain.com www.your-domain.com;
+    server_name your_server_ip;
     
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -130,7 +135,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-#### 4. Configure Supervisor
+#### 3. Configure Supervisor
 
 Create `/etc/supervisor/conf.d/beats-app.conf`:
 
@@ -157,6 +162,17 @@ stdout_logfile=/path/to/your/app/logs/worker.out.log
 programs=beats-web,beats-worker
 ```
 
+Create required directories and set permissions:
+
+```bash
+# Create logs directory
+mkdir -p /path/to/your/app/logs
+
+# Set appropriate permissions
+sudo chown -R www-data:www-data /path/to/your/app/logs
+sudo chmod -R 755 /path/to/your/app/logs
+```
+
 Apply the configuration:
 
 ```bash
@@ -165,14 +181,37 @@ sudo supervisorctl update
 sudo supervisorctl status
 ```
 
-#### 5. Set Up SSL with Let's Encrypt
+#### 4. Set Up SSL with Let's Encrypt (Optional)
+
+If you want to use HTTPS, you'll need a domain name. For development, you can use HTTP or set up a self-signed certificate:
 
 ```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com -d www.your-domain.com
+# Generate self-signed certificate (for development only)
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+-keyout /etc/ssl/private/nginx-selfsigned.key \
+-out /etc/ssl/certs/nginx-selfsigned.crt
 ```
 
-Follow the prompts to configure HTTPS.
+Then update your Nginx configuration to use HTTPS:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your_server_ip;
+    
+    ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+    ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+    
+    # ... rest of your configuration ...
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name your_server_ip;
+    return 301 https://$server_name$request_uri;
+}
+```
 
 ### Gandi Web Hosting Deployment
 
@@ -192,7 +231,7 @@ zip -r deployment.zip . -x ".venv/*" -x ".git/*" -x "*.pyc" -x "__pycache__/*"
 3. **Upload the package** via Gandi's web interface or SFTP
 
 4. **Configure the application** through Gandi's control panel:
-   - Set Python version to 3.7+
+   - Set Python version to 3.10+
    - Configure environment variables (see Environment Configuration below)
    - Set the entry point to `web_app.asgi:app`
 
@@ -210,7 +249,7 @@ Create a `.env` file in your application root (never commit this to version cont
 # Application settings
 DEBUG=False
 JWT_SECRET_KEY=your_secure_random_key
-ALLOWED_HOSTS=your-domain.com,www.your-domain.com
+ALLOWED_HOSTS=your_server_ip
 
 # Redis configuration
 REDIS_URL=redis://localhost:6379/0
@@ -259,9 +298,6 @@ For enhanced security, configure Redis to require a password and limit connectio
 The application includes a command-line tool to manage user accounts. This is particularly useful during initial setup and for ongoing user administration:
 
 ```bash
-# Activate your virtual environment if needed
-source .venv/bin/activate
-
 # List all users
 python tools/manage_users.py list
 

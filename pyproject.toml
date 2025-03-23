@@ -21,7 +21,8 @@ dependencies = [
     "pydantic>=1.8.2",
     "celery>=5.2.0",
     "redis>=4.0.0",
-    "pyjwt>=2.3.0"
+    "pyjwt>=2.3.0",
+    "madmom @ git+https://github.com/CPJKU/madmom.git"
 ]
 
 [project.optional-dependencies]
