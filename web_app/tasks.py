@@ -30,16 +30,20 @@ from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.utils import reporting
 from beat_detection.utils.beat_file import load_beat_data
 from web_app.celery_app import app
+from web_app.config import get_config
 
 # Add import for storage
 from web_app.storage import FileMetadataStorage
+
+# Get configuration
+config = get_config()
 
 # Set up task logger
 logger = get_task_logger(__name__)
 
 # Configure Celery to log to a file instead of stdout/stderr
 # This is done via environment variables that Celery will read
-log_file = str(pathlib.Path(__file__).parent.absolute() / 'celery.log')
+log_file = os.path.join(config['storage']['output_dir'], 'celery.log')
 os.environ['CELERY_LOG_FILE'] = log_file
 
 # Configure logging to handle I/O errors gracefully
@@ -212,8 +216,8 @@ def detect_beats_task(
     
     with self._io_capture:
         try:
-            # Get a storage instance
-            storage = FileMetadataStorage(base_dir=str(pathlib.Path(__file__).parent / "uploads"))
+            # Get a storage instance with absolute path from config
+            storage = FileMetadataStorage(base_dir=config['storage']['upload_dir'])
             
             # Construct job directory path
             job_dir = storage.get_job_directory(file_id)
