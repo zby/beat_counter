@@ -222,6 +222,10 @@ def detect_beats_task(
             # Construct job directory path
             job_dir = storage.get_job_directory(file_id)
             
+            # Create a dedicated 'tmp' subdirectory for temporary files
+            tmp_dir = job_dir / "tmp"
+            tmp_dir.mkdir(exist_ok=True)
+            
             # Create metadata.json path
             metadata_path = job_dir / "metadata.json"
             
@@ -333,14 +337,16 @@ def detect_beats_task(
                 # Update task state with error information
                 self.update_state(state=states.FAILURE, meta={
                     "file_id": file_id,
-                    "error": str(e),
+                    "exc_type": type(e).__name__,
+                    "exc_message": str(e),
+                    "exc_module": type(e).__module__,
                     "beat_detection_output": {
                         "stdout": current_stdout,
                         "stderr": current_stderr
                     }
                 })
                 
-                # Re-raise the exception
+                # Re-raise the exception with proper Celery exception info
                 raise
                 
         except Exception as e:
@@ -352,10 +358,12 @@ def detect_beats_task(
             if hasattr(self, '_io_capture'):
                 stdout, stderr = self._io_capture.get_output()
             
-            # Return error information
+            # Return error information with proper Celery exception format
             return {
                 "file_id": file_id,
-                "error": str(e),
+                "exc_type": type(e).__name__,
+                "exc_message": str(e),
+                "exc_module": type(e).__module__,
                 "beat_detection_output": {
                     "stdout": stdout,
                     "stderr": stderr
@@ -422,12 +430,11 @@ def generate_video_task(
             # Standardized output video path
             video_output = storage.get_video_file_path(file_id)
             
-            # Set the TMPDIR environment variable to point to the job directory
-            # This will make MoviePy save temporary files in the upload directory
-            # instead of using the current working directory
-            old_temp_dir = os.environ.get('TMPDIR')
-            os.environ['TMPDIR'] = str(job_dir)
-            safe_info(f"Set TMPDIR to {str(job_dir)}")
+            # MoviePy creates temporary files relative to the current working directory
+            # Change the directory to the job directory to control where temp files are created
+            old_cwd = os.getcwd()
+            os.chdir(str(job_dir))
+            safe_info(f"Changed working directory to {str(job_dir)}")
             
             # Initialize task state
             update_progress = create_progress_updater(
@@ -505,13 +512,13 @@ def generate_video_task(
                     }
                 }
             finally:
-                # Restore the original TMPDIR environment variable
-                if old_temp_dir is not None:
-                    os.environ['TMPDIR'] = old_temp_dir
-                else:
-                    # If there was no TMPDIR before, remove it
-                    os.environ.pop('TMPDIR', None)
-                safe_info("Restored original TMPDIR environment variable")
+                # Restore the original working directory if it was changed
+                if 'old_cwd' in locals():
+                    try:
+                        os.chdir(old_cwd)
+                        safe_info("Restored original working directory")
+                    except Exception as e:
+                        safe_error(f"Error restoring original working directory: {str(e)}")
             
         except Exception as e:
             # Log the error
@@ -528,7 +535,9 @@ def generate_video_task(
             # Update task state with error information
             self.update_state(state=states.FAILURE, meta={
                 "file_id": file_id,
-                "error": str(e),
+                "exc_type": type(e).__name__,
+                "exc_message": str(e),
+                "exc_module": type(e).__module__,
                 "video_generation_output": {
                     "stdout": stdout,
                     "stderr": stderr
@@ -538,7 +547,9 @@ def generate_video_task(
             # Return error information
             return {
                 "file_id": file_id,
-                "error": str(e),
+                "exc_type": type(e).__name__,
+                "exc_message": str(e),
+                "exc_module": type(e).__module__,
                 "video_generation_output": {
                     "stdout": stdout,
                     "stderr": stderr
