@@ -1,19 +1,19 @@
 [program:beats_web]
-command=/home/admin/beats/.venv/bin/uvicorn web_app.asgi:app --host 0.0.0.0 --port 8000
-directory=/home/admin/beats
+command=/home/admin/beats_counter/.venv/bin/uvicorn web_app.asgi:app --host 0.0.0.0 --port 8000
+directory=/home/admin/beats_counter
 user=admin
 autostart=true
 autorestart=true
-stderr_logfile=/home/admin/beats/logs/web.err.log
-stdout_logfile=/home/admin/beats/logs/web.out.log
-environment=PYTHONPATH="/home/admin/beats",BEAT_COUNTER_APP_DIR="/home/admin/beats"
+stderr_logfile=/home/admin/beats_counter/logs/web.err.log
+stdout_logfile=/home/admin/beats_counter/logs/web.out.log
+environment=PYTHONPATH="/home/admin/beats_counter",BEAT_COUNTER_APP_DIR="/home/admin/beats"
 
 [program:beats_celery]
-command=/home/admin/beats/.venv/bin/celery -A web_app.celery_app worker --loglevel=info
-directory=/home/admin/beats
+command=/home/admin/beats_counter/.venv/bin/celery -A web_app.celery_app worker --loglevel=info
+directory=/home/admin/beats_counter
 user=admin
 autostart=true
 autorestart=true
-stderr_logfile=/home/admin/beats/logs/celery.err.log
-stdout_logfile=/home/admin/beats/logs/celery.out.log
-environment=PYTHONPATH="/home/admin/beats",BEAT_COUNTER_APP_DIR="/home/admin/beats" 
+stderr_logfile=/home/admin/beats_counter/logs/celery.err.log
+stdout_logfile=/home/admin/beats_counter/logs/celery.out.log
+environment=PYTHONPATH="/home/admin/beats_counter",BEAT_COUNTER_APP_DIR="/home/admin/beats_counter" 
