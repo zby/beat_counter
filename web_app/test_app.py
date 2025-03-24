@@ -133,7 +133,7 @@ class MockMetadataStorage(MetadataStorage):
             # Create response with basic file information
             status_data = {
                 "file_id": file_id,
-                "filename": metadata.get("original_filename"),
+                "original_filename": metadata.get("original_filename"),
                 "audio_file_path": metadata.get("audio_file_path")
             }
             

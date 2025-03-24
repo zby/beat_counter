@@ -326,8 +326,11 @@ class FileMetadataStorage(MetadataStorage):
         # Create response with basic file information
         status_data = {
             "file_id": file_id,
-            "filename": metadata.get("original_filename"),
-            "audio_file_path": metadata.get("audio_file_path")
+            "original_filename": metadata.get("original_filename"),
+            "audio_file_path": metadata.get("audio_file_path"),
+            "user_ip": metadata.get("user_ip"),
+            "upload_timestamp": metadata.get("upload_timestamp"),
+            "uploaded_by": metadata.get("uploaded_by")
         }
 
         # Add task IDs to the status data

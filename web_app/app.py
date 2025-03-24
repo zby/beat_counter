@@ -359,7 +359,10 @@ def create_app(
         # Initialize response data with basic file info
         response_data = {
             "file_id": file_id,
-            "filename": metadata.get("filename"),
+            "original_filename": metadata.get("original_filename"),
+            "upload_timestamp": metadata.get("upload_timestamp"),
+            "user_ip": metadata.get("user_ip"),
+            "uploaded_by": metadata.get("uploaded_by"),
             "status": ERROR  # Default to ERROR
         }
         
@@ -437,7 +440,7 @@ def create_app(
                 continue
                 
             # Get filename from file metadata
-            filename = file_metadata.get("filename", "Unknown file")
+            filename = file_metadata.get("original_filename", "Unknown file")
             
             # Get task statuses
             beat_task_id = file_metadata.get("beat_detection")
