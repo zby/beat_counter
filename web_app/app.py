@@ -27,7 +27,7 @@ from beat_detection.utils.constants import AUDIO_EXTENSIONS
 from web_app.celery_app import app as celery_app
 from web_app.storage import MetadataStorage, FileMetadataStorage
 from web_app.tasks import detect_beats_task, generate_video_task
-from web_app.auth import auth_manager, AuthManager
+from web_app.auth import UserManager
 from web_app.config import get_config, get_users
 
 # Constants for task states
@@ -132,34 +132,30 @@ get_task_status = task_service.get_task_status
 def create_app(
     metadata_storage: Optional[MetadataStorage] = None,
     task_provider: Optional[TaskServiceProvider] = None,
-    auth_manager_instance: Optional[AuthManager] = None,
+    user_manager: Optional[UserManager] = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
     
     Args:
-        metadata_storage: Optional MetadataStorage implementation to use
-        task_provider: Optional TaskServiceProvider to use for task operations
-        auth_manager_instance: Optional AuthManager instance to use for authentication.
-                             If not provided, the global auth_manager will be used.
+        metadata_storage: Optional storage implementation
+        task_provider: Optional task service implementation
+        user_manager: Optional user manager implementation
         
     Returns:
-        Configured FastAPI application
+        FastAPI application instance
     """
-    app = FastAPI(
-        title="Beat Detection Web App",
-        description="Web interface for audio beat detection and visualization",
-        version="0.1.0"
-    )
+    # Initialize app
+    app = FastAPI()
     
-    # Configure services
+    # Initialize services
     storage = metadata_storage or FileMetadataStorage(base_dir=str(UPLOAD_DIR))
     service = task_provider or task_service
-    app_auth = auth_manager_instance or auth_manager
+    auth = user_manager or UserManager()
     
     # Mount static files directory
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     
-    # Set up Jinja templates
+    # Initialize templates
     templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     
     # Dependency for getting storage
@@ -172,16 +168,16 @@ def create_app(
         
     # Dependency for getting auth manager
     def get_auth_manager():
-        return app_auth
+        return auth
         
     # Update auth dependencies to use app-specific auth manager
     async def get_current_user_from_cookie(request: Request) -> Optional[Dict[str, Any]]:
         """Get the current user from the session cookie."""
-        return app_auth.get_current_user(request)
+        return auth.get_current_user(request)
         
     async def require_auth(request: Request) -> Dict[str, Any]:
         """Dependency that requires a valid authentication."""
-        user = app_auth.get_current_user(request)
+        user = auth.get_current_user(request)
         
         if not user:
             # Check if this is an AJAX request
@@ -230,45 +226,44 @@ def create_app(
             {"request": request, "next_url": next or "/"}
         )
 
-    @app.post("/login")
+    @app.post("/login", response_class=HTMLResponse)
     async def login(
         request: Request,
-        response: Response,
         username: str = Form(...),
         password: str = Form(...),
-        next: str = Form("/")
+        next_url: Optional[str] = Form(None)
     ):
         """Process login form submission."""
+        # Create user manager
+        user_manager = UserManager()
+        
         # Authenticate user
-        user = auth_manager.authenticate_user(username, password)
+        user = user_manager.authenticate(username, password)
         
         if not user:
             # Authentication failed
             return templates.TemplateResponse(
                 "login.html",
-                {
-                    "request": request,
-                    "error": "Invalid username or password",
-                    "next_url": next
-                },
-                status_code=401
+                {"request": request, "error": "Invalid username or password", "next": next_url or "/"}
             )
         
+        # Authentication successful
         # Create JWT token
         token_data = {
             "sub": user["username"],
             "is_admin": user.get("is_admin", False)
         }
-        access_token = auth_manager.create_access_token(token_data)
+        access_token = user_manager.create_access_token(token_data)
         
-        # Set cookie
-        response = RedirectResponse(url=next, status_code=303)
+        # Create the response with a redirect
+        response = RedirectResponse(url=next_url or "/", status_code=status.HTTP_303_SEE_OTHER)
+        
+        # Set the cookie
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
-            max_age=60 * 60 * 24,  # 1 day
-            path="/"
+            max_age=86400  # 24 hours
         )
         
         return response
@@ -338,67 +333,89 @@ def create_app(
     @app.get("/status/{file_id}")
     async def get_file_status(
         file_id: str,
+        request: Request,
         storage: MetadataStorage = Depends(get_storage),
-        service: TaskServiceProvider = Depends(get_task_service),
+        task_service: TaskServiceProvider = Depends(get_task_service),
         user: Dict[str, Any] = Depends(require_auth)
     ):
-        """Get the processing status for a file."""
-        # Get file metadata from storage
+        """Get status of a specific file."""
+        # User authentication is now required via the require_auth dependency
+        
+        # Fetch metadata from storage
         metadata = await storage.get_file_metadata(file_id)
         
         if not metadata:
-            raise HTTPException(status_code=404, detail="File not found")
-        
-        # Create a copy to avoid modifying the original metadata
-        status_data = dict(metadata)
-        
-        # Add filename to the status data
-        status_data["filename"] = metadata.get("original_filename", "Unknown file")
-
-        # Get task statuses
-        beat_task_id = metadata.get("beat_detection")
-        video_task_id = metadata.get("video_generation")
-        
-        # Determine overall status based on task states
-        overall_status = ERROR
-
-        if beat_task_id:
-            beat_task_status = service.get_task_status(beat_task_id)
-            # Ensure task ID is included
-            beat_task_status["id"] = beat_task_id
-            status_data["beat_detection_task"] = beat_task_status
-
-            if beat_task_status["state"] == "SUCCESS":
-                overall_status = ANALYZED
-            elif beat_task_status["state"] == "FAILURE":
-                overall_status = ANALYZING_FAILURE
+            if "X-Requested-With" in request.headers and request.headers["X-Requested-With"] == "XMLHttpRequest":
+                # For AJAX requests, return 404 with JSON
+                raise HTTPException(status_code=404, detail="File not found")
             else:
-                overall_status = ANALYZING
-
-        if video_task_id:
-            video_task_status = service.get_task_status(video_task_id)
-            # Ensure task ID is included
-            video_task_status["id"] = video_task_id
-            status_data["video_generation_task"] = video_task_status
-
-            if video_task_status["state"] == "SUCCESS":
-                overall_status = COMPLETED
-            elif video_task_status["state"] == "FAILURE":
-                overall_status = VIDEO_ERROR
-            else:
-                overall_status = GENERATING_VIDEO
-
-        # Use the highest priority status (video success > beat success > error states)
-        status_data["status"] = overall_status
-
-        # If video file exists, it's completed regardless of task state
-        if 'video_file' in status_data:
-            status_data["status"] = COMPLETED
-        # If beats file exists but no video task, it's just analyzed
-        elif 'beats_file' in status_data and not video_task_id:
-            status_data["status"] = ANALYZED
+                # For browser requests, render a nice 404 page
+                return templates.TemplateResponse(
+                    "404.html",
+                    {"request": request, "message": "The requested file was not found"},
+                    status_code=404
+                )
         
-        return status_data
+        # Initialize response data with basic file info
+        response_data = {
+            "file_id": file_id,
+            "filename": metadata.get("filename"),
+            "status": ERROR  # Default to ERROR
+        }
+        
+        # Fetch task statuses if task IDs are present in metadata
+        beat_detection_task_id = metadata.get("beat_detection")
+        video_generation_task_id = metadata.get("video_generation")
+        
+        # Process beat detection task
+        if beat_detection_task_id:
+            beat_detection_status = task_service.get_task_status(beat_detection_task_id)
+            response_data["beat_detection_task"] = beat_detection_status
+            
+            # Include beat statistics if available
+            if "beat_stats" in metadata:
+                response_data["beat_stats"] = metadata["beat_stats"]
+        
+        # Process video generation task
+        if video_generation_task_id:
+            video_generation_status = task_service.get_task_status(video_generation_task_id)
+            response_data["video_generation_task"] = video_generation_status
+        
+        # Add file paths if they exist
+        if "beats_file" in metadata:
+            response_data["beats_file"] = metadata["beats_file"]
+        
+        if "video_file" in metadata:
+            response_data["video_file"] = metadata["video_file"]
+        
+        # Determine overall status
+        if beat_detection_task_id and video_generation_task_id:
+            beat_state = response_data["beat_detection_task"]["state"]
+            video_state = response_data["video_generation_task"]["state"]
+            
+            if beat_state == "SUCCESS" and video_state == "SUCCESS":
+                response_data["status"] = COMPLETED
+            elif beat_state == "SUCCESS" and video_state == "FAILURE":
+                response_data["status"] = VIDEO_ERROR
+            elif beat_state == "SUCCESS" and video_state in ["PENDING", "STARTED", "PROGRESS"]:
+                response_data["status"] = GENERATING_VIDEO
+            elif beat_state == "FAILURE":
+                response_data["status"] = ANALYZING_FAILURE
+            else:
+                response_data["status"] = ERROR
+        elif beat_detection_task_id:
+            beat_state = response_data["beat_detection_task"]["state"]
+            
+            if beat_state == "SUCCESS":
+                response_data["status"] = ANALYZED
+            elif beat_state in ["PENDING", "STARTED", "PROGRESS"]:
+                response_data["status"] = ANALYZING
+            elif beat_state == "FAILURE":
+                response_data["status"] = ANALYZING_FAILURE
+            else:
+                response_data["status"] = ERROR
+        
+        return response_data
 
     @app.get("/processing_queue", response_class=HTMLResponse)
     async def get_processing_queue(
@@ -551,7 +568,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"File with ID {file_id} not found")
             
         # Calculate full file status for the template
-        file_status = await get_file_status(file_id, storage, service, user)
+        file_status = await get_file_status(file_id, request, storage, service)
         
         # Just add the task IDs directly to the template data
         # The frontend will poll for task status directly from the /task endpoint

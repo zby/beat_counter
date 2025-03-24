@@ -8,11 +8,30 @@ import os
 import pathlib
 from typing import Any, Dict, Optional
 
-# Get the config directory path
-CONFIG_DIR = pathlib.Path(__file__).parent
-APP_DIR = CONFIG_DIR.parent
+def get_app_dir() -> pathlib.Path:
+    """Get the application directory.
+    
+    First checks the BEAT_COUNTER_APP_DIR environment variable.
+    If not set, assumes the app is being run from its root directory 
+    and uses the parent directory of the web_app package.
+    
+    Returns
+    -------
+    Path to the application directory
+    """
+    # Try environment variable first
+    app_dir = os.getenv('BEAT_COUNTER_APP_DIR')
+    if app_dir:
+        return pathlib.Path(app_dir).resolve()
+    
+    # Otherwise use the parent directory of web_app package
+    return pathlib.Path(__file__).parent.parent.parent.resolve()
+
+# Get application directory
+APP_DIR = get_app_dir()
 
 # Default paths for config files
+CONFIG_DIR = APP_DIR / "web_app" / "config"
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "config.json"
 DEFAULT_USERS_PATH = CONFIG_DIR / "users.json"
 
@@ -20,162 +39,98 @@ DEFAULT_USERS_PATH = CONFIG_DIR / "users.json"
 _app_config = None
 _users_config = None
 
-
 def load_config(config_path: Optional[pathlib.Path] = None) -> Dict[str, Any]:
-    """Load application configuration from the config file.
+    """Load application configuration from JSON file.
     
-    Args:
-        config_path: Optional path to config file. Defaults to config/config.json.
-        
-    Returns:
-        Dict containing application configuration
+    Parameters
+    ----------
+    config_path : Path, optional
+        Path to the configuration file, by default DEFAULT_CONFIG_PATH
+    
+    Returns
+    -------
+    Dict[str, Any]
+        Application configuration
+    
+    Raises
+    ------
+    FileNotFoundError
+        If the configuration file does not exist
     """
     global _app_config
     
-    # Return cached config if available
+    # If already loaded, return cached version
     if _app_config is not None:
         return _app_config
-        
-    # Use default path if not specified
+    
+    # Default to DEFAULT_CONFIG_PATH if not specified
     if config_path is None:
         config_path = DEFAULT_CONFIG_PATH
     
-    # Check if config file exists
-    if not config_path.exists():
-        # Create default config if it doesn't exist
-        default_config = {
-            "app": {"name": "Beat Detection Web App", "version": "0.1.0", "debug": False},
-            "files": {"upload_dir": "web_app/uploads", "max_upload_size_mb": 50},
-            "queue": {"max_files": 50},
-            "celery": {"broker_url": "redis://localhost:6379/0"}
-        }
-        
-        # Ensure directory exists
-        config_path.parent.mkdir(exist_ok=True, parents=True)
-        
-        # Write default config
-        with open(config_path, 'w') as f:
-            json.dump(default_config, f, indent=4)
-        
-        _app_config = default_config
-        return default_config
+    # Load configuration
+    with open(config_path, "r") as f:
+        config = json.load(f)
     
-    # Load config from file
-    try:
-        with open(config_path, 'r') as f:
-            config = json.load(f)
-        
-        _app_config = config
-        return config
-    except Exception as e:
-        print(f"Error loading config file: {e}")
-        return {}
-
+    # Update paths to be absolute
+    config['storage']['upload_dir'] = str(APP_DIR / config['storage']['upload_dir'])
+    
+    _app_config = config
+    return config
 
 def load_users(users_path: Optional[pathlib.Path] = None) -> Dict[str, Any]:
-    """Load users configuration from the users file.
+    """Load user configuration from JSON file.
     
-    Args:
-        users_path: Optional path to users file. Defaults to config/users.json.
-        
-    Returns:
-        Dict containing users configuration
+    Parameters
+    ----------
+    users_path : Path, optional
+        Path to the users file, by default DEFAULT_USERS_PATH
+    
+    Returns
+    -------
+    Dict[str, Any]
+        User configuration
+    
+    Raises
+    ------
+    FileNotFoundError
+        If the users file does not exist
     """
     global _users_config
     
-    # Return cached config if available
+    # If already loaded, return cached version
     if _users_config is not None:
         return _users_config
     
-    # Use default path if not specified
+    # Default to DEFAULT_USERS_PATH if not specified
     if users_path is None:
         users_path = DEFAULT_USERS_PATH
     
-    # Check if users file exists
-    if not users_path.exists():
-        # Create default users if they don't exist
-        default_users = {
-            "users": [
-                {
-                    "username": "admin",
-                    "password": "admin123",
-                    "is_admin": True,
-                    "created_at": "2023-10-01T12:00:00Z"
-                }
-            ]
-        }
-        
-        # Ensure directory exists
-        users_path.parent.mkdir(exist_ok=True, parents=True)
-        
-        # Write default users
-        with open(users_path, 'w') as f:
-            json.dump(default_users, f, indent=4)
-        
-        _users_config = default_users
-        return default_users
+    # Load users
+    with open(users_path, "r") as f:
+        users = json.load(f)
     
-    # Load users from file
-    try:
-        with open(users_path, 'r') as f:
-            users = json.load(f)
-        
-        _users_config = users
-        return users
-    except Exception as e:
-        print(f"Error loading users file: {e}")
-        return {"users": []}
-
-
-def save_users(users_data: Dict[str, Any], users_path: Optional[pathlib.Path] = None) -> bool:
-    """Save users configuration to the users file.
-    
-    Args:
-        users_data: Users data to save
-        users_path: Optional path to users file. Defaults to config/users.json.
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    global _users_config
-    
-    # Use default path if not specified
-    if users_path is None:
-        users_path = DEFAULT_USERS_PATH
-    
-    try:
-        # Ensure directory exists
-        users_path.parent.mkdir(exist_ok=True, parents=True)
-        
-        # Write users to file
-        with open(users_path, 'w') as f:
-            json.dump(users_data, f, indent=4)
-        
-        # Update cache
-        _users_config = users_data
-        return True
-    except Exception as e:
-        print(f"Error saving users file: {e}")
-        return False
-
+    _users_config = users
+    return users
 
 def get_config() -> Dict[str, Any]:
-    """Get the application configuration.
+    """Get application configuration.
     
-    Returns:
-        Dict containing application configuration
+    Returns
+    -------
+    Dict[str, Any]
+        Application configuration
     """
     return load_config()
 
-
 def get_users() -> Dict[str, Any]:
-    """Get the users configuration.
+    """Get user configuration.
     
-    Returns:
-        Dict containing users configuration
+    Returns
+    -------
+    Dict[str, Any]
+        User configuration
     """
     return load_users()
-
 
 # Load configs at import time
 load_config()

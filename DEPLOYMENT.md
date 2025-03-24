@@ -71,23 +71,42 @@ source .venv/bin/activate
 python --version
 ```
 
+4. **Install system dependencies**:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    redis-server \
+    ffmpeg \
+    libsndfile1-dev
+```
+
 ## Preparing Your Application
 
 1. **Clone your repository or prepare your deployment package**:
 
 ```bash
-git clone https://your-repo-url.git
-# OR upload your application files
+git clone https://github.com/yourusername/beat_counter.git
+cd beat_counter
 ```
 
-2. **Install dependencies**:
+2. **Create and activate a virtual environment**:
 
 ```bash
-# Install dependencies from pyproject.toml
-uv pip install .
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-3. **Create essential directories and set permissions**:
+3. **Install the package in development mode**:
+
+```bash
+pip install -e ".[dev]"
+```
+
+4. **Create essential directories and set permissions**:
 
 ```bash
 # Create required directories
@@ -101,9 +120,11 @@ sudo chmod -R 755 web_app/uploads
 # Set permissions for other directories
 sudo chown -R www-data:www-data web_app/output
 sudo chmod -R 755 web_app/output
+sudo chown -R www-data:www-data web_app/config
+sudo chmod -R 755 web_app/config
 ```
 
-4. **Set up configuration files**:
+5. **Set up configuration files**:
 
 ```bash
 # Copy example configuration files
@@ -113,6 +134,16 @@ cp web_app/config/users.json.example web_app/config/users.json
 # Set proper permissions for config files
 sudo chown www-data:www-data web_app/config/*.json
 sudo chmod 644 web_app/config/*.json
+```
+
+6. **Set the application directory environment variable**:
+
+```bash
+# Add to your shell's rc file (e.g., ~/.bashrc)
+export BEAT_COUNTER_APP_DIR=/path/to/beat_counter
+
+# Or set it in the systemd service file
+Environment=BEAT_COUNTER_APP_DIR=/path/to/beat_counter
 ```
 
 ## Deployment Options

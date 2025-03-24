@@ -1,73 +1,116 @@
-"""Authentication module for the beat detection web app.
+"""Authentication module for Beat Detection Web App.
 
-This module provides functions for user authentication, session management, 
-and protecting routes that require authentication.
+This module provides functions to authenticate users.
 """
 
+import hashlib
+import base64
 import os
 import logging
+from typing import Dict, Any, Optional, List
+import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
 
-import jwt
-from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import RedirectResponse
+# Third-party imports
+import bcrypt
+from jose import jwt
+from fastapi import Request, HTTPException, status
 
-# Import config module
-from web_app.config import get_users, save_users, get_config
+# Local imports
+from web_app.config import get_users, get_config
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Constants
+# Constants for JWT
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "a_very_secret_key_for_development_only")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
-# Security scheme for token authentication
-security = HTTPBearer()
-
-
-class AuthManager:
-    """Handles authentication-related operations."""
+class UserManager:
+    """User manager for the application."""
     
     def __init__(self, users: Optional[Dict[str, List[Dict[str, Any]]]] = None):
-        """Initialize the auth manager.
+        """Initialize the user manager.
         
         Args:
-            users: Optional dictionary of users in the format {"users": [{"username": str, "password": str, ...}, ...]}
-                  If not provided, users will be loaded from the config file.
+            users: Optional dictionary of users for testing. If not provided,
+                  users will be loaded from the config file.
         """
-        self._users = users
+        self.users = users if users is not None else get_users()
     
-    def get_users(self) -> List[Dict[str, Any]]:
-        """Get all users from the users file or memory."""
-        if self._users is not None:
-            return self._users.get("users", [])
-        users_data = get_users()
-        return users_data.get("users", [])
-    
-    def save_users(self, users: List[Dict[str, Any]]) -> bool:
-        """Save the users list to the users file or memory."""
-        if self._users is not None:
-            self._users = {"users": users}
-            return True
-        return save_users({"users": users})
-    
-    def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
-        """Authenticate a user with username and password."""
-        users = self.get_users()
+    def authenticate(self, username: str, password: str) -> Optional[Dict[str, Any]]:
+        """Authenticate a user.
         
+        Args:
+            username: Username
+            password: Password
+            
+        Returns:
+            User data if authentication successful, None otherwise
+        """
+        # Get all users
+        users = self.users.get("users", [])
+        
+        # Find user by username
         for user in users:
-            if user["username"] == username and user["password"] == password:
-                return user
+            if user["username"] == username:
+                # For TEST_USERS in the test, check plain password
+                if "password" in user and user["password"] == password:
+                    return user
+                
+                # Check hashed password
+                if "password_hash" in user and self._verify_password(password, user["password_hash"]):
+                    return user
         
         return None
     
+    def get_current_user(self, request: Request) -> Optional[Dict[str, Any]]:
+        """Get the current user from the access token.
+        
+        Args:
+            request: FastAPI request
+            
+        Returns:
+            User data if authentication successful, None otherwise
+        """
+        # Get access token from cookie
+        token = request.cookies.get("access_token")
+        if not token:
+            return None
+        
+        try:
+            # Decode JWT token
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            
+            # Get username from token
+            username = payload.get("sub")
+            if not username:
+                return None
+            
+            # Return user info
+            return {
+                "username": username,
+                "is_admin": payload.get("is_admin", False)
+            }
+        except jwt.JWTError as e:
+            logger.error(f"Error decoding JWT token: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error processing authentication: {e}")
+            return None
+    
     def create_access_token(self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-        """Create a JWT access token with the given data."""
+        """Create a JWT access token.
+        
+        Args:
+            data: Data to encode in the token
+            expires_delta: Optional expiration time
+            
+        Returns:
+            JWT token string
+        """
         to_encode = data.copy()
         
         # Set expiration time
@@ -78,66 +121,24 @@ class AuthManager:
         
         to_encode.update({"exp": expire})
         
-        # Encode and return token
+        # Create JWT token
         return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     
-    def decode_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """Decode a JWT token and return the payload."""
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            return payload
-        except jwt.PyJWTError as e:
-            logger.error(f"Error decoding token: {e}")
-            return None
-    
-    def get_current_user(self, request: Request) -> Optional[Dict[str, Any]]:
-        """Get the current user from the session."""
-        token = request.cookies.get("access_token")
+    def _verify_password(self, password: str, password_hash: str) -> bool:
+        """Verify a password against a hash.
         
-        if not token:
-            return None
+        Args:
+            password: Plain text password
+            password_hash: Hashed password
+            
+        Returns:
+            True if password matches hash, False otherwise
+        """
+        # Check if hash is bcrypt
+        if password_hash.startswith("$2b$"):
+            # Verify bcrypt hash
+            return bcrypt.checkpw(password.encode(), password_hash.encode())
         
-        payload = self.decode_token(token)
-        if not payload:
-            return None
-        
-        # Return user info from payload
-        return {
-            "username": payload.get("sub"),
-            "is_admin": payload.get("is_admin", False)
-        }
-
-
-# Create a global instance of the auth manager
-auth_manager = AuthManager()
-
-
-async def get_current_user_from_cookie(request: Request) -> Optional[Dict[str, Any]]:
-    """Get the current user from the session cookie."""
-    return auth_manager.get_current_user(request)
-
-
-async def require_auth(request: Request) -> Dict[str, Any]:
-    """Dependency that requires a valid authentication."""
-    user = auth_manager.get_current_user(request)
-    
-    if not user:
-        # Check if this is an AJAX request
-        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
-        
-        if is_ajax:
-            # For AJAX requests, always return 401 Unauthorized
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated"
-            )
-        else:
-            # For web requests, redirect to login page
-            redirect_url = f"/login?next={request.url.path}"
-            raise HTTPException(
-                status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-                headers={"Location": redirect_url},
-                detail="Not authenticated"
-            )
-    
-    return user 
+        # Legacy hash format (md5)
+        md5_hash = hashlib.md5(password.encode()).hexdigest()
+        return md5_hash == password_hash 

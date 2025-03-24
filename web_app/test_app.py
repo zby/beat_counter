@@ -6,7 +6,7 @@ import tempfile
 from typing import Dict, Generator, List, Optional, Tuple, Any
 import pytest
 from fastapi.testclient import TestClient
-from web_app.app import create_app, TaskServiceProvider, AuthManager
+from web_app.app import create_app, TaskServiceProvider, UserManager
 from web_app.app import ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
 from web_app.storage import MetadataStorage, FileMetadataStorage
@@ -277,36 +277,40 @@ def mock_task_service() -> MockTaskServiceProvider:
     return MockTaskServiceProvider()
 
 @pytest.fixture
-def test_auth_manager() -> AuthManager:
+def test_auth_manager() -> UserManager:
     """Create a test auth manager with test users."""
-    return AuthManager(users=TEST_USERS)
+    return UserManager(users=TEST_USERS)
 
 @pytest.fixture
 def test_client(
     mock_storage: MockMetadataStorage,
     mock_task_service: MockTaskServiceProvider,
-    test_auth_manager: AuthManager
+    test_auth_manager: UserManager
 ) -> TestClient:
     """Create a test client with mock dependencies."""
     # Create app with dependency injection
     app = create_app(
         metadata_storage=mock_storage,
         task_provider=mock_task_service,
-        auth_manager_instance=test_auth_manager
+        user_manager=test_auth_manager
     )
     
     client = TestClient(app)
     
     # Login as admin user
-    client.post(
+    response = client.post(
         "/login",
         data={
             "username": "admin",
             "password": "admin123",
-            "next": "/"
+            "next_url": "/"
         },
         follow_redirects=False
     )
+    
+    # Ensure login was successful
+    assert response.status_code in (200, 302, 303), f"Login failed with status {response.status_code}"
+    assert "access_token" in client.cookies, "No access token in cookies after login"
     
     return client
 
@@ -423,10 +427,21 @@ def test_upload_audio(
 @pytest.mark.asyncio
 async def test_get_file_status(
     test_client: TestClient,
+    mock_storage: MockMetadataStorage,
     sample_file_with_task: Tuple[str, str, MockTask]
 ):
     """Test getting file status with different task states."""
     file_id, task_id, task = sample_file_with_task
+    
+    # First, create the beats file so the JSON response includes it
+    beats_file = mock_storage.get_beats_file_path(file_id)
+    beats_file.parent.mkdir(exist_ok=True, parents=True)
+    beats_file.touch()
+    
+    # Update metadata with beats file
+    mock_storage.update_metadata(file_id, {
+        "beats_file": str(beats_file)
+    })
     
     # Test success state
     task.set_state("SUCCESS", {"beats": [1.0, 2.0, 3.0]})
@@ -443,6 +458,9 @@ async def test_get_file_status(
     data = response.json()
     assert data["beat_detection_task"]["state"] == "FAILURE"
     assert data["beat_detection_task"]["error"] == "Processing error"
+    
+    # Cleanup
+    beats_file.unlink(missing_ok=True)
 
 def test_file_not_found(test_client: TestClient):
     """Test handling of non-existent files."""
@@ -600,9 +618,18 @@ async def test_get_file_status_overall_status(
     """Test that get_file_status returns the correct overall status."""
     # Setup
     file_id = f"test_file_status_{beat_state}_{video_state}"
+    
+    # Create job directory
+    job_dir = mock_storage.ensure_job_directory(file_id)
+    
+    # Setup audio file
+    audio_file_path = mock_storage.get_audio_file_path(file_id, ".mp3")
+    audio_file_path.touch()
+    
     metadata = {
         "original_filename": "test.mp3",
-        "audio_file_path": f"/path/to/{file_id}.mp3"
+        "audio_file_path": str(audio_file_path),
+        "file_extension": ".mp3"
     }
     
     # Add tasks to metadata
@@ -637,6 +664,7 @@ async def test_get_file_status_overall_status(
             video_file.touch()
             metadata["video_file"] = str(video_file)
     
+    # Update metadata
     mock_storage.update_metadata(file_id, metadata)
     
     # Get status via API endpoint
@@ -663,6 +691,9 @@ async def test_get_file_status_overall_status(
     
     if video_state == "SUCCESS":
         video_file.unlink(missing_ok=True)
+    
+    # Clean up audio file and job directory
+    audio_file_path.unlink(missing_ok=True)
 
 @pytest.mark.parametrize("beat_state,video_state,expected_status", [
     ("SUCCESS", None, 200),  # Only beat detection completed
@@ -754,14 +785,14 @@ async def test_file_page(
 def test_unauthenticated_ajax(
     mock_storage: MockMetadataStorage,
     mock_task_service: MockTaskServiceProvider,
-    test_auth_manager: AuthManager
+    test_auth_manager: UserManager
 ):
     """Test that unauthenticated AJAX requests get a 401 response."""
     # Create app with dependency injection but don't login
     app = create_app(
         metadata_storage=mock_storage,
         task_provider=mock_task_service,
-        auth_manager_instance=test_auth_manager
+        user_manager=test_auth_manager
     )
     client = TestClient(app)
     
