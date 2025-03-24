@@ -136,6 +136,7 @@
          data-total-beats="{{ file_status.beat_stats.total_beats if file_status.beat_stats and file_status.beat_stats.total_beats else 0 }}"
          data-duration="{{ file_status.beat_stats.duration if file_status.beat_stats and file_status.beat_stats.duration else 0 }}"
          data-detected-meter="{{ file_status.beat_stats.detected_meter if file_status.beat_stats and file_status.beat_stats.detected_meter else 0 }}"
+         data-app-dir="{{ app_dir }}"
          style="display:none;">
     </div>
     
@@ -151,7 +152,8 @@
             bpm: Number(dataElement.getAttribute('data-bpm') || 0),
             totalBeats: Number(dataElement.getAttribute('data-total-beats') || 0),
             duration: Number(dataElement.getAttribute('data-duration') || 0),
-            detectedMeter: Number(dataElement.getAttribute('data-detected-meter') || 0)
+            detectedMeter: Number(dataElement.getAttribute('data-detected-meter') || 0),
+            appDir: dataElement.getAttribute('data-app-dir')
         };
     </script>
     

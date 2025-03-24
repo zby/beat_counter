@@ -498,6 +498,7 @@ function updateDebugPanel() {
         <div><strong>Status:</strong> ${data.status}</div>
         <div><strong>Polling:</strong> ${statusCheckInterval ? 'Active' : 'Inactive'}</div>
         <div><strong>Current Task:</strong> ${currentTaskId || 'None'} (${currentTaskType || 'None'})</div>
+        <div><strong>BEAT_COUNTER_APP_DIR:</strong> ${data.appDir || 'Not Set'}</div>
         
         <div><strong>BPM:</strong> ${data.bpm}</div>
         <div><strong>Total Beats:</strong> ${data.totalBeats}</div>

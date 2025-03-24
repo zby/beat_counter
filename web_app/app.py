@@ -28,7 +28,7 @@ from web_app.celery_app import app as celery_app
 from web_app.storage import MetadataStorage, FileMetadataStorage
 from web_app.tasks import detect_beats_task, generate_video_task
 from web_app.auth import UserManager
-from web_app.config import get_config, get_users
+from web_app.config import get_config, get_users, APP_DIR
 
 # Constants for task states
 ANALYZING = "ANALYZING"
@@ -579,7 +579,8 @@ def create_app(
             "request": request,
             "file_id": file_id,
             "file_status": file_status,
-            "user": user
+            "user": user,
+            "app_dir": str(APP_DIR)
         }
         
         return templates.TemplateResponse("file_view.html", template_data)
