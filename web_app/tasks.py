@@ -422,6 +422,13 @@ def generate_video_task(
             # Standardized output video path
             video_output = storage.get_video_file_path(file_id)
             
+            # Set the TMPDIR environment variable to point to the job directory
+            # This will make MoviePy save temporary files in the upload directory
+            # instead of using the current working directory
+            old_temp_dir = os.environ.get('TMPDIR')
+            os.environ['TMPDIR'] = str(job_dir)
+            safe_info(f"Set TMPDIR to {str(job_dir)}")
+            
             # Initialize task state
             update_progress = create_progress_updater(
                 self, task_info, 'video_generation_output'
@@ -454,48 +461,57 @@ def generate_video_task(
             # Generate the visualization video
             update_progress("Initializing video generation", 0.05)
             
-            # Initialize video generator
-            video_generator = BeatVideoGenerator(
-                progress_callback=sync_video_progress_callback
-            )
-            
-            # Generate video
-            video_file = video_generator.generate_video(
-                audio_path, 
-                beats_array,
-                output_path=str(video_output),
-                downbeats=beat_data.get('downbeats', []),
-                detected_meter=beat_data.get('detected_meter', 4)
-            )
-            
-            # Update metadata
-            metadata["video_file"] = str(video_output)
-            
-            # Save updated metadata
-            with open(metadata_path, "w") as f:
-                json.dump(metadata, f, indent=2)
-            
-            # Final progress update
-            update_progress("Video generation complete", 1.0)
-            
-            # Get final stdout and stderr
-            final_stdout, final_stderr = self._io_capture.get_output()
-            
-            # Return the results
-            return {
-                "file_id": file_id,
-                "audio_file": audio_path,
-                "beats_file": str(beats_file),
-                "video_file": str(video_output),
-                "progress": {
-                    "status": "Video generation complete",
-                    "percent": 100
-                },
-                "video_generation_output": {
-                    "stdout": final_stdout,
-                    "stderr": final_stderr
+            try:
+                # Initialize video generator
+                video_generator = BeatVideoGenerator(
+                    progress_callback=sync_video_progress_callback
+                )
+                
+                # Generate video
+                video_file = video_generator.generate_video(
+                    audio_path, 
+                    beats_array,
+                    output_path=str(video_output),
+                    downbeats=beat_data.get('downbeats', []),
+                    detected_meter=beat_data.get('detected_meter', 4)
+                )
+                
+                # Update metadata
+                metadata["video_file"] = str(video_output)
+                
+                # Save updated metadata
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata, f, indent=2)
+                
+                # Final progress update
+                update_progress("Video generation complete", 1.0)
+                
+                # Get final stdout and stderr
+                final_stdout, final_stderr = self._io_capture.get_output()
+                
+                # Return the results
+                return {
+                    "file_id": file_id,
+                    "audio_file": audio_path,
+                    "beats_file": str(beats_file),
+                    "video_file": str(video_output),
+                    "progress": {
+                        "status": "Video generation complete",
+                        "percent": 100
+                    },
+                    "video_generation_output": {
+                        "stdout": final_stdout,
+                        "stderr": final_stderr
+                    }
                 }
-            }
+            finally:
+                # Restore the original TMPDIR environment variable
+                if old_temp_dir is not None:
+                    os.environ['TMPDIR'] = old_temp_dir
+                else:
+                    # If there was no TMPDIR before, remove it
+                    os.environ.pop('TMPDIR', None)
+                safe_info("Restored original TMPDIR environment variable")
             
         except Exception as e:
             # Log the error
