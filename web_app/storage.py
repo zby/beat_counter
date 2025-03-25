@@ -233,13 +233,9 @@ class FileMetadataStorage(MetadataStorage):
                     # Deep update the metadata
                     self._deep_update(existing, metadata)
                     
-                    # Write to a temporary file first, then atomically replace the original
-                    tmp_file = metadata_file.with_suffix('.tmp')
-                    with open(tmp_file, 'w') as f:
+                    # Write directly to the file since we have an exclusive lock
+                    with open(metadata_file, 'w') as f:
                         json.dump(existing, f, indent=2)
-                    
-                    # Atomic replacement
-                    os.replace(tmp_file, metadata_file)
                     
                 finally:
                     # Release the lock

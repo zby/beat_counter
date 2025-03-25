@@ -188,10 +188,26 @@ def create_progress_updater(celery_task, task_info: dict, output_key: str):
     
     return update_progress
 
+# Create a base task class with shared initialization
+class BaseBeatTask(app.Task):
+    """Base task class that initializes shared resources."""
+    
+    def __init__(self):
+        self.storage = None
+    
+    def __call__(self, *args, **kwargs):
+        # Initialize storage if not already done
+        if self.storage is None:
+            self.storage = FileMetadataStorage(base_dir=config['storage']['upload_dir'])
+        
+        # Call the original __call__ method
+        return super().__call__(*args, **kwargs)
+
 @app.task(
     bind=True,
     name='detect_beats_task',
-    queue='beat_detection'
+    queue='beat_detection',
+    base=BaseBeatTask
 )
 def detect_beats_task(
     self,
@@ -216,11 +232,8 @@ def detect_beats_task(
     
     with self._io_capture:
         try:
-            # Get a storage instance with absolute path from config
-            storage = FileMetadataStorage(base_dir=config['storage']['upload_dir'])
-            
             # Construct job directory path
-            job_dir = storage.get_job_directory(file_id)
+            job_dir = self.storage.get_job_directory(file_id)
             
             # Create a dedicated 'tmp' subdirectory for temporary files
             tmp_dir = job_dir / "tmp"
@@ -237,7 +250,7 @@ def detect_beats_task(
                 metadata = {}
             
             # Get the audio file path using storage interface
-            audio_file_path = storage.get_audio_file_path(file_id)
+            audio_file_path = self.storage.get_audio_file_path(file_id)
             if not audio_file_path.exists():
                 raise FileNotFoundError(f"No audio file found for file_id: {file_id}")
             
@@ -274,8 +287,8 @@ def detect_beats_task(
                 ) = detection_result
                 
                 # Generate standardized output file paths
-                beats_file = storage.get_beats_file_path(file_id)
-                stats_file = storage.get_beat_stats_file_path(file_id)
+                beats_file = self.storage.get_beats_file_path(file_id)
+                stats_file = self.storage.get_beat_stats_file_path(file_id)
                 
                 # Save beat timestamps and statistics
                 reporting.save_beat_timestamps(
@@ -294,14 +307,13 @@ def detect_beats_task(
                 # Update metadata with beat stats
                 with open(stats_file, "r") as f:
                     beat_stats = json.load(f)
-                    
-                metadata["beat_stats"] = beat_stats
-                metadata["beats_file"] = str(beats_file)
-                metadata["stats_file"] = str(stats_file)
                 
-                # Save updated metadata
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
+                # Update metadata using the storage method with proper locking
+                self.storage.update_metadata(file_id, {
+                    "beat_stats": beat_stats,
+                    "beats_file": str(beats_file),
+                    "stats_file": str(stats_file)
+                })
                 
                 # Final progress update
                 update_progress("Beat detection complete", 1.0)
@@ -373,7 +385,8 @@ def detect_beats_task(
 @app.task(
     bind=True,
     name='generate_video_task',
-    queue='video_generation'
+    queue='video_generation',
+    base=BaseBeatTask
 )
 def generate_video_task(
     self,
@@ -398,11 +411,8 @@ def generate_video_task(
     
     with self._io_capture:
         try:
-            # Get a storage instance with absolute path from config
-            storage = FileMetadataStorage(base_dir=config['storage']['upload_dir'])
-            
             # Construct job directory path
-            job_dir = storage.get_job_directory(file_id)
+            job_dir = self.storage.get_job_directory(file_id)
             
             # Create metadata.json path
             metadata_path = job_dir / "metadata.json"
@@ -415,7 +425,7 @@ def generate_video_task(
                 metadata = {}
             
             # Get the audio file path using storage interface
-            audio_file_path = storage.get_audio_file_path(file_id)
+            audio_file_path = self.storage.get_audio_file_path(file_id)
             if not audio_file_path.exists():
                 raise FileNotFoundError(f"No audio file found for file_id: {file_id}")
             
@@ -423,12 +433,12 @@ def generate_video_task(
             audio_path = str(audio_file_path.resolve())
             
             # Get the beats file
-            beats_file = storage.get_beats_file_path(file_id)
+            beats_file = self.storage.get_beats_file_path(file_id)
             if not beats_file.exists():
                 raise FileNotFoundError(f"Beats file not found for file_id: {file_id}")
                 
             # Standardized output video path
-            video_output = storage.get_video_file_path(file_id)
+            video_output = self.storage.get_video_file_path(file_id)
             
             # MoviePy creates temporary files relative to the current working directory
             # Change the directory to the job directory to control where temp files are created
@@ -445,21 +455,9 @@ def generate_video_task(
             # Load beat data from the text file
             beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = load_beat_data(str(beats_file))
             
-            # Create a dictionary from the returned values for compatibility
-            beat_data = {
-                'beats': beat_timestamps,
-                'downbeats': downbeats,
-                'intro_end_idx': intro_end_idx,
-                'ending_start_idx': ending_start_idx,
-                'detected_meter': detected_meter
-            }
-            
             # Check if beat data is valid
             if beat_timestamps is None or len(beat_timestamps) == 0:
                 raise ValueError("No beat data found")
-            
-            # Create beats array
-            beats_array = beat_timestamps
             
             # Create video generator
             def sync_video_progress_callback(status, progress):
@@ -477,18 +475,14 @@ def generate_video_task(
                 # Generate video
                 video_file = video_generator.generate_video(
                     audio_path, 
-                    beats_array,
+                    beat_timestamps,
                     output_path=str(video_output),
-                    downbeats=beat_data.get('downbeats', []),
-                    detected_meter=beat_data.get('detected_meter', 4)
+                    downbeats=downbeats,
+                    detected_meter=detected_meter
                 )
                 
-                # Update metadata
-                metadata["video_file"] = str(video_output)
-                
-                # Save updated metadata
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
+                # Update metadata using the storage method with proper locking
+                self.storage.update_metadata(file_id, {"video_file": str(video_output)})
                 
                 # Final progress update
                 update_progress("Video generation complete", 1.0)
