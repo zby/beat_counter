@@ -9,6 +9,8 @@ import pathlib
 from datetime import datetime
 import aiofiles
 import asyncio
+import fcntl
+import time
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -183,24 +185,81 @@ class FileMetadataStorage(MetadataStorage):
             return None
     
     def update_metadata(self, file_id: str, metadata: Dict[str, Any]) -> None:
-        """Update metadata for a specific file."""
+        """Update metadata for a specific file with file locking for atomicity."""
+        # Ensure job directory exists
+        job_dir = self.ensure_job_directory(file_id)
+        metadata_file = self.get_metadata_file_path(file_id)
+        lock_file = metadata_file.with_suffix('.lock')
+        
+        # Create lock file if it doesn't exist
+        if not lock_file.exists():
+            try:
+                with open(lock_file, 'w') as f:
+                    pass  # Just create an empty file
+            except Exception as e:
+                logger.warning(f"Failed to create lock file, proceeding without locking: {e}")
+        
+        # Acquire lock for atomic update
         try:
-            # Ensure job directory exists
-            job_dir = self.ensure_job_directory(file_id)
-            metadata_file = self.get_metadata_file_path(file_id)
-            
-            # Get existing metadata or initialize empty dict
-            existing = self.get_metadata_sync(file_id) or {}
-            
-            # Deep update the metadata
-            self._deep_update(existing, metadata)
-            
-            # Save updated metadata to file
-            with open(metadata_file, 'w') as f:
-                json.dump(existing, f, indent=2)
+            # Open the lock file 
+            with open(lock_file, 'r+') as lock_f:
+                # Try to acquire an exclusive lock with timeout
+                max_wait = 10  # Maximum wait time in seconds
+                start_time = time.time()
+                
+                while True:
+                    try:
+                        # Try to get an exclusive lock
+                        fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break  # Lock acquired
+                    except IOError:
+                        # Lock not acquired, wait and retry
+                        elapsed = time.time() - start_time
+                        if elapsed > max_wait:
+                            logger.warning(f"Timeout waiting for lock, proceeding without lock: {file_id}")
+                            break
+                        time.sleep(0.1)
+                
+                try:
+                    # Read the latest metadata to ensure we have the most up-to-date version
+                    existing = {}
+                    if metadata_file.exists():
+                        with open(metadata_file, 'r') as f:
+                            try:
+                                existing = json.load(f)
+                            except json.JSONDecodeError:
+                                logger.warning(f"Invalid JSON in metadata file, starting with empty metadata: {file_id}")
+                    
+                    # Deep update the metadata
+                    self._deep_update(existing, metadata)
+                    
+                    # Write to a temporary file first, then atomically replace the original
+                    tmp_file = metadata_file.with_suffix('.tmp')
+                    with open(tmp_file, 'w') as f:
+                        json.dump(existing, f, indent=2)
+                    
+                    # Atomic replacement
+                    os.replace(tmp_file, metadata_file)
+                    
+                finally:
+                    # Release the lock
+                    fcntl.flock(lock_f, fcntl.LOCK_UN)
+        
         except Exception as e:
             logger.error(f"Error updating metadata file: {e}")
-            raise
+            
+            # Fall back to non-atomic update on error
+            try:
+                logger.warning(f"Falling back to non-atomic update for {file_id}")
+                existing = self.get_metadata_sync(file_id) or {}
+                self._deep_update(existing, metadata)
+                with open(metadata_file, 'w') as f:
+                    json.dump(existing, f, indent=2)
+            except Exception as inner_e:
+                logger.error(f"Fallback update also failed: {inner_e}")
+                raise inner_e  # Re-raise the inner exception
+            
+            raise  # Re-raise the original exception
     
     def check_ready_for_confirmation(self, file_id: str, beat_task_status: Dict[str, Any]) -> bool:
         """Check if a file is ready for video generation confirmation.
