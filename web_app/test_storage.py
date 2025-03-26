@@ -2,14 +2,29 @@
 
 import pytest
 from typing import Any, Dict, Optional
-from web_app.storage import MetadataStorage
+from web_app.storage import MetadataStorage, FileMetadataStorage
 import pathlib
 from datetime import datetime
+import unittest
+import tempfile
+import shutil
+import os
+from unittest.mock import MagicMock, patch
+import json
+import io
+from pydub import AudioSegment
+import numpy as np
 
 class MockMetadataStorage(MetadataStorage):
     """In-memory implementation of metadata storage for testing."""
     
-    def __init__(self):
+    def __init__(self, max_audio_duration: int = 60):
+        """Initialize the mock storage.
+        
+        Args:
+            max_audio_duration: Maximum audio duration in seconds (default: 60)
+        """
+        super().__init__(max_audio_duration)
         self.storage = {}
         self.base_upload_dir = pathlib.Path("web_app/uploads")
     
@@ -195,4 +210,53 @@ async def test_mock_metadata_storage():
     # Test delete_metadata
     assert storage.delete_metadata(file_id) is True
     assert storage.delete_metadata("nonexistent") is False
-    assert await storage.get_metadata(file_id) is None 
+    assert await storage.get_metadata(file_id) is None
+
+@pytest.fixture
+def temp_storage():
+    """Create a temporary storage for testing."""
+    temp_dir = tempfile.mkdtemp()
+    storage = FileMetadataStorage(base_dir=temp_dir, max_audio_duration=1)  # 1 second max duration
+    yield storage
+    shutil.rmtree(temp_dir)
+
+@pytest.mark.asyncio
+async def test_truncate_audio(temp_storage):
+    """Test that audio files are truncated to the specified duration."""
+    # Create a 2-second audio clip with a simple sine wave
+    sample_rate = 44100
+    duration = 2  # seconds
+    t = np.linspace(0, duration, int(sample_rate * duration))
+    audio_data = np.sin(2 * np.pi * 440 * t)  # 440 Hz sine wave
+    audio_segment = AudioSegment(
+        audio_data.tobytes(),
+        frame_rate=sample_rate,
+        sample_width=2,
+        channels=1
+    )
+    
+    # Save the original audio to a temporary file
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+        audio_segment.export(temp_file.name, format='wav')
+        
+        # Create a file ID and save the audio using storage
+        file_id = "test_truncate"
+        with open(temp_file.name, 'rb') as f:
+            audio_path = temp_storage.save_audio_file(
+                file_id=file_id,
+                file_extension='.wav',
+                file_obj=f
+            )
+        
+        # Load the truncated audio
+        truncated_audio = AudioSegment.from_wav(audio_path)
+        
+        # Verify the duration is 1 second (with some tolerance for rounding)
+        assert abs(truncated_audio.duration_seconds - 1.0) < 0.1
+        
+        # Clean up the temporary file
+        os.unlink(temp_file.name)
+        
+        # Verify the metadata contains the duration limit
+        metadata = await temp_storage.get_metadata(file_id)
+        assert metadata.get("duration_limit") == 1.0  # 1 second in seconds 

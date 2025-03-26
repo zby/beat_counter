@@ -1,7 +1,7 @@
 """Storage implementations for metadata management."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, BinaryIO
 import json
 import logging
 import os
@@ -11,6 +11,8 @@ import aiofiles
 import asyncio
 import fcntl
 import time
+import tempfile
+from pydub import AudioSegment
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -43,6 +45,14 @@ def is_in_progress(state: str) -> bool:
 
 class MetadataStorage(ABC):
     """Abstract base class for metadata storage."""
+    
+    def __init__(self, max_audio_duration: int = 60):
+        """Initialize the storage with configuration.
+        
+        Args:
+            max_audio_duration: Maximum audio duration in seconds (default: 60)
+        """
+        self.max_audio_duration = max_audio_duration * 1000  # Convert to milliseconds
     
     @abstractmethod
     async def get_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
@@ -101,14 +111,14 @@ class MetadataStorage(ABC):
         pass
         
     @abstractmethod
-    def save_audio_file(self, file_id: str, file_extension: str, file_obj, filename: str = None) -> pathlib.Path:
+    def save_audio_file(self, file_id: str, file_extension: str, file_obj: BinaryIO, filename: str = None) -> pathlib.Path:
         """Save an uploaded audio file to the storage and return its path.
         Also creates and saves basic metadata about the file.
         
         Args:
             file_id: The unique ID for the file
             file_extension: The file extension of the audio file
-            file_obj: A file-like object that supports read
+            file_obj: A binary file-like object that supports read operations
             filename: Original filename (optional)
             
         Returns:
@@ -137,8 +147,14 @@ class TaskExecutor(ABC):
 class FileMetadataStorage(MetadataStorage):
     """File-based implementation of metadata storage with standardized directory structure."""
     
-    def __init__(self, base_dir: str = "web_app/uploads"):
-        """Initialize the storage with a base directory."""
+    def __init__(self, base_dir: str = "web_app/uploads", max_audio_duration: int = 60):
+        """Initialize the storage with a base directory.
+        
+        Args:
+            base_dir: Base directory for file storage
+            max_audio_duration: Maximum audio duration in seconds (default: 60)
+        """
+        super().__init__(max_audio_duration)
         self.base_upload_dir = pathlib.Path(base_dir)
         # Ensure the base directory exists
         self.base_upload_dir.mkdir(exist_ok=True, parents=True)
@@ -385,7 +401,9 @@ class FileMetadataStorage(MetadataStorage):
             "audio_file_path": metadata.get("audio_file_path"),
             "user_ip": metadata.get("user_ip"),
             "upload_timestamp": metadata.get("upload_timestamp"),
-            "uploaded_by": metadata.get("uploaded_by")
+            "uploaded_by": metadata.get("uploaded_by"),
+            "original_duration": metadata.get("original_duration"),
+            "duration_limit": metadata.get("duration_limit", 60)
         }
 
         # Add task IDs to the status data
@@ -463,14 +481,14 @@ class FileMetadataStorage(MetadataStorage):
         job_dir.mkdir(exist_ok=True, parents=True)
         return job_dir
         
-    def save_audio_file(self, file_id: str, file_extension: str, file_obj, filename: str = None) -> pathlib.Path:
+    def save_audio_file(self, file_id: str, file_extension: str, file_obj: BinaryIO, filename: str = None) -> pathlib.Path:
         """Save an uploaded audio file to the storage and return its path.
         Also creates and saves basic metadata about the file.
         
         Args:
             file_id: The unique ID for the file
             file_extension: The file extension of the audio file
-            file_obj: A file-like object that supports read
+            file_obj: A binary file-like object that supports read operations
             filename: Original filename (optional)
             
         Returns:
@@ -479,26 +497,44 @@ class FileMetadataStorage(MetadataStorage):
         # Ensure job directory exists
         self.ensure_job_directory(file_id)
         
-        # Get standardized path for the audio file
-        audio_file_path = self.get_audio_file_path(file_id, file_extension)
+        # Create a temporary file for processing
+        with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+            temp_path = temp_file.name
         
-        # Save the uploaded file with standardized name
-        import shutil
-        with open(audio_file_path, "wb") as f:
-            shutil.copyfileobj(file_obj, f)
-        
-        # Create and save metadata if filename is provided
-        if filename:
+        try:
+            # Save the uploaded file temporarily
+            with open(temp_path, "wb") as f:
+                import shutil
+                shutil.copyfileobj(file_obj, f)
+            
+            # Load and truncate the audio file
+            audio = AudioSegment.from_file(temp_path)
+            original_duration = len(audio) / 1000  # Convert to seconds
+            truncated_audio = audio[:self.max_audio_duration]
+            
+            # Get standardized path for the audio file
+            audio_file_path = self.get_audio_file_path(file_id, file_extension)
+            
+            # Save the truncated audio file
+            truncated_audio.export(audio_file_path, format=file_extension[1:])
+            
+            # Create and save metadata
             metadata = {
-                "original_filename": filename,
                 "audio_file_path": str(audio_file_path),
                 "file_extension": file_extension,
-                "upload_time": datetime.now().isoformat()
+                "upload_time": datetime.now().isoformat(),
+                "duration_limit": self.max_audio_duration / 1000,  # Store in seconds
+                "original_duration": original_duration,  # Store original duration
+                "original_filename": filename
             }
             
             self.update_metadata(file_id, metadata)
             
-        return audio_file_path
+            return audio_file_path
+            
+        finally:
+            # Clean up temporary file
+            os.remove(temp_path)
 
 class CeleryTaskExecutor(TaskExecutor):
     """Celery implementation of task execution."""

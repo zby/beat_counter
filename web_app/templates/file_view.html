@@ -29,6 +29,12 @@
             <!-- File Information Section -->
             <section id="file-info-section" class="card">
                 <h2>File Information</h2>
+                {% if file_status.original_duration and file_status.original_duration > file_status.duration_limit %}
+                <div class="warning-message">
+                    <p>⚠️ Note: Your audio file ({{ "%.1f"|format(file_status.original_duration) }} seconds) exceeds the maximum duration limit of {{ file_status.duration_limit }} seconds.</p>
+                    <p>The file has been truncated to {{ file_status.duration_limit }} seconds for processing.</p>
+                </div>
+                {% endif %}
                 <div class="file-info-grid">
                     <div class="info-item">
                         <h3>Filename</h3>
@@ -136,6 +142,8 @@
          data-total-beats="{{ file_status.beat_stats.total_beats if file_status.beat_stats and file_status.beat_stats.total_beats else 0 }}"
          data-duration="{{ file_status.beat_stats.duration if file_status.beat_stats and file_status.beat_stats.duration else 0 }}"
          data-detected-meter="{{ file_status.beat_stats.detected_meter if file_status.beat_stats and file_status.beat_stats.detected_meter else 0 }}"
+         data-original-duration="{{ file_status.original_duration if file_status.original_duration else 0 }}"
+         data-duration-limit="{{ file_status.duration_limit if file_status.duration_limit else 60 }}"
          data-app-dir="{{ app_dir }}"
          style="display:none;">
     </div>
@@ -153,6 +161,8 @@
             totalBeats: Number(dataElement.getAttribute('data-total-beats') || 0),
             duration: Number(dataElement.getAttribute('data-duration') || 0),
             detectedMeter: Number(dataElement.getAttribute('data-detected-meter') || 0),
+            originalDuration: Number(dataElement.getAttribute('data-original-duration') || 0),
+            durationLimit: Number(dataElement.getAttribute('data-duration-limit') || 60),
             appDir: dataElement.getAttribute('data-app-dir')
         };
     </script>

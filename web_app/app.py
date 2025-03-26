@@ -148,7 +148,10 @@ def create_app(
     app = FastAPI()
     
     # Initialize services
-    storage = metadata_storage or FileMetadataStorage(base_dir=str(UPLOAD_DIR))
+    storage = metadata_storage or FileMetadataStorage(
+        base_dir=str(UPLOAD_DIR),
+        max_audio_duration=config.get("queue", {}).get("max_duration", 60)
+    )
     service = task_provider or task_service
     auth = user_manager or UserManager()
     
@@ -211,8 +214,9 @@ def create_app(
             return RedirectResponse(url="/login", status_code=303)
             
         return templates.TemplateResponse(
+            request,
             "index.html", 
-            {"request": request, "user": user}
+            {"user": user}
         )
 
     @app.get("/login", response_class=HTMLResponse)
@@ -222,8 +226,9 @@ def create_app(
     ):
         """Render the login page."""
         return templates.TemplateResponse(
+            request,
             "login.html",
-            {"request": request, "next_url": next or "/"}
+            {"next_url": next or "/"}
         )
 
     @app.post("/login", response_class=HTMLResponse)
@@ -243,8 +248,9 @@ def create_app(
         if not user:
             # Authentication failed
             return templates.TemplateResponse(
+                request,
                 "login.html",
-                {"request": request, "error": "Invalid username or password", "next": next_url or "/"}
+                {"error": "Invalid username or password", "next": next_url or "/"}
             )
         
         # Authentication successful
@@ -305,8 +311,15 @@ def create_app(
         # Get user's IP address
         client_host = request.client.host if request.client else "unknown"
         
-        # Save the uploaded file using the storage, which also saves the basic metadata
+        # Save the uploaded file using the storage, which also handles truncation
         audio_file_path = storage.save_audio_file(file_id, file_extension, file.file, filename=filename)
+        
+        # Get metadata to check if file was truncated
+        metadata = await storage.get_metadata(file_id)
+        truncation_info = {
+            "duration_limit": metadata.get("duration_limit", 60),  # Default to 60 seconds if not found
+            "original_duration": metadata.get("original_duration", None)
+        }
         
         # Start beat detection task directly with file_id
         task = service.detect_beats(file_id)
@@ -324,8 +337,11 @@ def create_app(
         is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         
         if is_ajax:
-            # For AJAX requests, return JSON with file_id
-            return {"file_id": file_id}
+            # For AJAX requests, return JSON with file_id and truncation info
+            return {
+                "file_id": file_id,
+                "truncation_info": truncation_info
+            }
         else:
             # For regular form submissions, redirect to file status page
             return RedirectResponse(url=f"/file/{file_id}", status_code=303)
@@ -351,8 +367,9 @@ def create_app(
             else:
                 # For browser requests, render a nice 404 page
                 return templates.TemplateResponse(
+                    request,
                     "404.html",
-                    {"request": request, "message": "The requested file was not found"},
+                    {"message": "The requested file was not found"},
                     status_code=404
                 )
         
@@ -363,7 +380,9 @@ def create_app(
             "upload_timestamp": metadata.get("upload_timestamp"),
             "user_ip": metadata.get("user_ip"),
             "uploaded_by": metadata.get("uploaded_by"),
-            "status": ERROR  # Default to ERROR
+            "status": ERROR,  # Default to ERROR
+            "duration_limit": metadata.get("duration_limit", 60),  # Default to 60 seconds
+            "original_duration": metadata.get("original_duration", None)
         }
         
         # Fetch task statuses if task IDs are present in metadata
@@ -492,8 +511,9 @@ def create_app(
         
         # Render the template with the file list
         return templates.TemplateResponse(
+            request,
             "processing_queue.html", 
-            {"request": request, "files": files_with_status, "user": user}
+            {"files": files_with_status, "user": user}
         )
 
     @app.post("/confirm/{file_id}")
@@ -576,14 +596,16 @@ def create_app(
         # Just add the task IDs directly to the template data
         # The frontend will poll for task status directly from the /task endpoint
         template_data = {
-            "request": request,
             "file_id": file_id,
             "file_status": file_status,
-            "user": user,
-            "app_dir": str(APP_DIR)
+            "user": user
         }
         
-        return templates.TemplateResponse("file_view.html", template_data)
+        return templates.TemplateResponse(
+            request,
+            "file_view.html", 
+            template_data
+        )
 
     @app.get("/download/{file_id}")
     async def download_video(

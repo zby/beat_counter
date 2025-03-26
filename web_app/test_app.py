@@ -89,7 +89,13 @@ class MockTaskServiceProvider(TaskServiceProvider):
 class MockMetadataStorage(MetadataStorage):
     """Mock implementation of MetadataStorage for testing."""
     
-    def __init__(self):
+    def __init__(self, max_audio_duration: int = 60):
+        """Initialize the mock storage.
+        
+        Args:
+            max_audio_duration: Maximum audio duration in seconds (default: 60)
+        """
+        super().__init__(max_audio_duration)
         self.storage = {}
         # Use a temporary directory for all file operations
         self.temp_dir = tempfile.TemporaryDirectory()

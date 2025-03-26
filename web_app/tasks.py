@@ -46,6 +46,9 @@ logger = get_task_logger(__name__)
 log_file = os.path.join(config['storage']['upload_dir'], 'celery.log')
 os.environ['CELERY_LOG_FILE'] = log_file
 
+# Get max duration from config
+MAX_AUDIO_DURATION = config.get("queue", {}).get("max_duration", 60)
+
 # Configure logging to handle I/O errors gracefully
 class SafeLogHandler:
     """A wrapper for logger that catches I/O errors."""
@@ -198,7 +201,10 @@ class BaseBeatTask(app.Task):
     def __call__(self, *args, **kwargs):
         # Initialize storage if not already done
         if self.storage is None:
-            self.storage = FileMetadataStorage(base_dir=config['storage']['upload_dir'])
+            self.storage = FileMetadataStorage(
+                base_dir=config['storage']['upload_dir'],
+                max_audio_duration=MAX_AUDIO_DURATION
+            )
         
         # Call the original __call__ method
         return super().__call__(*args, **kwargs)
