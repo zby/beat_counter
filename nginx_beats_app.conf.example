@@ -1,6 +1,3 @@
-beats-app.conf  default         
-root@dev:/home/admin# vi /etc/nginx/sites-available/beats-app.conf 
-root@dev:/home/admin# cat /etc/nginx/sites-available/beats-app.conf 
 server { 
     listen 80;
     server_name xvm-129-160.dc3.ghst.net;
