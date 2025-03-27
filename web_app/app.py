@@ -107,7 +107,20 @@ class TaskServiceProvider:
             
             # For failed tasks, get error information
             elif async_result.state == "FAILURE":
-                result_dict["error"] = str(async_result.result)
+                result = async_result.result
+                if isinstance(result, dict):
+                    # Extract error information from the result
+                    error_info = {
+                        "type": result.get("exc_type", "UnknownError"),
+                        "message": result.get("exc_message", "An unknown error occurred"),
+                        "module": result.get("exc_module", "unknown")
+                    }
+                    result_dict["error"] = error_info
+                    # Set status to ANALYZING_FAILURE for beat detection failures
+                    if "beat_detection_output" in result:
+                        result_dict["state"] = ANALYZING_FAILURE
+                else:
+                    result_dict["error"] = str(result)
                 
         except Exception as e:
             logger.error(f"Error getting task status for {task_id}: {e}")

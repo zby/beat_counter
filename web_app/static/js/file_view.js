@@ -180,7 +180,18 @@ function handleStatus(statusData) {
             // Show error for failed beat analysis
             const analysisErrorMessage = document.createElement('div');
             analysisErrorMessage.className = 'error-message';
-            analysisErrorMessage.textContent = 'Error: Beat analysis failed.';
+            
+            // Get error message from status data
+            let errorMessage = 'Error: Beat analysis failed.';
+            if (statusData.error) {
+                if (typeof statusData.error === 'object' && statusData.error.message) {
+                    errorMessage = statusData.error.message;
+                } else if (typeof statusData.error === 'string') {
+                    errorMessage = statusData.error;
+                }
+            }
+            
+            analysisErrorMessage.textContent = errorMessage;
             if (analysisResults) analysisResults.prepend(analysisErrorMessage);
             
             // Clear task ID and stop polling
