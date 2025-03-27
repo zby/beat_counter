@@ -40,15 +40,16 @@ Ensure you have:
 
 ### System Requirements
 
-1. **Install ffmpeg** (required for video generation):
+1. **Install ffmpeg with additional codecs** (required for video generation and M4A support):
 
 ```bash
 # On Ubuntu/Debian
 sudo apt update
-sudo apt install -y ffmpeg
+sudo apt install -y ffmpeg libavcodec-extra58
 
-# Verify installation
+# Verify installation and codec support
 ffmpeg -version
+ffmpeg -encoders | grep aac  # Should show AAC encoder availability
 ```
 
 2. **Install uv** (fast Python package installer):
@@ -81,8 +82,20 @@ sudo apt-get install -y \
     python3-venv \
     redis-server \
     ffmpeg \
+    libavcodec-extra58 \
     libsndfile1-dev
 ```
+
+### Supported Audio Formats
+
+The application supports the following audio formats:
+- MP3
+- WAV
+- FLAC
+- M4A (requires libavcodec-extra58 package)
+- OGG
+
+Note: For M4A support on Ubuntu/Debian, you need to install the `libavcodec-extra58` package which provides additional codecs including AAC encoding support. This package is included in the system dependencies installation command above.
 
 ## Preparing Your Application
 

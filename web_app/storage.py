@@ -515,13 +515,24 @@ class FileMetadataStorage(MetadataStorage):
             # Get standardized path for the audio file
             audio_file_path = self.get_audio_file_path(file_id, file_extension)
             
-            # Save the truncated audio file
-            truncated_audio.export(audio_file_path, format=file_extension[1:])
+            try:
+                # For M4A files, we need to use specific parameters
+                if file_extension.lower() == '.m4a':
+                    truncated_audio.export(audio_file_path, format='mp4', codec='aac')
+                else:
+                    # For other formats, use the original format
+                    truncated_audio.export(audio_file_path, format=file_extension[1:])
+            except Exception as e:
+                # If original format fails, try MP3 as fallback
+                logger.warning(f"Failed to save in original format {file_extension}, falling back to MP3: {e}")
+                audio_file_path = self.get_audio_file_path(file_id, '.mp3')
+                truncated_audio.export(audio_file_path, format='mp3')
+                file_extension = '.mp3'  # Update extension to match actual format
             
             # Create and save metadata
             metadata = {
                 "audio_file_path": str(audio_file_path),
-                "file_extension": file_extension,
+                "file_extension": file_extension,  # Store the actual extension used
                 "upload_time": datetime.now().isoformat(),
                 "duration_limit": self.max_audio_duration / 1000,  # Store in seconds
                 "original_duration": original_duration,  # Store original duration

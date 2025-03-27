@@ -26,11 +26,20 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### System Requirements
 
 ```bash
-# Install ffmpeg (required for video generation)
-sudo apt-get install ffmpeg  # On Ubuntu/Debian
+# Install ffmpeg with additional codecs (required for video generation and M4A support)
+sudo apt-get install ffmpeg libavcodec-extra58  # On Ubuntu/Debian
 # OR
 brew install ffmpeg  # On macOS
 ```
+
+The application supports the following audio formats:
+- MP3
+- WAV
+- FLAC
+- M4A (requires libavcodec-extra58 package)
+- OGG
+
+Note: For M4A support on Ubuntu/Debian, you need to install the `libavcodec-extra58` package which provides additional codecs including AAC encoding support.
 
 ### Setting up a virtual environment
 
