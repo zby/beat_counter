@@ -1,0 +1,26 @@
+beats-app.conf  default         
+root@dev:/home/admin# vi /etc/nginx/sites-available/beats-app.conf 
+root@dev:/home/admin# cat /etc/nginx/sites-available/beats-app.conf 
+server { 
+    listen 80;
+    server_name 155.133.129.160;
+
+    location / { 
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    location /static { alias /home/admin/beat_counter/web_app/static; expires 30d;
+    }
+
+    # Serve fileauth.txt at /.well-known/pki-validation/fileauth.txt
+    location /.well-known/pki-validation/fileauth.txt { 
+        alias /home/admin/fileauth.txt;
+    }
+    
+    # Increase upload size limit for audio files
+    client_max_body_size 50M;
+}
