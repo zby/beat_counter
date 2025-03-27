@@ -1,6 +1,25 @@
-server { 
+# HTTP server: Redirect all traffic to HTTPS
+server {
     listen 80;
     server_name xvm-129-160.dc3.ghst.net;
+
+    # Redirect to HTTPS
+    return 301 https://$host$request_uri;
+}
+
+# HTTPS server
+server { 
+    listen 443 ssl;
+    server_name xvm-129-160.dc3.ghst.net;
+
+    # SSL configuration
+    ssl_certificate /etc/ssl/certs/xvm-129-160.dc3.ghst.net-fullchain.crt; # Use fullchain if you combined with CA bundle
+    # ssl_certificate /etc/ssl/certs/xvm-129-160.dc3.ghst.net.crt; # Use this if no CA bundle
+    ssl_certificate_key /etc/ssl/private/xvm-129-160.dc3.ghst.net.key;
+
+    # Optional: Improve SSL security
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
 
     location / { 
         proxy_pass http://127.0.0.1:8000;
@@ -10,7 +29,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
     
-    location /static { alias /home/admin/beat_counter/web_app/static; expires 30d;
+    location /static { 
+        alias /home/admin/beat_counter/web_app/static; 
+        expires 30d;
     }
 
     # Serve fileauth.txt at /.well-known/pki-validation/fileauth.txt
