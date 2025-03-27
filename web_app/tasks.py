@@ -376,8 +376,8 @@ def detect_beats_task(
             if hasattr(self, '_io_capture'):
                 stdout, stderr = self._io_capture.get_output()
             
-            # Return error information with proper Celery exception format
-            return {
+            # Update task state with error information
+            self.update_state(state=states.FAILURE, meta={
                 "file_id": file_id,
                 "exc_type": type(e).__name__,
                 "exc_message": str(e),
@@ -386,7 +386,10 @@ def detect_beats_task(
                     "stdout": stdout,
                     "stderr": stderr
                 }
-            }
+            })
+            
+            # Re-raise the exception to mark the task as failed
+            raise
 
 @app.task(
     bind=True,
