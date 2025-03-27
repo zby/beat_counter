@@ -58,11 +58,11 @@ ffmpeg -version
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-3. **Install Python 3.10+** (required for librosa):
+3. **Install Python 3.11+**:
 
 ```bash
-# Install Python 3.10 using uv
-uv venv --python 3.10.13
+# Install Python 3.11 using uv
+uv venv --python 3.11
 
 # Activate the virtual environment
 source .venv/bin/activate

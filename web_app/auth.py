@@ -9,7 +9,7 @@ import os
 import logging
 from typing import Dict, Any, Optional, List
 import time
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta, timezone
 
 # Third-party imports
 import bcrypt
@@ -115,9 +115,9 @@ class UserManager:
         
         # Set expiration time
         if expires_delta:
-            expire = datetime.now(UTC) + expires_delta
+            expire = datetime.now(timezone.utc) + expires_delta
         else:
-            expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         
         to_encode.update({"exp": expire})
         
