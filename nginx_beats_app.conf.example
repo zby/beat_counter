@@ -13,8 +13,8 @@ server {
     server_name xvm-129-160.dc3.ghst.net;
 
     # SSL configuration
-    ssl_certificate /etc/ssl/certs/xvm-129-160.dc3.ghst.net-fullchain.crt; # Use fullchain if you combined with CA bundle
-    # ssl_certificate /etc/ssl/certs/xvm-129-160.dc3.ghst.net.crt; # Use this if no CA bundle
+    #ssl_certificate /etc/ssl/certs/xvm-129-160.dc3.ghst.net-fullchain.crt; # Use fullchain if you combined with CA bundle
+    ssl_certificate /etc/ssl/certs/xvm-129-160.dc3.ghst.net.crt; # Use this if no CA bundle
     ssl_certificate_key /etc/ssl/private/xvm-129-160.dc3.ghst.net.key;
 
     # Optional: Improve SSL security
