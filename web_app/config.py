@@ -34,7 +34,7 @@ class StorageConfig:
     upload_dir: pathlib.Path
     max_upload_size_mb: int
     allowed_extensions: List[str]
-    max_duration: int
+    max_audio_secs: int
 
 @dataclass
 class CeleryConfig:

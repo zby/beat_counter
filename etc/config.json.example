@@ -9,7 +9,7 @@
     "storage": {
         "upload_dir": "web_app/uploads",
         "max_upload_size_mb": 50,
-        "max_duration": 60,
+        "max_audio_secs": 60,
         "allowed_extensions": [".mp3", ".wav", ".flac", ".m4a", ".ogg"]
     },
     "celery": {

@@ -1,262 +1,201 @@
-"""Mock implementations of storage for testing."""
+"""Tests for the storage module."""
 
 import pytest
-from typing import Any, Dict, Optional
-from web_app.storage import MetadataStorage, FileMetadataStorage
-import pathlib
-from datetime import datetime
-import unittest
-import tempfile
-import shutil
-import os
-from unittest.mock import MagicMock, patch
 import json
+import pathlib
+import tempfile
+from datetime import datetime
 import io
 from pydub import AudioSegment
 import numpy as np
+from web_app.storage import FileMetadataStorage
+from web_app.config import StorageConfig
 
-class MockMetadataStorage(MetadataStorage):
-    """In-memory implementation of metadata storage for testing."""
-    
-    def __init__(self, max_audio_duration: int = 60):
-        """Initialize the mock storage.
-        
-        Args:
-            max_audio_duration: Maximum audio duration in seconds (default: 60)
-        """
-        super().__init__(max_audio_duration)
-        self.storage = {}
-        self.base_upload_dir = pathlib.Path("web_app/uploads")
-    
-    async def get_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
-        """Get metadata for a specific file."""
-        return self.storage.get(file_id)
-    
-    def update_metadata(self, file_id: str, metadata: Dict[str, Any]) -> None:
-        """Update metadata for a specific file."""
-        if file_id not in self.storage:
-            self.storage[file_id] = {}
-        self._deep_update(self.storage[file_id], metadata)
-    
-    async def get_all_metadata(self) -> Dict[str, Dict[str, Any]]:
-        """Get metadata for all files."""
-        return self.storage.copy()
+@pytest.fixture
+def storage():
+    """Create a storage instance with a temporary directory for testing."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = pathlib.Path(temp_dir)
+        config = StorageConfig(
+            upload_dir=temp_path,
+            max_upload_size_mb=100,
+            max_audio_secs=60,
+            allowed_extensions=[".mp3", ".wav", ".m4a"]
+        )
+        storage_instance = FileMetadataStorage(config)
+        yield storage_instance
 
-    def delete_metadata(self, file_id: str) -> bool:
-        """Delete metadata for a specific file."""
-        if file_id in self.storage:
-            del self.storage[file_id]
-            return True
-        return False
+def test_storage_initialization(storage):
+    """Test that storage is properly initialized."""
+    assert storage.max_audio_secs == 60  # 60 seconds in milliseconds
+    assert storage.allowed_extensions == [".mp3", ".wav", ".m4a"]
+    assert storage.base_upload_dir.exists()
 
-    def _deep_update(self, target: Dict, source: Dict) -> None:
-        """Helper function for deep updating dictionaries."""
-        for key, value in source.items():
-            if isinstance(value, dict) and key in target and isinstance(target[key], dict):
-                self._deep_update(target[key], value)
-            else:
-                target[key] = value
-    
-    # Path management methods
-    def get_job_directory(self, file_id: str) -> pathlib.Path:
-        """Get the standardized job directory for a file ID."""
-        return self.base_upload_dir / file_id
-    
-    def get_audio_file_path(self, file_id: str, file_extension: str = None) -> pathlib.Path:
-        """Get the standardized path for the audio file."""
-        job_dir = self.get_job_directory(file_id)
-        
-        # If extension not provided, try to get from metadata
-        if file_extension is None:
-            metadata = self.storage.get(file_id, {})
-            file_extension = metadata.get("file_extension", ".mp3")  # Default to .mp3 if not found
-        
-        return job_dir / f"audio{file_extension}"
-    
-    def get_beats_file_path(self, file_id: str) -> pathlib.Path:
-        """Get the standardized path for the beats file."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "beats.txt"
-    
-    def get_beat_stats_file_path(self, file_id: str) -> pathlib.Path:
-        """Get the standardized path for the beat statistics file."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "beat_stats.json"
-    
-    def get_video_file_path(self, file_id: str) -> pathlib.Path:
-        """Get the standardized path for the visualization video."""
-        job_dir = self.get_job_directory(file_id)
-        return job_dir / "visualization.mp4"
-    
-    def ensure_job_directory(self, file_id: str) -> pathlib.Path:
-        """Ensure the job directory exists and return its path."""
-        job_dir = self.get_job_directory(file_id)
-        job_dir.mkdir(exist_ok=True, parents=True)
-        return job_dir
+def test_metadata_file_path(storage):
+    """Test metadata file path generation."""
+    file_id = "test123"
+    expected_path = storage.base_upload_dir / file_id / "metadata.json"
+    assert storage.get_metadata_file_path(file_id) == expected_path
 
-    def save_audio_file(self, file_id: str, file_extension: str, file_obj, filename: str = None) -> pathlib.Path:
-        """Save an uploaded audio file to the storage and return its path.
-        Also creates and saves basic metadata about the file.
-        
-        Args:
-            file_id: The unique ID for the file
-            file_extension: The file extension of the audio file
-            file_obj: A file-like object that supports read
-            filename: Original filename (optional)
-            
-        Returns:
-            Path to the saved audio file
-        """
-        # In the mock, we just need to update the metadata
-        audio_file_path = self.get_audio_file_path(file_id, file_extension)
-        
-        # Create and save metadata if filename is provided
-        if filename:
-            metadata = {
-                "original_filename": filename,
-                "audio_file_path": str(audio_file_path),
-                "file_extension": file_extension,
-                "upload_time": datetime.now().isoformat()
-            }
-            
-            self.update_metadata(file_id, metadata)
-            
-        return audio_file_path
+def test_job_directory_creation(storage):
+    """Test job directory creation and path management."""
+    file_id = "test123"
+    job_dir = storage.ensure_job_directory(file_id)
+    
+    assert job_dir == storage.base_upload_dir / file_id
+    assert job_dir.exists()
+    assert job_dir.is_dir()
 
-    async def get_file_metadata(self, file_id: str) -> Dict[str, Any]:
-        """Get the file metadata and file existence information without task status computation."""
-        metadata = await self.get_metadata(file_id)
-        if not metadata:
-            return None
-
-        # Create response with basic file information
-        status_data = {
-            "file_id": file_id,
-            "filename": metadata.get("original_filename"),
-            "audio_file_path": metadata.get("audio_file_path")
+def test_metadata_update_and_retrieval(storage):
+    """Test metadata update and retrieval functionality."""
+    file_id = "test123"
+    test_metadata = {
+        "test_key": "test_value",
+        "nested": {
+            "key": "value"
         }
-
-        # Add task IDs to the status data
-        beat_task_id = metadata.get("beat_detection")
-        video_task_id = metadata.get("video_generation")
-        
-        if beat_task_id:
-            status_data["beat_detection"] = beat_task_id
-            
-        if video_task_id:
-            status_data["video_generation"] = video_task_id
-
-        # In the mock, we'll simulate file existence based on task completion in metadata
-        beats_file_exists = metadata.get("beats_file_exists", False)
-        video_file_exists = metadata.get("video_file_exists", False)
-        
-        status_data["beats_file_exists"] = beats_file_exists
-        status_data["video_file_exists"] = video_file_exists
-        
-        # Add mock beat stats if beats file exists
-        if beats_file_exists:
-            status_data["beat_stats"] = {
-                "bpm": 120.0,
-                "beats": 100,
-                "duration": 60.0,
-                "time_signature": "4/4"
-            }
-        
-        return status_data
-
-@pytest.mark.asyncio
-async def test_mock_metadata_storage():
-    """Test the methods of MockMetadataStorage class."""
-    storage = MockMetadataStorage()
-    
-    # Test initial state
-    assert storage.storage == {}
-    
-    # Test get_metadata for non-existent file
-    metadata = await storage.get_metadata("nonexistent")
-    assert metadata is None
-    
-    # Test update_metadata for new file
-    file_id = "test_file"
-    initial_metadata = {
-        "filename": "test.mp3",
-        "file_path": "/path/to/test.mp3"
     }
-    storage.update_metadata(file_id, initial_metadata)
     
-    # Verify metadata was stored
-    metadata = await storage.get_metadata(file_id)
-    assert metadata == initial_metadata
+    # Test metadata update
+    storage.update_metadata(file_id, test_metadata)
     
-    # Test deep update of metadata
+    # Test metadata retrieval
+    retrieved_metadata = storage.get_metadata(file_id)
+    assert retrieved_metadata == test_metadata
+    
+    # Test nested update
     update_metadata = {
-        "task_info": {
-            "beat_detection": "task1",
-            "status": "STARTED"
+        "nested": {
+            "new_key": "new_value"
         }
     }
     storage.update_metadata(file_id, update_metadata)
     
-    # Verify deep update worked
-    metadata = await storage.get_metadata(file_id)
-    assert metadata["filename"] == "test.mp3"  # Original data preserved
-    assert metadata["task_info"]["beat_detection"] == "task1"  # New data added
-    
-    # Test get_all_metadata
-    all_metadata = await storage.get_all_metadata()
-    assert len(all_metadata) == 1
-    assert all_metadata[file_id] == metadata
-    
-    # Test delete_metadata
-    assert storage.delete_metadata(file_id) is True
-    assert storage.delete_metadata("nonexistent") is False
-    assert await storage.get_metadata(file_id) is None
+    expected_metadata = {
+        "test_key": "test_value",
+        "nested": {
+            "key": "value",
+            "new_key": "new_value"
+        }
+    }
+    assert storage.get_metadata(file_id) == expected_metadata
 
-@pytest.fixture
-def temp_storage():
-    """Create a temporary storage for testing."""
-    temp_dir = tempfile.mkdtemp()
-    storage = FileMetadataStorage(base_dir=temp_dir, max_audio_duration=1)  # 1 second max duration
-    yield storage
-    shutil.rmtree(temp_dir)
-
-@pytest.mark.asyncio
-async def test_truncate_audio(temp_storage):
-    """Test that audio files are truncated to the specified duration."""
-    # Create a 2-second audio clip with a simple sine wave
-    sample_rate = 44100
-    duration = 2  # seconds
-    t = np.linspace(0, duration, int(sample_rate * duration))
-    audio_data = np.sin(2 * np.pi * 440 * t)  # 440 Hz sine wave
-    audio_segment = AudioSegment(
-        audio_data.tobytes(),
-        frame_rate=sample_rate,
-        sample_width=2,
-        channels=1
-    )
+def test_metadata_deletion(storage):
+    """Test metadata deletion functionality."""
+    file_id = "test123"
+    test_metadata = {"test": "value"}
     
-    # Save the original audio to a temporary file
-    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-        audio_segment.export(temp_file.name, format='wav')
-        
-        # Create a file ID and save the audio using storage
-        file_id = "test_truncate"
+    # Create and verify metadata
+    storage.update_metadata(file_id, test_metadata)
+    assert storage.get_metadata(file_id) == test_metadata
+    
+    # Delete metadata
+    assert storage.delete_metadata(file_id)
+    assert storage.get_metadata(file_id) is None
+
+def test_get_all_metadata(storage):
+    """Test retrieving all metadata."""
+    # Create multiple test files
+    test_files = [
+        ("file1", {"key1": "value1"}),
+        ("file2", {"key2": "value2"}),
+        ("file3", {"key3": "value3"})
+    ]
+    
+    for file_id, metadata in test_files:
+        storage.update_metadata(file_id, metadata)
+    
+    # Get all metadata
+    all_metadata = storage.get_all_metadata()
+    
+    # Verify all files are present
+    assert len(all_metadata) == len(test_files)
+    for file_id, metadata in test_files:
+        assert file_id in all_metadata
+        assert all_metadata[file_id] == metadata
+
+def test_file_paths(storage):
+    """Test various file path generation methods."""
+    file_id = "test123"
+    
+    # Test audio file path
+    audio_path = storage.get_audio_file_path(file_id, ".mp3")
+    assert audio_path == storage.base_upload_dir / file_id / "audio.mp3"
+    
+    # Test beats file path
+    beats_path = storage.get_beats_file_path(file_id)
+    assert beats_path == storage.base_upload_dir / file_id / "beats.txt"
+    
+    # Test beat stats file path
+    stats_path = storage.get_beat_stats_file_path(file_id)
+    assert stats_path == storage.base_upload_dir / file_id / "beat_stats.json"
+    
+    # Test video file path
+    video_path = storage.get_video_file_path(file_id)
+    assert video_path == storage.base_upload_dir / file_id / "visualization.mp4"
+
+def test_audio_file_saving(storage):
+    """Test saving audio files with different formats."""
+    file_id = "test123"
+    
+    # Create a simple audio segment for testing
+    audio = AudioSegment.silent(duration=500)  # 500ms of silence
+    
+    # Test MP3 saving
+    with tempfile.NamedTemporaryFile(suffix='.mp3') as temp_file:
+        audio.export(temp_file.name, format='mp3')
         with open(temp_file.name, 'rb') as f:
-            audio_path = temp_storage.save_audio_file(
-                file_id=file_id,
-                file_extension='.wav',
-                file_obj=f
-            )
-        
-        # Load the truncated audio
-        truncated_audio = AudioSegment.from_wav(audio_path)
-        
-        # Verify the duration is 1 second (with some tolerance for rounding)
-        assert abs(truncated_audio.duration_seconds - 1.0) < 0.1
-        
-        # Clean up the temporary file
-        os.unlink(temp_file.name)
-        
-        # Verify the metadata contains the duration limit
-        metadata = await temp_storage.get_metadata(file_id)
-        assert metadata.get("duration_limit") == 1.0  # 1 second in seconds 
+            path = storage.save_audio_file(file_id, '.mp3', f, "test.mp3")
+            assert path.exists()
+            assert path.suffix == '.mp3'
+    
+    # Verify metadata was created
+    metadata = storage.get_metadata(file_id)
+    assert metadata is not None
+    assert metadata['file_extension'] == '.mp3'
+    assert metadata['original_filename'] == 'test.mp3'
+    assert 'upload_time' in metadata
+    assert metadata['duration_limit'] == 60  # Default from config
+    assert metadata['original_duration'] == 0.5  # 500ms = 0.5s
+
+def test_audio_duration_limit(storage):
+    """Test that audio files are truncated to the duration limit."""
+    file_id = "test123"
+    
+    # Create an audio segment longer than the limit
+    duration_ms = storage.max_audio_secs * 1000 + 1000  # 1 second over limit
+    audio = AudioSegment.silent(duration=duration_ms)
+    
+    # Save the audio file
+    with tempfile.NamedTemporaryFile(suffix='.mp3') as temp_file:
+        audio.export(temp_file.name, format='mp3')
+        with open(temp_file.name, 'rb') as f:
+            path = storage.save_audio_file(file_id, '.mp3', f, "test.mp3")
+    
+    # Load the saved file and verify duration
+    saved_audio = AudioSegment.from_file(path)
+    assert len(saved_audio) <= storage.max_audio_secs * 1000  # Convert seconds to milliseconds
+
+def test_file_extension_handling(storage):
+    """Test handling of different file extensions."""
+    file_id = "test123"
+    audio = AudioSegment.silent(duration=500)
+    
+    # Test M4A handling (should convert to MP4/AAC)
+    with tempfile.NamedTemporaryFile(suffix='.m4a') as temp_file:
+        audio.export(temp_file.name, format='mp4')
+        with open(temp_file.name, 'rb') as f:
+            path = storage.save_audio_file(file_id, '.m4a', f, "test.m4a")
+            assert path.exists()
+    
+    # Verify metadata has correct extension
+    metadata = storage.get_metadata(file_id)
+    assert metadata['file_extension'] in ['.m4a', '.mp4']  # Either is acceptable
+    
+    # Test fallback to MP3 for unsupported format
+    file_id = "test456"
+    with tempfile.NamedTemporaryFile(suffix='.xyz') as temp_file:
+        audio.export(temp_file.name, format='mp3')  # Use MP3 format but wrong extension
+        with open(temp_file.name, 'rb') as f:
+            path = storage.save_audio_file(file_id, '.xyz', f, "test.xyz")
+            assert path.suffix == '.mp3'  # Should fall back to MP3 

@@ -18,6 +18,7 @@ from typing import List, Optional, Tuple
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from beat_detection.utils.constants import SUPPORTED_AUDIO_EXTENSIONS
+from web_app.config import Config, StorageConfig
 from web_app.storage import FileMetadataStorage
 
 # Import the tools directly to reuse their functionality
@@ -77,7 +78,11 @@ def process_file(file_id: str, upload_dir: pathlib.Path,
     Returns:
         True if processing was successful, False otherwise
     """
-    storage = FileMetadataStorage(str(upload_dir))
+    # Load configuration
+    config = Config.from_env()
+    
+    # Create storage with configuration
+    storage = FileMetadataStorage(config.storage)
     
     # Check for existing beat file
     beats_file = storage.get_beats_file_path(file_id)
