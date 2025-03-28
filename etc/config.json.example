@@ -1,0 +1,21 @@
+{
+    "app": {
+        "name": "Beat Detection Web App",
+        "version": "0.1.0",
+        "debug": false,
+        "allowed_hosts": ["localhost", "127.0.0.1"],
+        "max_queue_files": 50
+    },
+    "storage": {
+        "upload_dir": "web_app/uploads",
+        "max_upload_size_mb": 50,
+        "max_duration": 60,
+        "allowed_extensions": [".mp3", ".wav", ".flac", ".m4a", ".ogg"]
+    },
+    "celery": {
+        "broker_url": "redis://localhost:6379/0",
+        "result_backend": "redis://localhost:6379/0",
+        "task_serializer": "json",
+        "accept_content": ["json"]
+    }
+} 
