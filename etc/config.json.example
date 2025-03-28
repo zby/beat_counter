@@ -13,6 +13,7 @@
         "allowed_extensions": [".mp3", ".wav", ".flac", ".m4a", ".ogg"]
     },
     "celery": {
+        "name": "Beat Detection Celery Worker",
         "broker_url": "redis://localhost:6379/0",
         "result_backend": "redis://localhost:6379/0",
         "task_serializer": "json",

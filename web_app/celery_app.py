@@ -7,29 +7,13 @@ and video generation in a distributed manner.
 
 import os
 from celery import Celery
-from web_app.celery_config import REDIS_URL
+from web_app.config import Config
 
-# Create the Celery app with Redis backend from configuration
-app = Celery(
-    'beat_detection',
-    broker=REDIS_URL,
-    backend=REDIS_URL
-)
+# Load configuration
+config = Config.from_env()
 
-# Explicitly set the result backend again to ensure it's properly configured
-app.conf.result_backend = REDIS_URL
-
-# Ensure task results are stored
-app.conf.task_ignore_result = False
-
-# Configure result extended
-app.conf.result_extended = True
-
-# Configure task track started
-app.conf.task_track_started = True
-
-# Load configuration from a Python module directly
-app.config_from_object('web_app.celery_config')
+# Create the Celery app with configuration from config
+app = Celery(**config.celery.__dict__)
 
 # Auto-discover tasks in the web_app package
 app.autodiscover_tasks(['web_app'])

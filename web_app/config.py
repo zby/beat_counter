@@ -38,10 +38,14 @@ class StorageConfig:
 
 @dataclass
 class CeleryConfig:
+    name: str
     broker_url: str
     result_backend: str
     task_serializer: str
     accept_content: List[str]
+    task_ignore_result: bool = False
+    result_extended: bool = True
+    task_track_started: bool = True
 
 @dataclass
 class AppConfig:
