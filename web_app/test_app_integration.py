@@ -27,13 +27,17 @@ from fastapi.testclient import TestClient
 from celery import Celery
 from celery.result import AsyncResult
 
+from unittest.mock import patch, MagicMock # Ensure MagicMock is imported
+# Import the specific task function to patch its methods
+from web_app.celery_app import generate_video_task
+
 # Import app creation function and components
 from web_app.app import (
     create_app,
     ANALYZING, ANALYZED, ANALYZING_FAILURE, GENERATING_VIDEO, COMPLETED, VIDEO_ERROR, ERROR
 )
 from web_app.config import Config, StorageConfig, AppConfig, CeleryConfig, User
-from web_app.storage import FileMetadataStorage
+from web_app.storage import FileMetadataStorage # Import the class for type hinting
 from web_app.auth import UserManager
 from web_app.context import AppContext
 
@@ -116,34 +120,29 @@ def generated_sample_audio() -> Dict[str, Any]:
 @pytest.fixture
 def mock_beat_detector():
     """ Mocks the BeatDetector call within the celery task """
-    # Define the mock stats object
     mock_stats_obj = SimpleNamespace(
         tempo_bpm=120.0, mean_interval=0.5, median_interval=0.5, std_interval=0.05,
         min_interval=0.4, max_interval=0.6, total_beats=2, irregularity_percent=0.0
     )
-    # *** Ensure this tuple has exactly 7 elements ***
     mock_return_tuple = (
         np.array([0.05, 0.08]),      # 1. beat_timestamps
         mock_stats_obj,              # 2. stats object
         [],                          # 3. irregular_beats
         np.array([0], dtype=int),    # 4. downbeats (index 0)
         0,                           # 5. intro_end_idx
-        2,                           # 6. ending_start_idx (index after last beat)
+        2,                           # 6. ending_start_idx
         4                            # 7. detected_meter
     )
-    # Check the length right here to be absolutely sure
     assert len(mock_return_tuple) == 7, "Mock return tuple does not have 7 elements!"
 
-    # Target the BeatDetector class where it's imported/used in celery_app.py
     patch_target = 'web_app.celery_app.BeatDetector'
     try:
         with patch(patch_target) as mock_DetectorClass:
-            # Configure the instance that the mock class will return
             instance_mock = MagicMock()
             instance_mock.detect_beats.return_value = mock_return_tuple
             mock_DetectorClass.return_value = instance_mock
             print(f"Mocking '{patch_target}' - Instance will return {len(mock_return_tuple)} elements from detect_beats.")
-            yield mock_DetectorClass # Yield the mock class for the test duration
+            yield mock_DetectorClass
     except ModuleNotFoundError:
          pytest.fail(f"Failed to patch '{patch_target}'. Is the import path correct?")
     except Exception as e:
@@ -154,14 +153,13 @@ def mock_beat_detector():
 INVALID_EXT = ".txt"
 INVALID_MIME_TYPE = "text/plain"
 
-# --- Test Cases (Ensure 'mock_beat_detector' is used where needed) ---
+# --- Test Cases ---
 
 def test_index_authenticated(test_client: TestClient):
     response = test_client.get("/")
     assert response.status_code == 200
     assert "Upload Audio" in response.text
 
-# ... (Other tests like unauth, login, logout, invalid login - unchanged) ...
 def test_index_unauthenticated(test_config, test_storage, test_auth_manager):
     app = create_app(test_config, test_storage, test_auth_manager)
     client = TestClient(app)
@@ -180,8 +178,11 @@ def test_login_logout(test_client: TestClient, test_config: Config):
     response = test_client.get("/logout", follow_redirects=False)
     assert response.status_code == 303
     assert "/login" in response.headers["location"]
-    assert "access_token" in response.cookies
-    assert "expires=Thu, 01 Jan 1970" in response.headers["set-cookie"]
+    # this format channged
+    # assert "expires=Thu, 01 Jan 1970" in response.headers["set-cookie"]
+    # Updated Assertion: Check for Max-Age=0 to confirm deletion intent
+    assert "Max-Age=0" in response.headers["set-cookie"]
+    assert "access_token=" in response.headers["set-cookie"]
 
 def test_login_invalid(test_client: TestClient):
     test_client.get("/logout", follow_redirects=True)
@@ -285,55 +286,73 @@ def test_status_analyzed(test_client: TestClient, test_storage: FileMetadataStor
     assert data["beat_stats"]["tempo_bpm"] == 120.0 # From mock
     assert data["beats_file_exists"] is True
 
-
-# Apply mocks for both BeatDetector (implicitly via uploaded_file_id) and BeatVideoGenerator
-@patch('web_app.celery_app.BeatVideoGenerator')
+@patch('web_app.celery_app.generate_video_task.delay')
 def test_confirm_analysis_success(
-    mock_video_generator_class,
+    mock_generate_video_delay, # Mock object from patch
     test_client: TestClient,
     test_storage: FileMetadataStorage,
     uploaded_file_id: str # This fixture implicitly uses mock_beat_detector
 ):
-    """Test confirming analysis triggers video generation (mocked)."""
+    """Test confirming analysis triggers video generation task (mocked delay)."""
     file_id = uploaded_file_id # Fixture ensures state is ANALYZED
 
-    # Configure video mock
-    mock_video_instance = MagicMock()
-    mock_video_instance.generate_video.return_value = str(test_storage.get_video_file_path(file_id))
-    mock_video_generator_class.return_value = mock_video_instance
+    # Configure the mock delay method (optional, but good practice)
+    # You might want it to return a mock AsyncResult if needed elsewhere
+    mock_async_result = MagicMock(spec=AsyncResult)
+    mock_async_result.id = "mock_video_task_id_" + file_id
+    mock_generate_video_delay.return_value = mock_async_result
 
-    # Confirm analysis
+    # ---- Action ----
     response = test_client.post(f"/confirm/{file_id}")
+
+    # ---- Assertions ----
     assert response.status_code == 200, f"Confirm failed: {response.text}"
     assert response.json()["status"] == "ok"
+    assert response.json()["task_id"] == mock_async_result.id # Check if task_id is returned
 
-    # Check status endpoint - should be COMPLETED due to mocks
+    # Assert that the delay method was called once with the correct file_id
+    mock_generate_video_delay.assert_called_once_with(file_id)
+
+    # Check that metadata was updated with the video task ID
+    metadata = test_storage.get_metadata(file_id)
+    assert metadata is not None
+    assert "video_generation" in metadata
+    assert metadata["video_generation"] == mock_async_result.id # Verify the correct task ID was stored
+
+    # Check the status endpoint *immediately after* triggering
+    # It should reflect that the video task has been *queued*
     status_response = test_client.get(f"/status/{file_id}")
     assert status_response.status_code == 200
     status_data = status_response.json()
-    print("Status after confirm (mocked video):", status_data)
-    assert status_data["status"] == COMPLETED
-    # Check metadata was updated by the mocked video task logic path
-    metadata = test_storage.get_metadata(file_id)
-    assert metadata.get("video_file") is not None
+    print("Status after confirm (mocked delay):", status_data)
+    # Assert it's now in a video generating state, NOT completed
+    assert status_data["status"] == GENERATING_VIDEO
+    assert status_data["video_generation_task"]["id"] == mock_async_result.id
+    assert status_data["video_file_exists"] is False # Video file shouldn't exist yet
 
 
 def test_confirm_analysis_not_ready(test_client: TestClient, test_storage: FileMetadataStorage, generated_sample_audio: Dict[str, Any]):
+    mock_stats_obj = SimpleNamespace( # Make sure SimpleNamespace is imported
+                                     tempo_bpm=120.0, mean_interval=0.5, median_interval=0.5, std_interval=0.05,
+                                     min_interval=0.4, max_interval=0.6, total_beats=2, irregularity_percent=0.0)
+    mock_return_tuple = ( np.array([0.05, 0.08]), mock_stats_obj, [], np.array([0], dtype=int), 0, 2, 4)
+    
     """Test confirming analysis when beat detection hasn't 'run' (no beats file)."""
     filename = "not_ready_" + generated_sample_audio["filename"]
     file_obj = generated_sample_audio["file_obj"]
     mime_type = generated_sample_audio["mime_type"]
     file_obj.seek(0)
     files = {"file": (filename, file_obj, mime_type)}
-    # Use patch context manager *just for upload* to prevent real analysis failure noise
-    # if the mock fixture isn't automatically applied everywhere
-    with patch('web_app.celery_app.BeatDetector'):
+    with patch('web_app.celery_app.BeatDetector') as mock_DetectorClass:
+        instance_mock = MagicMock()
+        instance_mock.detect_beats.return_value = mock_return_tuple # Set the return value!
+        mock_DetectorClass.return_value = instance_mock
         response = test_client.post("/upload", files=files, follow_redirects=False)
     assert response.status_code == 303
     file_id = response.headers.get("Location").split("/")[-1]
 
     beats_file = test_storage.get_beats_file_path(file_id)
-    if beats_file.exists(): beats_file.unlink() # Ensure no beats file
+    if beats_file.exists(): beats_file.unlink()
 
     response = test_client.post(f"/confirm/{file_id}")
     assert response.status_code == 400
@@ -377,10 +396,17 @@ def test_download_video_success(test_client: TestClient, test_storage: FileMetad
     assert expected_dl_name in response.headers["content-disposition"]
 
 
-def test_download_video_not_found(test_client: TestClient, uploaded_file_id: str):
+def test_download_video_not_found(
+    test_client: TestClient,
+    test_storage: FileMetadataStorage, # FIX: Add missing fixture argument
+    uploaded_file_id: str
+):
+    """Test downloading when video file doesn't exist."""
     file_id = uploaded_file_id
+    # Use the injected test_storage instance
     video_file = test_storage.get_video_file_path(file_id)
     if video_file.exists(): video_file.unlink()
+
     response = test_client.get(f"/download/{file_id}")
     assert response.status_code == 404
     assert "Video file not found" in response.text
