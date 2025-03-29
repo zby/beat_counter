@@ -21,20 +21,44 @@ POLLING LOGIC:
 // Global state
 let currentFileId = null;
 let statusCheckInterval = null;
-let debugMode = true;
+// Set debugMode to false by default, can be overridden in browser console if needed
+let debugMode = document.getElementById('debug-panel') ? true : false;
 let currentTaskId = null;  // Track the currently active task ID
 let currentTaskType = null;  // Track the task type (beat_detection or video_generation)
 
+// --- Helper function to safely add/remove 'hidden' class ---
+const setVisibility = (element, shouldBeVisible) => {
+    if (element) {
+        if (shouldBeVisible) {
+            element.classList.remove('hidden');
+        } else {
+            element.classList.add('hidden');
+        }
+    } else {
+        // console.warn("Attempted to set visibility for a non-existent element.");
+    }
+};
+
+
 // Initialize the application when the DOM is fully loaded
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('Initializing Beat Detection App');
-    
-    // Check for initialFileData
+    console.log('Initializing Beat Detection App File View');
+
+    // Check for initialFileData passed from the template
     if (window.initialFileData && window.initialFileData.fileId) {
         console.log('Using window.initialFileData:', window.initialFileData);
         initWithFileData(window.initialFileData);
     } else {
         console.error('No initialFileData available. Cannot initialize application.');
+        // Optionally display an error message to the user on the page
+        const mainContent = document.querySelector('main');
+        if(mainContent) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message card';
+            errorDiv.textContent = 'Error initializing page: File data missing.';
+            mainContent.innerHTML = ''; // Clear existing content
+            mainContent.appendChild(errorDiv);
+        }
     }
 });
 
@@ -44,21 +68,27 @@ function initWithFileData(fileData) {
     const fileId = fileData.fileId;
     if (!fileId || typeof fileId !== 'string') {
         console.error('Invalid file ID format:', fileId);
+        // Display error on page?
         return;
     }
-    
+
     // Set current file ID for use in API calls
     currentFileId = fileId;
-    
+
     // Initialize UI based on current status
+    // Pass the full data object which now contains flattened results
     handleStatus(fileData);
-    
-    // Set up event listeners
+
+    // Set up event listeners for buttons etc.
     setupEventListeners();
-    
-    // Set up debug panel if enabled
-    if (debugMode) {
+
+    // Set up debug panel if enabled and element exists
+    if (debugMode && document.getElementById('debug-panel')) {
         setupDebugPanel();
+    } else {
+        // Ensure debug panel is hidden if not enabled or element missing
+        const debugPanel = document.getElementById('debug-panel');
+        if (debugPanel) debugPanel.style.display = 'none';
     }
 }
 
@@ -68,449 +98,634 @@ function setupEventListeners() {
     const confirmButton = document.getElementById('confirm-button');
     if (confirmButton) {
         confirmButton.addEventListener('click', function() {
-            if (!currentFileId) return;
-            
-            // Disable the button
+            if (!currentFileId) {
+                 console.error("Cannot confirm analysis: fileId is missing.");
+                 return;
+            }
+
+            console.log(`Confirming analysis for file: ${currentFileId}`);
+            // Disable the button immediately to prevent double clicks
             confirmButton.disabled = true;
-            
+            confirmButton.textContent = 'Generating...'; // Provide visual feedback
+
             // Send request to confirm analysis
             fetch(`/confirm/${currentFileId}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            })
-            .then(response => {
-                if (response.redirected) {
-                    window.location.href = response.url;
-                } else if (response.ok) {
-                    window.location.reload();
-                } else {
-                    return response.json().then(data => {
-                        throw new Error(data.detail || 'Failed to confirm analysis');
-                    });
+                headers: {
+                     'Content-Type': 'application/json',
+                     'X-Requested-With': 'XMLHttpRequest' // Indicate AJAX
                 }
             })
+            .then(response => {
+                // Check for non-OK HTTP status codes first
+                if (!response.ok) {
+                    // Attempt to parse error JSON, otherwise use status text
+                    return response.json().catch(() => {
+                         // If JSON parsing fails, create a generic error
+                         throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+                    }).then(errorData => {
+                         // Throw an error with the detail message from backend
+                         throw new Error(errorData.detail || `HTTP error ${response.status}`);
+                    });
+                }
+                // If response is OK (200), parse JSON
+                return response.json();
+            })
+            .then(data => {
+                 console.log('Confirmation successful:', data);
+                 // Instead of reloading, update UI and start polling for the new task
+                 // Assuming the response contains the new task ID
+                 if (data.task_id) {
+                     // Manually update the state to GENERATING_VIDEO
+                     const generatingStatusData = {
+                         ...window.initialFileData, // Keep existing data
+                         status: 'GENERATING_VIDEO', // Update status
+                         videoGenerationTaskId: data.task_id // Add new task ID
+                     };
+                     // Update global data (optional, but good practice)
+                     window.initialFileData = generatingStatusData;
+                     // Update the UI to show video progress
+                     handleStatus(generatingStatusData);
+                 } else {
+                     // Fallback to reload if task_id is missing, though it shouldn't be
+                     console.warn("Confirmation response missing task_id, reloading page.");
+                     window.location.reload();
+                 }
+            })
             .catch(error => {
-                console.error('Error:', error);
-                alert('Error: ' + error.message);
+                console.error('Error confirming analysis:', error);
+                alert('Error starting video generation: ' + error.message);
+                // Re-enable the button on error
                 confirmButton.disabled = false;
+                confirmButton.textContent = 'Generate Video';
             });
         });
     }
-    
-    // Cancel button
+
+    // Cancel button (now acts as "Upload New File" or similar)
     const cancelButton = document.getElementById('cancel-button');
     if (cancelButton) {
         cancelButton.addEventListener('click', function() {
+            // Redirect to the home page (upload form)
             window.location.href = '/';
         });
     }
-    
-    // Restart button
+
+    // Restart button (in completed section)
     const restartButton = document.getElementById('restart-button');
     if (restartButton) {
         restartButton.addEventListener('click', function() {
-            window.location.href = currentFileId ? 
-                `/?restart=${currentFileId}` : '/';
+            // Redirect to the home page (upload form)
+            window.location.href = '/';
         });
     }
 }
 
-// Handle different file statuses
+// Handle different file statuses to control UI visibility
 function handleStatus(statusData) {
-    if (!statusData) {
-        console.error('No status data provided');
+    if (!statusData || !statusData.status) {
+        console.error('No status data or status string provided to handleStatus');
         return;
     }
-    
+
     const status = statusData.status;
-    console.log('Processing status:', status);
-    
-    // Get DOM elements
+    console.log('Handling status:', status);
+    // Update debug panel if enabled
+    if (debugMode && window.updateDebugPanel) {
+         window.updateDebugPanel(); // Update with latest data potentially modified
+    }
+
+
+    // Get references to all relevant DOM elements
     const analysisSection = document.getElementById('analysis-section');
     const analysisProgress = document.getElementById('analysis-progress');
     const analysisResults = document.getElementById('analysis-results');
-    const analysisButtons = document.getElementById('analysis-buttons');
+    const analysisButtons = document.getElementById('analysis-buttons'); // Contains confirm/cancel
     const videoSection = document.getElementById('video-section');
     const videoProgress = document.getElementById('video-progress');
-    const videoResults = document.getElementById('video-results');
-    
-    // Process based on status
+    const videoResults = document.getElementById('video-results'); // Contains video player and download/restart buttons
+    const analysisErrorMsgContainer = document.getElementById('analysis-error-message'); // Dedicated container
+    const videoErrorMsgContainer = document.getElementById('video-error-message');       // Dedicated container
+
+    // --- Clear previous error messages ---
+    if (analysisErrorMsgContainer) analysisErrorMsgContainer.innerHTML = '';
+    if (videoErrorMsgContainer) videoErrorMsgContainer.innerHTML = '';
+    setVisibility(analysisErrorMsgContainer, false);
+    setVisibility(videoErrorMsgContainer, false);
+
+
+    // --- Default visibility (assume nothing is shown initially) ---
+    // Analysis Section
+    setVisibility(analysisSection, true); // Always show the analysis card wrapper
+    setVisibility(analysisProgress, false);
+    setVisibility(analysisResults, false);
+    setVisibility(analysisButtons, false);
+    // Video Section
+    setVisibility(videoSection, false); // Hide video card wrapper by default
+    setVisibility(videoProgress, false);
+    setVisibility(videoResults, false);
+
+    // --- Process based on status ---
     switch (status) {
         case 'ANALYZING':
-            console.log('Showing analyzing UI');
-            // Show analysis progress
-            if (analysisSection) analysisSection.classList.remove('hidden');
-            if (analysisProgress) analysisProgress.classList.remove('hidden');
-            if (analysisResults) analysisResults.classList.add('hidden');
-            if (analysisButtons) analysisButtons.classList.add('hidden');
-            
-            // Hide video section
-            if (videoSection) videoSection.classList.add('hidden');
-            
-            // Set the beat detection task ID for polling
+            console.log('UI State: ANALYZING');
+            setVisibility(analysisProgress, true); // Show analysis progress bar
+            setVisibility(analysisResults, false);
+            setVisibility(analysisButtons, false);
+            setVisibility(videoSection, false); // Hide entire video section
+
+            // Start polling for the beat detection task
             if (statusData.beatDetectionTaskId) {
                 currentTaskId = statusData.beatDetectionTaskId;
                 currentTaskType = 'beat_detection';
-                // Start polling
                 startStatusPolling();
+            } else {
+                 console.warn("ANALYZING state but no beatDetectionTaskId found.");
+                 stopPolling(); // Should not poll without a task ID
             }
             break;
-            
+
         case 'ANALYZED':
-            console.log('Showing analyzed UI');
-            // Show analysis results and confirm button
-            if (analysisSection) analysisSection.classList.remove('hidden');
-            if (analysisProgress) analysisProgress.classList.add('hidden');
-            if (analysisResults) analysisResults.classList.remove('hidden');
-            if (analysisButtons) analysisButtons.classList.remove('hidden');
-            
-            // Hide video section
-            if (videoSection) videoSection.classList.add('hidden');
-            
-            // Display results using the flattened data structure
-            displayAnalysisResults(statusData);
-            
-            // Since analysis is complete, clear the task ID and stop polling
+            console.log('UI State: ANALYZED');
+            setVisibility(analysisProgress, false); // Hide progress
+            setVisibility(analysisResults, true);   // Show results grid
+            setVisibility(analysisButtons, true);    // Show confirm/cancel buttons
+            setVisibility(videoSection, false);      // Hide entire video section
+
+            displayAnalysisResults(statusData); // Populate results grid
+
+            // Stop polling as analysis is done
+            stopPolling();
             currentTaskId = null;
             currentTaskType = null;
-            stopPolling();
             break;
-            
+
         case 'ANALYZING_FAILURE':
-            // Show error for failed beat analysis
-            const analysisErrorMessage = document.createElement('div');
-            analysisErrorMessage.className = 'error-message';
-            analysisErrorMessage.textContent = 'Error: Beat analysis failed.';
-            if (analysisResults) analysisResults.prepend(analysisErrorMessage);
-            
-            // Clear task ID and stop polling
+            console.log('UI State: ANALYZING_FAILURE');
+            setVisibility(analysisProgress, false); // Hide progress
+            setVisibility(analysisResults, true);  // Show results section (to contain error)
+            setVisibility(analysisButtons, false); // Hide confirm/cancel buttons
+
+            // Display specific error message in the analysis section
+            if (analysisErrorMsgContainer) {
+                 analysisErrorMsgContainer.textContent = statusData.beatDetectionTask?.error
+                      ? `Error during beat analysis: ${statusData.beatDetectionTask.error}`
+                      : 'Error: Beat analysis failed.';
+                 setVisibility(analysisErrorMsgContainer, true);
+            } else {
+                 // Fallback if dedicated container doesn't exist
+                 displayGenericError(analysisResults, 'Error: Beat analysis failed.');
+            }
+
+            setVisibility(videoSection, false); // Hide entire video section
+
+            // Stop polling as task has failed
+            stopPolling();
             currentTaskId = null;
             currentTaskType = null;
-            stopPolling();
             break;
-            
+
         case 'GENERATING_VIDEO':
-            console.log('Showing video generation progress UI');
-            // Show analysis results and video progress
-            if (analysisSection) {
-                analysisSection.classList.remove('hidden');
-                analysisSection.classList.add('with-video');
-            }
-            if (analysisProgress) analysisProgress.classList.add('hidden');
-            if (analysisResults) analysisResults.classList.remove('hidden');
-            if (analysisButtons) analysisButtons.classList.add('hidden');
-            
-            // Show video section with progress
-            if (videoSection) videoSection.classList.remove('hidden');
-            if (videoProgress) videoProgress.classList.remove('hidden');
-            if (videoResults) videoResults.classList.add('hidden');
-            
-            // Display analysis results
-            displayAnalysisResults(statusData);
-            
-            // Set the video generation task ID for polling
+            console.log('UI State: GENERATING_VIDEO');
+            setVisibility(analysisProgress, false);  // Hide analysis progress
+            setVisibility(analysisResults, true);   // Show analysis results (was successful)
+            setVisibility(analysisButtons, false);   // Hide confirm/cancel buttons
+            setVisibility(videoSection, true);       // Show video section wrapper
+            setVisibility(videoProgress, true);    // Show video progress bar
+            setVisibility(videoResults, false);      // Hide final video results/buttons
+
+            displayAnalysisResults(statusData); // Populate results grid
+
+            // Start polling for the video generation task
             if (statusData.videoGenerationTaskId) {
                 currentTaskId = statusData.videoGenerationTaskId;
                 currentTaskType = 'video_generation';
-                // Start polling
                 startStatusPolling();
+            } else {
+                 console.warn("GENERATING_VIDEO state but no videoGenerationTaskId found.");
+                 stopPolling(); // Should not poll without a task ID
             }
             break;
-            
+
         case 'COMPLETED':
-            console.log('Showing completed UI with video');
-            // Show analysis results and video
-            if (analysisSection) {
-                analysisSection.classList.remove('hidden');
-                analysisSection.classList.add('with-video');
-            }
-            if (analysisProgress) analysisProgress.classList.add('hidden');
-            if (analysisResults) analysisResults.classList.remove('hidden');
-            if (analysisButtons) analysisButtons.classList.add('hidden');
-            
-            // Show video section
-            if (videoSection) videoSection.classList.remove('hidden');
-            if (videoProgress) videoProgress.classList.add('hidden');
-            if (videoResults) videoResults.classList.remove('hidden');
-            
-            // Display results
-            displayAnalysisResults(statusData);
-            
-            // Display video
-            displayVideo();
-            
-            // Clear task ID and stop polling
+            console.log('UI State: COMPLETED');
+            setVisibility(analysisProgress, false);  // Hide analysis progress
+            setVisibility(analysisResults, true);   // Show analysis results
+            setVisibility(analysisButtons, false);   // Hide confirm/cancel buttons
+            setVisibility(videoSection, true);       // Show video section wrapper
+            setVisibility(videoProgress, false);     // Hide video progress bar
+            setVisibility(videoResults, true);       // Show final video results/buttons
+
+            displayAnalysisResults(statusData); // Populate results grid
+            displayVideo();                     // Load and show the video
+
+            // Stop polling as process is complete
+            stopPolling();
             currentTaskId = null;
             currentTaskType = null;
-            stopPolling();
             break;
-            
+
         case 'VIDEO_ERROR':
-            // Show error for failed video generation
-            const videoErrorMessage = document.createElement('div');
-            videoErrorMessage.className = 'error-message';
-            videoErrorMessage.textContent = 'Error: Video generation failed.';
-            if (videoResults) videoResults.prepend(videoErrorMessage);
-            
-            // Clear task ID and stop polling
+            console.log('UI State: VIDEO_ERROR');
+            // --- FIX START ---
+            setVisibility(analysisProgress, false); // Hide analysis progress
+            setVisibility(analysisResults, true);  // Show analysis results (was successful)
+            setVisibility(analysisButtons, false);  // Hide confirm/cancel buttons
+
+            setVisibility(videoSection, true);      // Show video section wrapper
+            setVisibility(videoProgress, false);    // Hide video progress bar
+            setVisibility(videoResults, true);     // Show video results section (to contain error message & potentially retry/cancel options)
+
+            displayAnalysisResults(statusData); // Show the successful beat analysis results
+
+            // Display specific error message in the video section
+             if (videoErrorMsgContainer) {
+                 videoErrorMsgContainer.textContent = statusData.videoGenerationTask?.error
+                     ? `Error during video generation: ${statusData.videoGenerationTask.error}`
+                     : 'Error: Video generation failed.';
+                 setVisibility(videoErrorMsgContainer, true);
+
+                 // Hide the video player element itself since there's no video
+                 const videoPlayer = document.getElementById('result-video');
+                 setVisibility(videoPlayer, false);
+                 // Consider adjusting buttons in videoResults if needed (e.g., hide download, show retry?)
+                 const downloadButton = videoResults.querySelector('a.primary-button');
+                 setVisibility(downloadButton, false); // Hide download button on error
+
+
+            } else {
+                 // Fallback if dedicated container doesn't exist
+                 displayGenericError(videoResults, 'Error: Video generation failed.');
+            }
+            // --- FIX END ---
+
+            // Stop polling as task has failed
+            stopPolling();
             currentTaskId = null;
             currentTaskType = null;
-            stopPolling();
             break;
-            
+
         case 'ERROR':
-            console.error('Processing error state:', status);
-            // Show error message
-            alert('An error occurred during processing. Please try again or contact support.');
-            
-            // Clear task ID and stop polling
+        default: // Handle unexpected or generic ERROR status
+            console.error('UI State: ERROR or Unknown - ', status);
+            // Show a generic error message, potentially hide everything else
+            setVisibility(analysisProgress, false);
+            setVisibility(analysisResults, true); // Show analysis section to contain error
+            setVisibility(analysisButtons, false);
+            setVisibility(videoSection, false); // Hide video section
+
+            displayGenericError(analysisResults, 'An unexpected error occurred during processing.');
+
+            // Stop polling
+            stopPolling();
             currentTaskId = null;
             currentTaskType = null;
-            stopPolling();
             break;
-            
-        default:
-            console.warn('Unexpected status:', status);
     }
 }
 
-// Display analysis results with flattened data structure
+// Helper to display a generic error message within a container
+function displayGenericError(containerElement, message) {
+    if (containerElement) {
+        // Clear previous content maybe? Or just prepend error.
+        // containerElement.innerHTML = ''; // Clear container
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message'; // Use existing CSS class
+        errorDiv.textContent = message;
+        // Prepend so it appears at the top of the section
+        containerElement.prepend(errorDiv);
+        setVisibility(containerElement, true); // Make sure container is visible
+    }
+}
+
+
+// Display analysis results using flattened data structure
 function displayAnalysisResults(data) {
-    // Update result display elements
-    const resultBpm = document.getElementById('result-bpm');
-    const resultTotalBeats = document.getElementById('result-total-beats');
-    const resultDuration = document.getElementById('result-duration');
-    const resultMeter = document.getElementById('result-meter');
-    
-    if (resultBpm) {
-        resultBpm.textContent = data.bpm ? `${Number(data.bpm).toFixed(1)} BPM` : 'N/A';
-    }
-    
-    if (resultTotalBeats) {
-        resultTotalBeats.textContent = data.totalBeats || 'N/A';
-    }
-    
-    if (resultDuration) {
-        resultDuration.textContent = data.duration ? `${Number(data.duration).toFixed(1)}s` : 'N/A';
-    }
-    
-    if (resultMeter) {
-        resultMeter.textContent = data.detectedMeter || 'N/A';
-    }
+    // Update result display elements only if they exist
+    const setText = (id, value, suffix = '', defaultValue = 'N/A') => {
+        const element = document.getElementById(id);
+        if (element) {
+            // Check for null/undefined/0 before formatting
+            const displayValue = (value !== null && value !== undefined && value !== 0)
+                               ? (typeof value === 'number' ? value.toFixed(1) : value) + suffix
+                               : defaultValue;
+            element.textContent = displayValue;
+        }
+    };
+
+    setText('result-bpm', data.bpm, ' BPM');
+    setText('result-total-beats', data.totalBeats);
+    setText('result-duration', data.duration, 's');
+    setText('result-meter', data.detectedMeter); // Assuming meter is not a number needing formatting
 }
 
-// Display video - simplified as we just need the file ID
+
+// Display video - load source and update links
 function displayVideo() {
-    console.log('displayVideo called');
-    
-    const resultVideo = document.getElementById('result-video');
-    if (!resultVideo) {
-        console.error('Video element not found');
+    console.log('displayVideo called for file:', currentFileId);
+    if (!currentFileId) {
+        console.error("Cannot display video: currentFileId is not set.");
         return;
     }
-    
-    console.log('Setting video source to:', `/download/${currentFileId}`);
-    
-    // Set the video source
-    resultVideo.src = `/download/${currentFileId}`;
-    
-    // Add event listeners to debug video loading
-    resultVideo.addEventListener('loadstart', () => console.log('Video loadstart event fired'));
-    resultVideo.addEventListener('loadeddata', () => console.log('Video loadeddata event fired'));
-    resultVideo.addEventListener('canplay', () => console.log('Video canplay event fired'));
-    resultVideo.addEventListener('error', (e) => console.error('Video error event:', e.target.error));
-    
-    // Force the video to load
-    resultVideo.load();
-    console.log('Video load() called');
-    
-    // Try to play the video automatically
-    resultVideo.play().then(() => {
-        console.log('Video playback started');
-    }).catch(err => {
-        console.warn('Auto-play failed:', err);
-    });
-    
+
+    const resultVideo = document.getElementById('result-video');
+    if (!resultVideo) {
+        console.error('Video player element (#result-video) not found');
+        return;
+    }
+    setVisibility(resultVideo, true); // Ensure player is visible
+
+    const videoSourceUrl = `/download/${currentFileId}`;
+    console.log('Setting video source to:', videoSourceUrl);
+
+    // Set the video source only if it's different or not set
+    if (resultVideo.currentSrc !== videoSourceUrl) {
+        resultVideo.src = videoSourceUrl;
+        resultVideo.load(); // Explicitly load the new source
+        console.log('Video source set and load() called');
+    } else {
+         console.log('Video source already set.');
+         // Ensure it tries to play if already loaded
+         resultVideo.play().catch(err => console.warn('Video play failed (maybe requires user interaction):', err));
+    }
+
+
+    // Add event listeners for debugging (consider removing in production)
+    resultVideo.removeEventListener('loadstart', handleVideoEvent); // Remove previous listeners first
+    resultVideo.removeEventListener('loadeddata', handleVideoEvent);
+    resultVideo.removeEventListener('canplay', handleVideoEvent);
+    resultVideo.removeEventListener('error', handleVideoErrorEvent);
+    resultVideo.addEventListener('loadstart', handleVideoEvent);
+    resultVideo.addEventListener('loadeddata', handleVideoEvent);
+    resultVideo.addEventListener('canplay', handleVideoEvent);
+    resultVideo.addEventListener('error', handleVideoErrorEvent);
+
+
     // Update download link
-    const downloadLink = document.querySelector('a[download]');
+    const downloadLink = document.querySelector('#video-results a.primary-button[download]');
     if (downloadLink) {
-        downloadLink.href = `/download/${currentFileId}`;
+        downloadLink.href = videoSourceUrl;
+        setVisibility(downloadLink, true); // Ensure download button is visible
         console.log('Download link updated');
     }
-    
-    // Make sure video container is visible
-    const videoResults = document.getElementById('video-results');
-    if (videoResults) {
-        videoResults.classList.remove('hidden');
-        console.log('Video results container made visible');
-    }
+
+    // Make sure video container is visible (handled in handleStatus now)
+    // const videoResultsContainer = document.getElementById('video-results');
+    // setVisibility(videoResultsContainer, true);
 }
+
+// --- Video Event Handlers (for debugging) ---
+function handleVideoEvent(e) {
+    console.log(`Video event: ${e.type}`);
+}
+function handleVideoErrorEvent(e) {
+    const videoElement = e.target;
+    let errorMsg = 'Unknown video error';
+    if (videoElement.error) {
+        switch (videoElement.error.code) {
+            case videoElement.error.MEDIA_ERR_ABORTED:
+                errorMsg = 'Video playback aborted.';
+                break;
+            case videoElement.error.MEDIA_ERR_NETWORK:
+                errorMsg = 'Video download failed due network error.';
+                break;
+            case videoElement.error.MEDIA_ERR_DECODE:
+                errorMsg = 'Video playback failed due to decoding error.';
+                break;
+            case videoElement.error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                errorMsg = 'Video source not supported or not found.';
+                break;
+            default:
+                errorMsg = 'An unknown error occurred during video playback.';
+                break;
+        }
+    }
+    console.error(`Video error event: ${e.type} - Code: ${videoElement.error?.code} - Message: ${errorMsg}`);
+    // Optionally display this error to the user more prominently
+    const videoErrorContainer = document.getElementById('video-error-message');
+    if(videoErrorContainer) {
+         videoErrorContainer.textContent = `Video Error: ${errorMsg}`;
+         setVisibility(videoErrorContainer, true);
+    }
+
+}
+
+
+// --- Polling Logic ---
 
 // Stop polling for status updates
 function stopPolling() {
     if (statusCheckInterval) {
         clearInterval(statusCheckInterval);
         statusCheckInterval = null;
-        console.log('Polling stopped');
+        console.log('Polling stopped.');
     }
 }
 
 // Start polling for status updates
 function startStatusPolling() {
-    // Clear any existing interval
+    // Clear any existing interval first
     stopPolling();
-    
-    // Set up new polling interval (every 2 seconds)
-    statusCheckInterval = setInterval(checkStatus, 2000);
-    
-    // Do an immediate check
-    checkStatus();
+
+    if (!currentTaskId) {
+        console.warn('startStatusPolling called without a currentTaskId.');
+        return;
+    }
+
+    console.log(`Polling started for task: ${currentTaskId} (Type: ${currentTaskType})`);
+    // Set up new polling interval (e.g., every 3 seconds)
+    statusCheckInterval = setInterval(checkTaskStatus, 3000);
+
+    // Optional: Do an immediate check first? Might cause rapid UI flashes.
+    // checkTaskStatus();
 }
 
-// Check the current status of the file
-function checkStatus() {
+// Check the current status of the active Celery task
+function checkTaskStatus() {
     if (!currentTaskId) {
-        console.log('No task ID available for status check');
+        console.log('No task ID available for status check, stopping polling.');
         stopPolling();
         return;
     }
-    
-    console.log('Checking task status for task:', currentTaskId);
-    
-    // Fetch the current task status
+
+    console.log(`Checking task status for task: ${currentTaskId}`);
+
+    // Fetch the current task status from the dedicated endpoint
     fetch(`/task/${currentTaskId}`)
         .then(response => {
             if (!response.ok) {
+                 // If task not found (404), stop polling gracefully
                 if (response.status === 404) {
-                    console.log('Task not found, stopping polling');
+                    console.warn(`Task ${currentTaskId} not found, stopping polling.`);
                     stopPolling();
+                    // Optionally update UI to an error state?
+                    handleStatus({ ...window.initialFileData, status: 'ERROR' });
+                    return null; // Indicate no data to process
                 }
-                throw new Error('Failed to fetch task status');
+                 // For other errors, throw to be caught below
+                throw new Error(`Failed to fetch task status: ${response.statusText}`);
             }
             return response.json();
         })
-        .then(data => {
-            console.log('Task status:', data);
-            
-            // If task is completed, reload the page
-            if (data.state === 'SUCCESS' || data.state === 'FAILURE' || data.state === 'ERROR') {
-                console.log('Task completed, reloading page');
-                window.location.reload();
-                return;
+        .then(taskData => {
+            if (taskData === null) return; // Stop processing if task wasn't found
+
+            console.log('Received task status:', taskData);
+
+            // Update global data with latest task info (carefully merge)
+            if (currentTaskType === 'beat_detection') {
+                 window.initialFileData.beatDetectionTask = taskData;
+            } else if (currentTaskType === 'video_generation') {
+                 window.initialFileData.videoGenerationTask = taskData;
             }
-            
-            // Update progress bar
-            updateProgressBar(data);
+
+            // Update progress bar based on taskData.progress or taskData.result.progress
+            updateProgressBar(taskData);
+
+
+            // --- Check if task is terminally completed (SUCCESS/FAILURE) ---
+            const terminalStates = ['SUCCESS', 'FAILURE'];
+            if (terminalStates.includes(taskData.state)) {
+                console.log(`Task ${currentTaskId} reached terminal state: ${taskData.state}. Stopping polling and reloading.`);
+                stopPolling();
+                 // Reload the entire page to get the final status from the backend status endpoint
+                 // This simplifies frontend state management significantly
+                 window.location.reload();
+                return; // Stop further processing in this cycle
+            }
+
+            // If task is still running (STARTED/PROGRESS/PENDING), polling continues automatically
+            console.log(`Task ${currentTaskId} still running (State: ${taskData.state}). Polling continues.`);
+
         })
         .catch(error => {
-            console.error('Error checking task status:', error);
+            console.error('Error during task status check:', error);
+            // Consider stopping polling on error, or implement retry logic
+            // stopPolling();
+            // Optionally update UI to show a polling error
         });
 }
 
-// Update progress bar based on task data
+// Update progress bar based on task data (progress info might be in meta/info)
 function updateProgressBar(taskData) {
-    // Determine which progress bar to update
-    const selector = currentTaskType === 'video_generation' ? 
-        '#video-progress' : 
-        '#analysis-progress';
-    
-    const progressContainer = document.querySelector(selector);
-    if (!progressContainer) return;
-    
-    const progressBar = progressContainer.querySelector('.progress-fill');
-    if (!progressBar) return;
-    
-    // Extract progress value
-    let progressValue = 0;
-    let progressStatus = '';
-    
-    // Check task data for progress information
-    if (taskData.progress) {
-        if (typeof taskData.progress === 'object') {
-            progressValue = taskData.progress.percent || 0;
-            progressStatus = taskData.progress.status || '';
-        } else {
-            progressValue = taskData.progress;
-        }
-    } else if (taskData.result && taskData.result.progress) {
-        if (typeof taskData.result.progress === 'object') {
-            progressValue = taskData.result.progress.percent || 0;
-            progressStatus = taskData.result.progress.status || '';
-        } else {
-            progressValue = taskData.result.progress;
-        }
-    }
-    
-    // Update the progress bar
-    progressBar.style.width = `${progressValue}%`;
-    
-    // Update progress text if exists
+    // Determine which progress bar to update based on currentTaskType
+    const progressBarId = currentTaskType === 'video_generation' ? 'video-progress' : 'analysis-progress';
+    const progressContainer = document.getElementById(progressBarId);
+    if (!progressContainer) return; // Exit if the container isn't visible or found
+
+    const progressFill = progressContainer.querySelector('.progress-fill');
     const progressText = progressContainer.querySelector('p');
+    if (!progressFill) return; // Exit if inner elements are missing
+
+    // Extract progress value and status message from taskData.progress (set via update_state meta)
+    let progressPercent = 0;
+    let progressMessage = '';
+
+    if (taskData && taskData.progress && typeof taskData.progress === 'object') {
+        progressPercent = taskData.progress.percent || 0;
+        progressMessage = taskData.progress.status || ''; // Get status message
+    } else if (taskData && taskData.state === 'STARTED') {
+         // Provide a default message if progress details aren't available yet
+         progressPercent = 5; // Small progress indication
+         progressMessage = 'Starting...';
+    } else if (taskData && taskData.state === 'PENDING') {
+         progressPercent = 0;
+         progressMessage = 'Waiting in queue...';
+    }
+
+
+    // Clamp percentage between 0 and 100
+    progressPercent = Math.max(0, Math.min(100, progressPercent));
+
+    // Update the progress bar width
+    progressFill.style.width = `${progressPercent}%`;
+
+    // Update progress text if available
     if (progressText) {
-        if (progressStatus) {
-            // Use the detailed status message from the progress field without percentage
-            progressText.textContent = progressStatus;
+        if (progressMessage) {
+            progressText.textContent = progressMessage; // Display the status message
         } else {
             // Fallback message if no detailed status is available
-            if (currentTaskType === 'video_generation') {
-                progressText.textContent = 'Generating video...';
-            } else {
-                progressText.textContent = 'Analyzing beats...';
-            }
+            progressText.textContent = `<span class="math-inline">\{currentTaskType \=\=\= 'video\_generation' ? 'Generating video' \: 'Analyzing beats'\}\.\.\. \(</span>{progressPercent.toFixed(0)}%)`;
         }
     }
 }
+
+
+// --- Debug Panel ---
 
 // Setup debug panel
 function setupDebugPanel() {
     const debugPanel = document.getElementById('debug-panel');
     if (!debugPanel) return;
-    
+
+    // Basic styling (consider moving to CSS)
     debugPanel.style.display = 'block';
     debugPanel.style.backgroundColor = 'rgba(0,0,0,0.8)';
-    debugPanel.style.color = '#fff';
-    debugPanel.style.padding = '10px';
+    debugPanel.style.color = '#eee';
+    debugPanel.style.padding = '15px';
     debugPanel.style.margin = '20px 0';
-    debugPanel.style.borderRadius = '5px';
+    debugPanel.style.borderRadius = '8px';
     debugPanel.style.fontFamily = 'monospace';
-    debugPanel.style.fontSize = '14px';
-    debugPanel.style.maxHeight = '300px';
+    debugPanel.style.fontSize = '12px';
+    debugPanel.style.lineHeight = '1.4';
+    debugPanel.style.maxHeight = '400px';
     debugPanel.style.overflow = 'auto';
-    
-    updateDebugPanel();
-    
-    // Expose the update function globally so it can be called from elsewhere
-    window.updateDebugPanel = updateDebugPanel;
-}
+    debugPanel.style.whiteSpace = 'pre-wrap'; // Wrap long lines
+    debugPanel.style.wordBreak = 'break-all'; // Break long words/IDs
 
+    // Expose update function globally for console access if needed
+    window.updateDebugPanel = updateDebugPanel;
+    // Initial update
+    updateDebugPanel();
+}
 // Update debug panel with current state information
 function updateDebugPanel() {
     const debugPanel = document.getElementById('debug-panel');
-    if (!debugPanel) return;
-    
-    // Get data from initialFileData
+    // Ensure debugMode is checked and panel exists
+    if (!debugMode || !debugPanel) return;
+
+    // Use the potentially updated global data
     const data = window.initialFileData || {};
-    
-    // Build debug content
-    let debugContent = `
-        <h3>Debug Information</h3>
-        <div><strong>File ID:</strong> ${currentFileId}</div>
-        <div><strong>Status:</strong> ${data.status}</div>
-        <div><strong>Polling:</strong> ${statusCheckInterval ? 'Active' : 'Inactive'}</div>
-        <div><strong>Current Task:</strong> ${currentTaskId || 'None'} (${currentTaskType || 'None'})</div>
-        <div><strong>BEAT_COUNTER_APP_DIR:</strong> ${data.appDir || 'Not Set'}</div>
-        
-        <div><strong>BPM:</strong> ${data.bpm}</div>
-        <div><strong>Total Beats:</strong> ${data.totalBeats}</div>
-        <div><strong>Duration:</strong> ${data.duration}s</div>
-        <div><strong>Meter:</strong> ${data.detectedMeter}</div>
-        
-        <details>
-            <summary style="cursor:pointer">Raw Data</summary>
-            <pre style="max-height:150px;overflow:auto">${JSON.stringify(data, null, 2)}</pre>
-        </details>
+    const beatTask = data.beatDetectionTask || { id: data.beatDetectionTaskId, state: 'N/A' };
+    const videoTask = data.videoGenerationTask || { id: data.videoGenerationTaskId, state: 'N/A' };
+
+
+    // Build debug content using template literals for readability
+    const debugContent = `
+### Debug Information (${new Date().toLocaleTimeString()}) ###
+
+File ID:       ${currentFileId || 'N/A'}
+Overall Status: ${data.status || 'N/A'}
+Polling Active: ${statusCheckInterval ? 'YES' : 'NO'}
+Polling Task:   ${currentTaskId || 'None'} (${currentTaskType || 'N/A'})
+
+--- Config ---
+Duration Limit: ${data.durationLimit || 'N/A'}s
+Original Dur:   ${data.originalDuration?.toFixed(2) || 'N/A'}s
+App Dir:        ${data.appDir || 'N/A'}
+
+--- Analysis ---
+BPM:         ${data.bpm?.toFixed(1) || 'N/A'}
+Total Beats: ${data.totalBeats || 'N/A'}
+Audio Dur:   ${data.duration?.toFixed(2) || 'N/A'}s
+Meter:       ${data.detectedMeter || 'N/A'}
+
+--- Tasks ---
+Beat Task ID:    ${beatTask.id || 'N/A'}
+Beat Task State: ${beatTask.state || 'N/A'}
+Beat Progress:   ${JSON.stringify(beatTask.progress)}
+Beat Error:      ${beatTask.error || 'None'}
+
+Video Task ID:   ${videoTask.id || 'N/A'}
+Video Task State:${videoTask.state || 'N/A'}
+Video Progress:  ${JSON.stringify(videoTask.progress)}
+Video Error:     ${videoTask.error || 'None'}
+
+--- Raw Initial Data ---
+${JSON.stringify(data, null, 2)}
     `;
-    
+
     // Display in debug panel
-    debugPanel.innerHTML = debugContent;
+    debugPanel.textContent = debugContent.trim(); // Use textContent for pre-like formatting
 }
