@@ -15,7 +15,6 @@ import logging
 from celery import Celery, states, Task
 from web_app.config import Config
 from web_app.storage import FileMetadataStorage
-from web_app.context import AppContext
 from web_app.utils.task_utils import (
     IOCapture, create_progress_updater, safe_error, safe_info, safe_print
 )
@@ -36,6 +35,19 @@ except FileNotFoundError as e:
 except Exception as e:
     logger.error(f"Error loading configuration: {e}")
     raise SystemExit(f"Error loading configuration: {e}") from e
+
+
+class AppContext:
+    """Application context for storing shared services and dependencies."""
+    
+    def __init__(self, storage: FileMetadataStorage):
+        """Initialize the application context.
+        
+        Args:
+            storage: The file metadata storage service
+        """
+        self.storage = storage 
+
 
 # Create the Celery app instance
 app = Celery(

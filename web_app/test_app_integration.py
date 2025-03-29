@@ -29,7 +29,7 @@ from celery.result import AsyncResult
 
 from unittest.mock import patch, MagicMock # Ensure MagicMock is imported
 # Import the specific task function to patch its methods
-from web_app.celery_app import generate_video_task
+from web_app.celery_app import AppContext
 
 # Import app creation function and components
 from web_app.app import (
@@ -39,7 +39,6 @@ from web_app.app import (
 from web_app.config import Config, StorageConfig, AppConfig, CeleryConfig, User
 from web_app.storage import FileMetadataStorage # Import the class for type hinting
 from web_app.auth import UserManager
-from web_app.context import AppContext
 
 # --- Test Fixtures ---
 
