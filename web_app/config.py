@@ -80,7 +80,12 @@ class Config:
         
         return cls(
             app=AppConfig(**data['app']),
-            storage=StorageConfig(**data['storage']),
+            storage=StorageConfig(
+                upload_dir=pathlib.Path(data['storage']['upload_dir']),
+                max_upload_size_mb=data['storage']['max_upload_size_mb'],
+                allowed_extensions=data['storage']['allowed_extensions'],
+                max_audio_secs=data['storage']['max_audio_secs']
+            ),
             celery=CeleryConfig(**data['celery']),
             users=[User.from_dict(user) for user in users_data['users']]
         )

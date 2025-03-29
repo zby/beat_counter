@@ -35,6 +35,11 @@ def test_get_config():
             assert isinstance(config["storage"].allowed_extensions, list)
             assert ".mp3" in config["storage"].allowed_extensions
             
+            # check that upload_dir is a Path object
+            assert isinstance(config["storage"].upload_dir, Path)
+            # check that max_audio_secs is an int
+            assert isinstance(config["storage"].max_audio_secs, int)
+            
         finally:
             # Restore original working directory
             os.chdir(original_cwd)
