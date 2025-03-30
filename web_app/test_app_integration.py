@@ -87,18 +87,38 @@ def configure_celery_for_test(test_storage: FileMetadataStorage):
 
 @pytest.fixture()
 def test_client(test_config: Config, test_storage: FileMetadataStorage, test_auth_manager: UserManager) -> Generator[TestClient, None, None]:
-    app = create_app(app_config=test_config, storage_impl=test_storage, auth_manager_impl=test_auth_manager)
-    client = TestClient(app)
-    login_data = {"username": test_config.users[0].username, "password": "password"}
-    response = client.post("/login", data=login_data)
-    assert "access_token" in client.cookies or "access_token" in response.cookies
-    yield client
-    print(f"Cleaning up storage directory: {test_storage.base_upload_dir}")
-    for item in test_storage.base_upload_dir.iterdir():
-        if item.name == "celery.log": continue
-        if item.is_dir(): shutil.rmtree(item)
-        else: item.unlink()
-    print("Storage directory cleaned.")
+    # Patch the global config and app context used by create_app
+    with patch('web_app.app._global_config', test_config), patch.dict('web_app.app._app_context', {
+             "storage": test_storage,
+             "auth_manager": test_auth_manager
+         }, clear=True): # clear=True ensures we start with only our test components
+
+        # Now create_app will use the patched globals/context
+        app = create_app() # Call without arguments
+
+        client = TestClient(app)
+        # Perform login to get the auth cookie for subsequent requests
+        login_data = {"username": test_config.users[0].username, "password": "password"}
+        response = client.post("/login", data=login_data)
+        # Ensure login was successful (check for cookie)
+        assert "access_token" in client.cookies or "access_token" in response.cookies.get("access_token", ""), "Login failed during test setup"
+
+        yield client # Provide the configured client to the test
+
+        # Cleanup after tests finish with this client instance
+        print(f"Cleaning up storage directory: {test_storage.base_upload_dir}")
+        # Careful cleanup: only remove files/dirs created during the test
+        for item in test_storage.base_upload_dir.iterdir():
+            # Optionally skip log files or other persistent items if needed
+            # Example: if item.name == "celery.log": continue
+            try:
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+            except Exception as e:
+                 print(f"Warning: Could not clean up {item}: {e}")
+        print("Storage directory cleaned.")
 
 @pytest.fixture(scope="module")
 def generated_sample_audio() -> Dict[str, Any]:
@@ -160,11 +180,16 @@ def test_index_authenticated(test_client: TestClient):
     assert "Upload Audio" in response.text
 
 def test_index_unauthenticated(test_config, test_storage, test_auth_manager):
-    app = create_app(test_config, test_storage, test_auth_manager)
-    client = TestClient(app)
-    response = client.get("/", follow_redirects=False)
-    assert response.status_code == 303
-    assert "/login" in response.headers["location"]
+    # Patch the necessary globals before calling create_app
+    with patch('web_app.app._global_config', test_config), patch.dict('web_app.app._app_context', {
+             "storage": test_storage,
+             "auth_manager": test_auth_manager
+         }, clear=True):
+        app = create_app() # Call without arguments
+        client = TestClient(app)
+        response = client.get("/", follow_redirects=False)
+        assert response.status_code == 303
+        assert "/login" in response.headers["location"]
 
 def test_login_page(test_client: TestClient):
     test_client.get("/logout", follow_redirects=True)
@@ -236,15 +261,20 @@ def test_upload_invalid_type(test_client: TestClient):
     assert "Unsupported file format" in response.text
 
 def test_upload_unauthenticated(test_config, test_storage, test_auth_manager, generated_sample_audio):
-    app = create_app(test_config, test_storage, test_auth_manager)
-    client = TestClient(app)
-    filename = generated_sample_audio["filename"]
-    file_obj = generated_sample_audio["file_obj"]
-    mime_type = generated_sample_audio["mime_type"]
-    files = {"file": (filename, file_obj, mime_type)}
-    response = client.post("/upload", files=files, follow_redirects=False)
-    assert response.status_code == 303
-    assert "/login" in response.headers["location"]
+    # Patch the necessary globals before calling create_app
+    with patch('web_app.app._global_config', test_config), patch.dict('web_app.app._app_context', {
+             "storage": test_storage,
+             "auth_manager": test_auth_manager
+         }, clear=True):
+        app = create_app() # Call without arguments
+        client = TestClient(app)
+        filename = generated_sample_audio["filename"]
+        file_obj = generated_sample_audio["file_obj"]
+        mime_type = generated_sample_audio["mime_type"]
+        files = {"file": (filename, file_obj, mime_type)}
+        response = client.post("/upload", files=files, follow_redirects=False)
+        assert response.status_code == 303
+        assert "/login" in response.headers["location"]
 
 
 # --- Status and Workflow Tests ---
