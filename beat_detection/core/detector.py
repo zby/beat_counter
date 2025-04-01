@@ -4,44 +4,20 @@ Core beat detection functionality.
 
 import numpy as np
 import warnings
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Dict, Tuple, Optional, Callable
+from typing import List, Dict, Tuple, Optional, Callable, Protocol
 from madmom.features.beats import RNNBeatProcessor, BeatTrackingProcessor
 from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
 from madmom.features.tempo import CombFilterTempoHistogramProcessor
 from beat_detection.utils.constants import SUPPORTED_METERS
-
-
-@dataclass
-class BeatStatistics:
-    """Statistics about detected beats."""
-    mean_interval: float
-    median_interval: float
-    std_interval: float
-    min_interval: float
-    max_interval: float
-    irregularity_percent: float
-    tempo_bpm: float
-    total_beats: int
-    
-    def to_dict(self) -> Dict[str, float]:
-        """Convert to dictionary for easy serialization."""
-        return {
-            'mean_interval': self.mean_interval,
-            'median_interval': self.median_interval,
-            'std_interval': self.std_interval,
-            'min_interval': self.min_interval,
-            'max_interval': self.max_interval,
-            'irregularity_percent': self.irregularity_percent,
-            'tempo_bpm': self.tempo_bpm,
-            'total_beats': self.total_beats
-        }
+from beat_detection.core.beats import Beats, BeatStatistics
 
 
 class BeatDetector:
     """Detect beats and downbeats in audio files."""
     
-    def __init__(self, min_bpm: int = 60, max_bpm: int = 240, fps: int = 100, 
+    def __init__(self, min_bpm: int = 60, max_bpm: int = 240, 
                  tolerance_percent: float = 10.0, min_consistent_beats: int = 8,
                  beats_per_bar: Optional[int] = None,
                  progress_callback: Optional[Callable[[str, float], None]] = None):
@@ -54,8 +30,6 @@ class BeatDetector:
             Minimum beats per minute to detect
         max_bpm : int
             Maximum beats per minute to detect
-        fps : int
-            Frames per second for processing
         tolerance_percent : float
             Percentage tolerance for beat intervals
         min_consistent_beats : int
@@ -66,7 +40,6 @@ class BeatDetector:
         """
         self.min_bpm = min_bpm
         self.max_bpm = max_bpm
-        self.fps = fps
         self.tolerance_percent = tolerance_percent
         self.min_consistent_beats = min_consistent_beats
         self.beats_per_bar = beats_per_bar
@@ -76,128 +49,95 @@ class BeatDetector:
         self.beat_processor = RNNBeatProcessor()
         self.downbeat_processor = RNNDownBeatProcessor()
     
-    def detect_beats(self, audio_file: str, skip_intro: bool = True, skip_ending: bool = True, 
-                  progress_callback: Optional[Callable[[str, float], None]] = None) -> Tuple[np.ndarray, BeatStatistics, List[int], np.ndarray, int, int, int]:
+    def detect_beats(
+        self,
+        audio_file: str,
+        progress_callback: Optional[Callable[[float], None]] = None
+    ) -> Beats:
         """
-        Detect beat timestamps and downbeats in an audio file.
+        Detect beats in an audio file.
         
         Parameters:
         -----------
         audio_file : str
             Path to the input audio file
-        skip_intro : bool
-            Whether to detect and skip intro sections
-        skip_ending : bool
-            Whether to detect and skip ending sections
+        progress_callback : Optional[Callable[[float], None]]
+            Optional callback function for progress updates
             
         Returns:
         --------
-        numpy.ndarray
-            Array of beat timestamps in seconds
-        BeatStatistics
-            Beat analysis statistics
-        list
-            Indices of irregular beats
-        numpy.ndarray
-            Array of downbeat indices (which beats are downbeats)
-        int
-            Index where the intro ends (0 if no intro detected or skip_intro is False)
-        int
-            Index where the ending begins (len(beats) if no ending detected or skip_ending is False)
-        int
-            Detected meter (time signature numerator, typically 3 or 4)
+        Beats
+            Object containing all beat-related information
         """
-        # Use provided callback or instance callback
-        callback = progress_callback or self.progress_callback
-        
+        if progress_callback:
+            progress_callback(0.0)
+            
         # Detect beats
-        if callback:
-            callback("Loading audio file", 0.0)
         beat_activations = self.beat_processor(audio_file)
-        if callback:
-            callback("Detecting beats", 0.1)
+        beats = self.beat_tracker(beat_activations)
         
-        # Create a dedicated TempoHistogramProcessor instance to avoid deprecation warning
-        tempo_histogram_processor = CombFilterTempoHistogramProcessor(
-            min_bpm=self.min_bpm,
-            max_bpm=self.max_bpm,
-            fps=self.fps
+        if progress_callback:
+            progress_callback(0.3)
+            
+        # Analyze beat patterns
+        intervals = np.diff(beats)
+        stats = BeatStatistics(
+            mean_interval=np.mean(intervals),
+            median_interval=np.median(intervals),
+            std_interval=np.std(intervals),
+            min_interval=np.min(intervals),
+            max_interval=np.max(intervals),
+            irregularity_percent=0.0,  # Will be updated after irregularity analysis
+            tempo_bpm=60.0 / np.mean(intervals),
+            total_beats=len(beats)
         )
         
-        beat_tracking = BeatTrackingProcessor(
-            min_bpm=self.min_bpm,
-            max_bpm=self.max_bpm,
-            fps=self.fps,
-            histogram_processor=tempo_histogram_processor
-        )
+        # Store original beats for returning intro/ending indices
+        original_beats = beats.copy()
         
-        original_beats = beat_tracking(beat_activations)
-        if callback:
-            callback("Analyzing beat patterns", 0.3)
-        
-        # Store the original beats for returning intro/ending indices
-        all_beats = np.copy(original_beats)
-        
-        # Analyze the beats to find irregularities
-        stats, irregular_beats = self._analyze_beat_intervals(original_beats)
-        if callback:
-            callback("Analyzing beat intervals", 0.4)
-        
-        # Initialize intro and ending indices
-        intro_end_idx = 0
-        ending_start_idx = len(original_beats)
-        
-        # Detect intro if requested
-        if skip_intro:
-            if callback:
-                callback("Detecting intro section", 0.5)
-            intro_end_idx = self._detect_intro_end(original_beats, stats)
+        if progress_callback:
+            progress_callback(0.5)
             
-            if intro_end_idx > 0:
-                original_beats = original_beats[intro_end_idx:]
-                # Recalculate statistics after skipping intro
-                stats, irregular_beats = self._analyze_beat_intervals(original_beats)
+        # Analyze irregularities
+        irregular_beats = self._analyze_irregularities(beats, intervals)
+        stats.irregularity_percent = len(irregular_beats) / len(beats) * 100
         
-        # Detect ending if requested
-        if skip_ending and len(original_beats) > self.min_consistent_beats:
-            if callback:
-                callback("Detecting ending section", 0.6)
-            ending_idx = self._detect_ending_start(original_beats, stats)
-            
-            if ending_idx < len(original_beats) and ending_idx > 0:
-                # Adjust ending_start_idx to be relative to all_beats
-                ending_start_idx = intro_end_idx + ending_idx
-                
-                # Trim the ending
-                original_beats = original_beats[:ending_idx]
-                # Recalculate statistics after skipping ending
-                stats, irregular_beats = self._analyze_beat_intervals(original_beats)
-        else:
-            # If we didn't skip the ending, ending_start_idx should be relative to all_beats
-            ending_start_idx = intro_end_idx + len(original_beats)
-        
-        # Warn about irregular beats
         if irregular_beats:
-            warnings.warn(f"Found {len(irregular_beats)} irregular beats out of {len(original_beats)-1} intervals")
-        
-        # Detect downbeats
-        if callback:
-            callback("Detecting downbeats", 0.7)
-        downbeats = self._detect_downbeats(audio_file, original_beats, callback=callback)
-        
-        # Detect meter (time signature) based on beat patterns
-        if callback:
-            callback("Detecting time signature", 0.9)
-        detected_meter = self._detect_meter(original_beats, downbeats)
-        
-        # If meter detection failed, raise an exception
-        if detected_meter == -1:
-            raise ValueError("Failed to detect a consistent time signature. The audio may have irregular beats, mixed time signatures, or not enough data.")
-        
-        if callback:
-            callback("Beat detection complete", 1.0)
+            warnings.warn(f"Found {len(irregular_beats)} irregular beats")
             
-        return original_beats, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx, detected_meter
+        if progress_callback:
+            progress_callback(0.7)
+            
+        # Detect intro and ending if requested
+        intro_end_idx = 0
+        ending_start_idx = len(beats)
+        
+        if self.skip_intro:
+            intro_end_idx = self._detect_intro(beats, intervals)
+            beats = beats[intro_end_idx:]
+            
+        if self.skip_ending:
+            ending_start_idx = self._detect_ending(beats, intervals)
+            beats = beats[:ending_start_idx]
+            
+        if progress_callback:
+            progress_callback(0.8)
+            
+        # Detect downbeats and meter
+        downbeats, meter = self._detect_downbeats(audio_file, beats)
+        
+        if progress_callback:
+            progress_callback(1.0)
+            
+        return Beats(
+            timestamps=original_beats,
+            downbeats=downbeats,
+            meter=meter,
+            intro_end_idx=intro_end_idx,
+            ending_start_idx=ending_start_idx,
+            stats=stats,
+            irregular_beats=irregular_beats
+        )
     
     def _detect_meter(self, beats: np.ndarray, downbeats: np.ndarray) -> int:
         """
@@ -276,74 +216,71 @@ class BeatDetector:
         print("Error: No clear time signature detected")
         return -1
     
-    def _detect_downbeats(self, audio_file: str, beats: np.ndarray, callback: Optional[Callable[[str, float], None]] = None) -> np.ndarray:
+    def _detect_downbeats(self, audio_file: str, beats: np.ndarray) -> Tuple[np.ndarray, int]:
         """
-        Detect downbeats in the audio file and align them with detected beats.
+        Detect downbeats in an audio file.
         
         Parameters:
         -----------
         audio_file : str
             Path to the input audio file
-        beats : numpy.ndarray
+        beats : np.ndarray
             Array of beat timestamps
             
         Returns:
         --------
-        numpy.ndarray
-            Array of indices in the beats array that correspond to downbeats
+        Tuple[np.ndarray, int]
+            Tuple containing:
+                - Array of downbeat indices
+                - Detected meter (time signature numerator)
         """
-        # Run the downbeat processor
-        if callback:
-            callback("Processing downbeat activations", 0.75)
+        # Detect downbeats using RNN
         downbeat_activations = self.downbeat_processor(audio_file)
         
-        # Process with DBN downbeat tracker
-        beats_per_bar_param = [self.beats_per_bar] if self.beats_per_bar is not None else SUPPORTED_METERS
-        downbeat_tracker = DBNDownBeatTrackingProcessor(
-            beats_per_bar=beats_per_bar_param, 
-            fps=self.fps
+        # Create a dedicated TempoHistogramProcessor instance to avoid deprecation warning
+        tempo_histogram_processor = CombFilterTempoHistogramProcessor(
+            min_bpm=self.min_bpm,
+            max_bpm=self.max_bpm
         )
         
-        # Get downbeats with their beat positions (1.0 means downbeat)
-        if callback:
-            callback("Tracking downbeats", 0.8)
-        beats_with_positions = downbeat_tracker(downbeat_activations)
+        downbeat_tracking = DBNDownBeatTrackingProcessor(
+            min_bpm=self.min_bpm,
+            max_bpm=self.max_bpm,
+            histogram_processor=tempo_histogram_processor
+        )
         
-        if len(beats_with_positions) == 0:
-            # Fall back to simple method if downbeat detection fails
-            return self._estimate_downbeats(beats)
+        downbeats = downbeat_tracking(downbeat_activations)
         
-        # Extract just the timestamps of the downbeats (where beat position is 1)
-        downbeat_times = beats_with_positions[beats_with_positions[:, 1] == 1][:, 0]
-        
-        # Now we need to find the indices of beats that are closest to downbeats
-        downbeat_indices = []
-        
-        for downbeat_time in downbeat_times:
-            # Find the closest beat to this downbeat
-            idx = np.argmin(np.abs(beats - downbeat_time))
-            if idx not in downbeat_indices:
-                downbeat_indices.append(idx)
-        
-        return np.array(downbeat_indices)
-    
-    def _estimate_downbeats(self, beats: np.ndarray) -> np.ndarray:
-        """
-        Estimate downbeats based on regular intervals when detection fails.
-        
-        Parameters:
-        -----------
-        beats : numpy.ndarray
-            Array of beat timestamps
+        # If downbeat detection failed, fall back to simple estimation
+        if len(downbeats) == 0:
+            # Estimate downbeats based on beat intervals
+            intervals = np.diff(beats)
+            mean_interval = np.mean(intervals)
+            std_interval = np.std(intervals)
             
-        Returns:
-        --------
-        numpy.ndarray
-            Array of indices in the beats array that correspond to estimated downbeats
-        """
-        # Simple fallback: assume the first beat is a downbeat and use beats_per_bar
-        downbeat_indices = np.arange(0, len(beats), self.beats_per_bar)
-        return downbeat_indices
+            # Find potential downbeats by looking for longer intervals
+            potential_downbeats = []
+            for i in range(len(intervals)):
+                if intervals[i] > mean_interval + std_interval:
+                    potential_downbeats.append(i + 1)
+            
+            if potential_downbeats:
+                # Use the most common interval between potential downbeats to estimate meter
+                downbeat_intervals = np.diff(potential_downbeats)
+                meter = int(np.median(downbeat_intervals))
+                
+                # Generate downbeats based on the estimated meter
+                downbeats = np.arange(0, len(beats), meter)
+            else:
+                # If no potential downbeats found, assume 4/4 time
+                meter = 4
+                downbeats = np.arange(0, len(beats), meter)
+        else:
+            # Use the most common interval between detected downbeats to estimate meter
+            downbeat_intervals = np.diff(downbeats)
+            meter = int(np.median(downbeat_intervals))
+            
+        return downbeats, meter
     
     def _analyze_beat_intervals(self, beat_timestamps: np.ndarray) -> Tuple[BeatStatistics, List[int]]:
         """

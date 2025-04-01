@@ -17,10 +17,25 @@ import pathlib
 import argparse
 import numpy as np
 from tqdm import tqdm
+import logging
+from pathlib import Path
+from typing import Optional, List, Tuple
 
-from beat_detection.core.detector import BeatDetector
+from beat_detection.core.detector import BeatDetector, MadmomBeatProcessor
+from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.utils import file_utils, reporting
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
+from beat_detection.utils.file_utils import get_audio_files, ensure_output_dir
+from beat_detection.utils.beat_file import save_beats
+
+
+def setup_logging(verbose: bool = False) -> None:
+    """Set up logging configuration."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
 
 def parse_args():
@@ -81,198 +96,95 @@ def parse_args():
     return parser.parse_args()
 
 
-def process_audio_file(input_file, output_dir=None, detector=None, skip_intro=True, skip_ending=True, verbose=True,
-                    input_base_dir="data/input", output_base_dir="data/output", show_progress=True):
+def process_file(
+    audio_file: str,
+    output_dir: str,
+    detector: BeatDetector,
+    video_generator: Optional[BeatVideoGenerator] = None,
+    verbose: bool = False
+) -> bool:
     """
-    Process a single audio file to detect beats.
+    Process a single audio file.
     
     Parameters:
     -----------
-    input_file : str or pathlib.Path
-        Path to the input audio file
-    output_dir : str or pathlib.Path, optional
-        Directory to save output files
+    audio_file : str
+        Path to input audio file
+    output_dir : str
+        Path to output directory
     detector : BeatDetector
-        Beat detector to use
-    skip_intro : bool
-        Whether to detect and skip intro sections
-    skip_ending : bool
-        Whether to detect and skip ending sections
+        Beat detector instance
+    video_generator : Optional[BeatVideoGenerator]
+        Optional video generator instance
     verbose : bool
-        Whether to print progress and statistics
-    input_base_dir : str
-        Base input directory (default: "data/input")
-    output_base_dir : str
-        Base output directory (default: "data/output")
+        Whether to print verbose output
         
     Returns:
     --------
-    tuple
-        (beat_statistics, irregular_beats)
+    bool
+        True if processing was successful
     """
-    # Ensure paths are Path objects
-    input_path = pathlib.Path(input_file)
-    
-    # Determine output directory
-    if output_dir is not None:
-        output_directory = file_utils.get_output_directory(input_path, input_base_dir=input_base_dir, output_base_dir=output_dir)
-    else:
-        output_directory = file_utils.get_output_directory(input_path, input_base_dir, output_base_dir)
-    
-    # Generate output file paths
-    beats_file = file_utils.get_output_path(input_path, suffix='_beats', ext='.txt')
-    stats_file = file_utils.get_output_path(input_path, suffix='_beat_stats', ext='.txt')
-    
-    # Setup progress bar
-    progress_bar = None
-    progress_callback = None
-    
-    if show_progress:
-        progress_bar = tqdm(total=100, desc="Detecting beats", bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+    try:
+        # Create output directory if it doesn't exist
+        ensure_output_dir(output_dir)
         
-        def update_progress(status, progress):
-            progress_bar.set_description(status)
-            # Convert progress from 0-1 to 0-100 and calculate the difference to update
-            new_progress = int(progress * 100)
-            progress_bar.update(new_progress - progress_bar.n)
+        # Get base filename without extension
+        base_name = Path(audio_file).stem
         
-        progress_callback = update_progress
-    
-    # Detect beats and downbeats
-    beat_timestamps, stats, irregular_beats, downbeats, intro_end_idx, ending_start_idx, detected_meter = detector.detect_beats(
-        str(input_path), skip_intro=skip_intro, skip_ending=skip_ending, progress_callback=progress_callback
-    )
-    
-    # Close progress bar
-    if progress_bar:
-        progress_bar.close()
-    
-    if verbose:
-        reporting.print_beat_timestamps(beat_timestamps, irregular_beats, downbeats)
-        reporting.print_statistics(stats, irregular_beats)
-        print(f"\nDetected {len(downbeats)} downbeats")
-        print(f"Detected meter: {detected_meter}/4 time signature")
-        if intro_end_idx > 0:
-            print(f"Detected intro section: skipped first {intro_end_idx} beats")
-        if ending_start_idx < len(beat_timestamps):
-            print(f"Detected ending section: skipped last {len(beat_timestamps) - ending_start_idx} beats")
-    
-    # Save beat timestamps and statistics
-    reporting.save_beat_timestamps(beat_timestamps, beats_file, downbeats, 
-                                intro_end_idx=intro_end_idx, ending_start_idx=ending_start_idx,
-                                detected_meter=detected_meter)
-    reporting.save_beat_statistics(stats, irregular_beats, stats_file, 
-                                  filename=input_path.name)
-    
-    # Save intervals for debugging
-    if len(beat_timestamps) > 1:
-        intervals = np.diff(beat_timestamps)
-        intervals_file = file_utils.get_output_path(input_path, suffix='_intervals', ext='.txt')
-        with open(intervals_file, 'w') as f:
-            f.write("# Beat intervals (seconds)\n")
-            f.write("# Format: beat_number interval\n")
-            for i, interval in enumerate(intervals):
-                f.write(f"{i+1} {interval:.4f}\n")
+        # Detect beats
+        beats = detector.detect_beats(audio_file)
+        
+        # Save beat data
+        beat_file = os.path.join(output_dir, f"{base_name}.beats")
+        save_beats(beat_file, beats)
         
         if verbose:
-            print(f"Beat intervals saved as: {intervals_file}")
-    
-    if verbose:
-        print(f"\nTotal number of beats detected: {len(beat_timestamps)}")
-        print(f"Beat timestamps saved as: {beats_file}")
-        print(f"Beat statistics saved as: {stats_file}")
-        print("\nNext steps:")
-        print(f"  Create visualization: generate-videos {beats_file}")
-    
-    return stats, irregular_beats
-
-
-def process_directory(directory, output_dir, detector, extensions=None, 
-                     skip_intro=True, skip_ending=True, verbose=True, show_progress=True):
-    """
-    Process all audio files in a directory.
-    
-    Parameters:
-    -----------
-    directory : str or pathlib.Path
-        Directory containing input audio files
-    output_dir : str or pathlib.Path
-        Directory to save output files
-    detector : BeatDetector
-        Beat detector to use
-    extensions : list of str
-        List of file extensions to process
-    skip_intro : bool
-        Whether to detect and skip intro sections
-    verbose : bool
-        Whether to print progress and statistics
-        
-    Returns:
-    --------
-    list
-        List of tuples with filename and statistics for each processed file
-    """
-    # Find audio files
-    audio_files = file_utils.find_audio_files(directory, extensions)
-    
-    if not audio_files:
-        if verbose:
-            print(f"No audio files found in {directory}")
-        return []
-    
-    if verbose:
-        print(f"Found {len(audio_files)} audio files in {directory}")
-    
-    # Process each file
-    results = []
-    
-    for audio_file in audio_files:
-        try:
-            if verbose:
-                print(f"\nProcessing: {audio_file}")
-                print("=" * 80)
+            logging.info(f"Saved beat data to {beat_file}")
             
-            stats, irregular_beats = process_audio_file(
-                audio_file,
-                output_dir=output_dir,
-                detector=detector,
-                skip_intro=skip_intro,
-                skip_ending=skip_ending,
-                verbose=verbose,
-                show_progress=show_progress
-            )
-            results.append((audio_file.name, (stats, irregular_beats)))
-        except Exception as e:
-            print(f"Error processing {audio_file}: {e}")
-            results.append((audio_file.name, None))
-    
-    # Generate summary if multiple files were processed
-    if len(results) > 1:
-        summary_file = pathlib.Path(output_dir) / "batch_summary.txt"
-        reporting.save_batch_summary(results, summary_file)
+        # Generate video if requested
+        if video_generator:
+            video_file = os.path.join(output_dir, f"{base_name}.mp4")
+            video_generator.generate_video(beats, video_file)
+            
+            if verbose:
+                logging.info(f"Generated video at {video_file}")
+                
+        return True
         
-        if verbose:
-            reporting.print_batch_summary(results)
-            print(f"Summary statistics saved to: {summary_file}")
-    
-    return results
+    except Exception as e:
+        logging.error(f"Error processing {audio_file}: {str(e)}")
+        return False
 
 
 def main():
     """Main entry point for the CLI."""
     args = parse_args()
     
-    # Configure detector based on args
-    detector = BeatDetector(
+    # Configure processor and detector based on args
+    processor = MadmomBeatProcessor(
         min_bpm=args.min_bpm,
         max_bpm=args.max_bpm,
-        tolerance_percent=args.tolerance,
-        beats_per_bar=args.beats_per_bar
+        fps=args.fps
     )
     
-    # Determine whether to skip intro and ending
-    skip_intro = not args.no_skip_intro
-    skip_ending = not args.no_skip_ending
+    detector = BeatDetector(
+        beat_processor=processor.process_beats,
+        downbeat_processor=processor.process_downbeats,
+        beat_tracker=processor.track_beats,
+        downbeat_tracker=processor.track_downbeats,
+        min_bpm=args.min_bpm,
+        max_bpm=args.max_bpm,
+        fps=args.fps,
+        tolerance_percent=args.tolerance,
+        beats_per_bar=args.beats_per_bar,
+        skip_intro=not args.no_skip_intro,
+        skip_ending=not args.no_skip_ending
+    )
+    
+    # Configure video generator if requested
+    video_generator = None
+    if args.generate_video:
+        video_generator = BeatVideoGenerator(fps=args.fps)
     
     # Determine base input and output directories
     input_base_dir = "data/input"
@@ -300,21 +212,18 @@ def main():
                 print(f"\nProcessing: {audio_file}")
                 print("=" * 80)
             
-            stats, irregular_beats = process_audio_file(
-                audio_file,
-                output_dir=output_base_dir,
-                detector=detector,
-                skip_intro=skip_intro,
-                skip_ending=skip_ending,
-                verbose=not args.quiet,
-                input_base_dir=input_base_dir,
-                output_base_dir=output_base_dir,
-                show_progress=not args.no_progress
+            success = process_file(
+                str(audio_file),
+                str(output_base_dir),
+                detector,
+                video_generator,
+                not args.quiet
             )
-            results.append((audio_file.name, (stats, irregular_beats)))
+            if success:
+                results.append((audio_file.name, success))
         except Exception as e:
             print(f"Error processing {audio_file}: {e}")
-            results.append((audio_file.name, None))
+            results.append((audio_file.name, False))
     
     # Generate summary if multiple files were processed
     if len(results) > 1 and not args.quiet:
@@ -325,4 +234,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    setup_logging()
+    exit(main())

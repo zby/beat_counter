@@ -18,10 +18,11 @@ from web_app.storage import FileMetadataStorage
 from web_app.utils.task_utils import (
     IOCapture, create_progress_updater, safe_error, safe_info, safe_print
 )
-from beat_detection.core.detector import BeatDetector
+from beat_detection.core.detector import BeatDetector, MadmomBeatProcessor
 from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.utils import reporting
-from beat_detection.utils.beat_file import load_beat_data
+from beat_detection.utils.beat_file import load_beat_data, save_beats
+from beat_detection.utils.file_utils import ensure_output_dir
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -89,121 +90,65 @@ app.context = AppContext(
 # --- Celery Tasks (Base class removed) ---
 
 @app.task(bind=True, name='detect_beats_task', queue='beat_detection')
-def detect_beats_task(self: Task, file_id: str) -> Dict[str, Any]: # self is now celery.Task
-    """Celery task for detecting beats in an audio file."""
-    task_info = {'file_id': file_id}
-    # Use __dict__ to store custom attributes on the task instance if needed, or manage separately
-    # self._io_capture = IOCapture() # Avoid modifying 'self' directly if possible
-    io_capture = IOCapture() # Manage IOCapture separately
-
-    with io_capture:
-        try:
-            logger.info(f"Starting beat detection for file_id: {file_id}")
-            # Access storage directly via app context
-            storage: FileMetadataStorage = self.app.context.storage
-            if not storage:
-                 logger.error("Storage context not found on Celery app!")
-                 raise RuntimeError("Storage context unavailable.")
-
-
-            # --- File Paths & Pre-checks ---
-            job_dir = storage.get_job_directory(file_id)
-            job_dir.mkdir(exist_ok=True, parents=True)
-            audio_file_path = storage.get_audio_file_path(file_id)
-
-            if not audio_file_path or not audio_file_path.exists():
-                logger.error(f"Audio file not found for file_id: {file_id} at path: {audio_file_path}")
-                raise FileNotFoundError(f"No audio file found for file_id: {file_id}")
-
-            audio_path = str(audio_file_path.resolve())
-            logger.debug(f"Audio path resolved to: {audio_path}")
-
-            # --- Progress & Detection ---
-            # Pass io_capture explicitly if needed by updater, or manage output differently
-            update_progress = create_progress_updater(self, task_info, 'beat_detection_output')
-            update_progress("Initializing beat detection", 0)
-
-            detector = BeatDetector(progress_callback=update_progress)
-
-            logger.info("Starting actual beat detection process...")
-            detection_result = detector.detect_beats(audio_path, skip_intro=True, skip_ending=True)
-            logger.info("Beat detection process finished.")
-
-            (beat_timestamps, stats, irregular_beats, downbeats,
-             intro_end_idx, ending_start_idx, detected_meter) = detection_result
-
-            # --- Save Results ---
-            beats_file = storage.get_beats_file_path(file_id)
-            stats_file = storage.get_beat_stats_file_path(file_id)
-
-            reporting.save_beat_timestamps(
-                beat_timestamps, beats_file, downbeats,
-                intro_end_idx=intro_end_idx, ending_start_idx=ending_start_idx,
-                detected_meter=detected_meter
-            )
-            logger.info(f"Beat timestamps saved to: {beats_file}")
-            
-            # --- FIX: Check NumPy array size instead of truthiness ---
-            duration = beat_timestamps[-1] if beat_timestamps is not None and beat_timestamps.size > 0 else 0
-            
-            reporting.save_beat_statistics(
-                stats, irregular_beats, stats_file,
-                filename=audio_file_path.name,
-                detected_meter=detected_meter,
-                duration=duration
-            )
-            logger.info(f"Beat statistics saved to: {stats_file}")
-
-            # --- Update Metadata ---
-            try:
-                with open(stats_file, "r") as f:
-                    beat_stats = json.load(f)
-                storage.update_metadata(file_id, {
-                    "beat_stats": beat_stats,
-                    "beats_file": str(beats_file),
-                    "stats_file": str(stats_file)
-                })
-                logger.info("Metadata updated with beat detection results.")
-            except FileNotFoundError:
-                 logger.error(f"Failed to read stats file {stats_file} after saving.")
-                 raise
-            except json.JSONDecodeError:
-                 logger.error(f"Failed to decode stats file {stats_file} as JSON.")
-                 raise
-            except Exception as meta_e:
-                 logger.error(f"Failed to update metadata for {file_id}: {meta_e}")
-                 raise
-
-            update_progress("Beat detection complete", 1.0)
-            final_stdout, final_stderr = io_capture.get_output() # Use separate capture object
-
-            logger.info(f"Beat detection successful for file_id: {file_id}")
-            return {
-                "file_id": file_id,
-                "beats_file": str(beats_file),
-                "stats_file": str(stats_file),
-                "beat_detection_output": {"stdout": final_stdout, "stderr": final_stderr}
-            }
-
-        except Exception as e:
-            error_msg = f"Beat detection error for {file_id}: {type(e).__name__} - {e}"
-            logger.error(error_msg, exc_info=True)
-            safe_error(error_msg)
-            # Use separate io_capture object
-            io_capture.write_stderr(error_msg + "\n")
-            final_stdout, final_stderr = io_capture.get_output()
-
-            try:
-                self.update_state(state=states.FAILURE, meta={
-                    'file_id': file_id,
-                    'exc_type': type(e).__name__,
-                    'exc_message': str(e),
-                    'beat_detection_output': {'stdout': final_stdout, 'stderr': final_stderr}
-                })
-            except Exception as update_state_e:
-                 logger.error(f"Failed to update Celery task state for {file_id} during error handling: {update_state_e}")
-
-            raise e
+def detect_beats_task(self: Task, audio_file: str, output_dir: str) -> dict:
+    """
+    Detect beats in an audio file.
+    
+    Parameters:
+    -----------
+    audio_file : str
+        Path to input audio file
+    output_dir : str
+        Path to output directory
+        
+    Returns:
+    --------
+    dict
+        Task result with status and file paths
+    """
+    try:
+        # Create output directory if it doesn't exist
+        ensure_output_dir(output_dir)
+        
+        # Configure processor and detector
+        processor = MadmomBeatProcessor(
+            min_bpm=60,
+            max_bpm=200,
+            fps=30
+        )
+        
+        detector = BeatDetector(
+            beat_processor=processor.process_beats,
+            downbeat_processor=processor.process_downbeats,
+            beat_tracker=processor.track_beats,
+            downbeat_tracker=processor.track_downbeats,
+            skip_intro=True,
+            skip_ending=True
+        )
+        
+        # Detect beats
+        beats = detector.detect_beats(audio_file)
+        
+        # Save beat data
+        base_name = os.path.splitext(os.path.basename(audio_file))[0]
+        beat_file = os.path.join(output_dir, f"{base_name}.beats")
+        save_beats(beat_file, beats)
+        
+        return {
+            'status': 'success',
+            'beat_file': beat_file,
+            'total_beats': len(beats.timestamps),
+            'meter': beats.meter,
+            'irregular_beats': len(beats.irregular_beats),
+            'tempo_bpm': beats.stats.tempo_bpm
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing {audio_file}: {str(e)}")
+        return {
+            'status': 'error',
+            'error': str(e)
+        }
 
 
 @app.task(bind=True, name='generate_video_task', queue='video_generation')

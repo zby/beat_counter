@@ -27,6 +27,8 @@
 
 Write tests that verify correct behavior but don't spend time writing tests for edge cases that should simply raise appropriate exceptions according to our fail-fast principle.
 
+Please colocate unit tests together with tested code and put heavier tests into the '/tests/' directory.
+
 ## Code Formatting and Linting
 
 Use the tools configured in `pyproject.toml`:

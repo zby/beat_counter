@@ -1,24 +1,26 @@
 """
-Video generation with beat visualizations.
+Video generation for beat visualization.
 """
 
 import os
 import numpy as np
 import pathlib
 import time
+import cv2
 from typing import List, Tuple, Optional, Union, Callable
 from PIL import Image, ImageDraw, ImageFont
 from moviepy import (
     VideoClip, AudioFileClip, CompositeVideoClip, 
     ImageClip, TextClip, ColorClip
 )
+from beat_detection.core.detector import Beats
 
 # Video dimensions constants
 DEFAULT_VIDEO_WIDTH = 720
 DEFAULT_VIDEO_HEIGHT = 540
 DEFAULT_VIDEO_RESOLUTION = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT)
 
-DEFAULT_FPS = 60
+DEFAULT_FPS = 100  # Increased from 60 for smoother video generation
 
 # Color constants
 DEFAULT_BG_COLOR = (255, 255, 255)  # White background
@@ -32,70 +34,146 @@ CODEC = 'libx264'
 AUDIO_CODEC = 'aac'
 
 class BeatVideoGenerator:
-    """Generate videos with visual beat indicators."""
+    """Generates videos with visual beat indicators."""
     
-    def __init__(self, 
-                 resolution: Tuple[int, int] = DEFAULT_VIDEO_RESOLUTION,
-                 bg_color: Tuple[int, int, int] = DEFAULT_BG_COLOR,
-                 count_colors: List[Tuple[int, int, int]] = None,
-                 downbeat_color: Tuple[int, int, int] = DEFAULT_DOWNBEAT_COLOR,
-                 font_path: Optional[str] = None,
-                 font_size: int = 500,  # Much larger font size
-                 fps: int = DEFAULT_FPS,
-                 meter: int = 4,
-                 progress_callback: Optional[Callable[[str, float], None]] = None):
+    def __init__(
+        self,
+        resolution: Tuple[int, int] = (1920, 1080),
+        bg_color: Tuple[int, int, int] = (0, 0, 0),
+        count_colors: List[Tuple[int, int, int]] = None,
+        downbeat_color: Tuple[int, int, int] = (255, 255, 0),
+        font_path: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        font_size: int = 72,
+        fps: int = DEFAULT_FPS
+    ):
         """
-        Initialize the beat video generator.
+        Initialize the video generator.
         
         Parameters:
         -----------
-        resolution : tuple of (width, height)
-            Video resolution in pixels
-        bg_color : tuple of (r, g, b)
-            Background color
-        count_colors : list of (r, g, b) tuples
-            Colors for each beat count (1, 2, 3, 4) or None for default
-        downbeat_color : tuple of (r, g, b)
-            Color for downbeat (first beat) counter display
-        font_path : str or None
-            Path to font file, or None for default
+        resolution : Tuple[int, int]
+            Video resolution (width, height)
+        bg_color : Tuple[int, int, int]
+            Background color (R, G, B)
+        count_colors : List[Tuple[int, int, int]]
+            Colors for beat counts (R, G, B)
+        downbeat_color : Tuple[int, int, int]
+            Color for downbeats (R, G, B)
+        font_path : str
+            Path to font file
         font_size : int
-            Font size for beat counter (default: 500 - very large)
+            Font size for beat numbers
         fps : int
-            Frames per second for video
-        meter : int
-            Number of beats per measure (time signature numerator)
-        progress_callback : callable, optional
-            Callback function that takes a status string and progress float (0.0-1.0)
+            Frames per second (default: 100 for smooth video)
         """
-        self.width, self.height = resolution
+        self.resolution = resolution
         self.bg_color = bg_color
-        self.meter = meter
+        self.count_colors = count_colors or [
+            (255, 255, 255),  # White
+            (255, 0, 0),      # Red
+            (0, 255, 0),      # Green
+            (0, 0, 255)       # Blue
+        ]
         self.downbeat_color = downbeat_color
-        
-        # Default count colors if not provided
-        if count_colors is None:
-            # Use regular beat color for all non-downbeat counts
-            regular_beat_color = DEFAULT_REGULAR_BEAT_COLOR
-            self.count_colors = [
-                self.downbeat_color,  # 1: Same as downbeat color
-                regular_beat_color,   # 2: Regular beat color
-                regular_beat_color,   # 3: Regular beat color
-                regular_beat_color,   # 4: Regular beat color
-            ]
-        else:
-            self.count_colors = count_colors
-            
         self.font_path = font_path
         self.font_size = font_size
         self.fps = fps
-        self.progress_callback = progress_callback
         
-        # Frame cache to store pre-generated frames
-        # Key: beat count (0 for no beat, 1-4 for beats)
-        # Value: the pre-generated frame as numpy array
-        self.frame_cache = {}
-    
+        # Initialize font
+        self.font = ImageFont.truetype(font_path, font_size)
+        
+        # Cache for generated frames
+        self._frame_cache = {}
+        
+    def generate_video(
+        self,
+        beats: Beats,
+        output_file: str,
+        duration: Optional[float] = None,
+        start_time: float = 0.0
+    ) -> None:
+        """
+        Generate a video with beat indicators.
+        
+        Parameters:
+        -----------
+        beats : Beats
+            Beat information
+        output_file : str
+            Path to output video file
+        duration : Optional[float]
+            Duration in seconds (default: use last beat)
+        start_time : float
+            Start time in seconds
+        """
+        # Calculate duration if not specified
+        if duration is None:
+            duration = beats.timestamps[-1] - start_time
+            
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(
+            output_file,
+            fourcc,
+            self.fps,
+            self.resolution
+        )
+        
+        # Generate frames
+        frame_count = int(duration * self.fps)
+        for frame_idx in range(frame_count):
+            t = start_time + frame_idx / self.fps
+            frame = self.generate_frame(beats, t)
+            out.write(frame)
+            
+        out.release()
+        
+    def generate_frame(self, beats: Beats, t: float) -> np.ndarray:
+        """
+        Generate a single frame for time t.
+        
+        Parameters:
+        -----------
+        beats : Beats
+            Beat information
+        t : float
+            Current time in seconds
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Frame as BGR image
+        """
+        # Get beat information
+        current_beat_idx, beat_count, time_since_beat, is_downbeat = beats.get_beat_info(t)
+        
+        # Create frame
+        frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
+        frame[:] = self.bg_color
+        
+        # Convert to PIL Image for text drawing
+        pil_image = Image.fromarray(frame)
+        draw = ImageDraw.Draw(pil_image)
+        
+        # Draw beat number
+        text = str(beat_count)
+        text_bbox = draw.textbbox((0, 0), text, font=self.font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        
+        # Center text
+        x = (self.resolution[0] - text_width) // 2
+        y = (self.resolution[1] - text_height) // 2
+        
+        # Choose color based on whether it's a downbeat
+        color = self.downbeat_color if is_downbeat else self.count_colors[beat_count - 1]
+        
+        # Draw text
+        draw.text((x, y), text, font=self.font, fill=color)
+        
+        # Convert back to OpenCV format
+        return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
     def _fill_frame_cache(self, meter_value: int):
         """
         Pre-generate all possible frames for caching.
@@ -110,20 +188,20 @@ class BeatVideoGenerator:
         print("Pre-generating frames for caching...")
 
         # Generate the "no beat" frame (for before the first beat)
-        if 0 not in self.frame_cache:
+        if 0 not in self._frame_cache:
             # Create a plain background
-            no_beat_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            no_beat_frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
             no_beat_frame[:, :] = self.bg_color
             # Cache the frame
-            self.frame_cache[0] = no_beat_frame
+            self._frame_cache[0] = no_beat_frame
             print("  - Generated 'no beat' frame")
 
-        if "not_accented_first" not in self.frame_cache:
+        if "not_accented_first" not in self._frame_cache:
             # Create a plain background
-            not_accented_first_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            not_accented_first_frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
             not_accented_first_frame[:, :] = self.bg_color
             # Cache the frame
-            self.frame_cache["not_accented_first"] = not_accented_first_frame
+            self._frame_cache["not_accented_first"] = not_accented_first_frame
             print("  - Generated 'not accent first' frame")
         
         # Generate frames for each beat count (1 to meter_value)
@@ -131,18 +209,18 @@ class BeatVideoGenerator:
             # For beat count 1, we need to create a downbeat version
             if beat_count == 1:
                 # Create the downbeat frame (beat 1)
-                if beat_count not in self.frame_cache:
+                if beat_count not in self._frame_cache:
                     frame = self._create_beat_frame(beat_count, meter_value, is_downbeat=True)
-                    self.frame_cache[beat_count] = frame
+                    self._frame_cache[beat_count] = frame
                     print(f"  - Generated frame for beat count {beat_count} (downbeat)")
             else:
                 # For other beat counts, just create the regular frame
-                if beat_count not in self.frame_cache:
+                if beat_count not in self._frame_cache:
                     frame = self._create_beat_frame(beat_count, meter_value, is_downbeat=False)
-                    self.frame_cache[beat_count] = frame
+                    self._frame_cache[beat_count] = frame
                     print(f"  - Generated frame for beat count {beat_count}")
         
-        print(f"Frame cache contains {len(self.frame_cache)} frames")
+        print(f"Frame cache contains {len(self._frame_cache)} frames")
     
     def _create_beat_frame(self, beat_count: int, meter_value: int, is_downbeat: bool) -> np.ndarray:
         """
@@ -174,15 +252,15 @@ class BeatVideoGenerator:
             text_color = self.count_colors[color_idx % len(self.count_colors)]
         
         # Create the image for drawing
-        img = Image.new('RGB', (self.width, self.height), self.bg_color)
+        img = Image.new('RGB', (self.resolution[0], self.resolution[1]), self.bg_color)
         draw = ImageDraw.Draw(img)
         
         # Common calculations
-        center_x = self.width // 2
-        center_y = self.height // 2
+        center_x = self.resolution[0] // 2
+        center_y = self.resolution[1] // 2
         
         # Create a colored background for better visibility
-        rect_size = min(self.width, self.height) * 0.9  # Almost full screen
+        rect_size = min(self.resolution[0], self.resolution[1]) * 0.9  # Almost full screen
         bg_rect = [
             (center_x - rect_size/2), (center_y - rect_size/2),
             (center_x + rect_size/2), (center_y + rect_size/2)
@@ -201,7 +279,7 @@ class BeatVideoGenerator:
         # For the number text
         try:
             # Make the text EXTRA large - at least 3/4 of the screen height
-            text_size = int(self.height * 0.75)
+            text_size = int(self.resolution[1] * 0.75)
             
             # Get an appropriate font
             large_font = self._find_large_font(text_size)
@@ -272,7 +350,7 @@ class BeatVideoGenerator:
                 pass
         
         # Center position
-        return ((self.width - text_width) // 2, (self.height - text_height) // 2)
+        return ((self.resolution[0] - text_width) // 2, (self.resolution[1] - text_height) // 2)
     
     def _draw_number_with_font(self, draw, text: str, position: Tuple[int, int], 
                              text_color: Tuple[int, int, int], font, text_size: int) -> None:
@@ -429,7 +507,7 @@ class BeatVideoGenerator:
         
         # If we're before the first beat or have no beats, use the "no beat" frame
         if current_beat_idx < 0 or beat_count == 0:
-            return self.frame_cache[0]
+            return self._frame_cache[0]
         
         # Special case for non-accented first beats (beat count 1 that is not a downbeat)
         if beat_count == 1 and not is_downbeat:
@@ -448,7 +526,7 @@ class BeatVideoGenerator:
             print(f"{beat_type} at t={t:.3f}s: {beat_count}/{meter_value} (beat #{current_beat_idx+1})")
         
         # Return the cached frame
-        return self.frame_cache[cache_key]
+        return self._frame_cache[cache_key]
     
 
     
