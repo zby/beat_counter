@@ -33,17 +33,15 @@ def test_beat_info_to_dict():
         index=5, 
         is_downbeat=True, 
         is_irregular_interval=False, 
-        is_irregular_count=True, 
-        beat_count=1
+        beat_count=0  # 0 indicates irregular/undetermined
     )
     expected_dict = {
         "timestamp": 1.23,
         "index": 5,
         "is_downbeat": True,
         "is_irregular_interval": False,
-        "is_irregular_count": True,
-        "is_irregular": True, # Property should be True
-        "beat_count": 1,
+        "is_irregular": True, # Property should be True because beat_count is 0
+        "beat_count": 0,
     }
     assert beat_info.to_dict() == expected_dict
 
@@ -56,7 +54,7 @@ def test_beats_to_dict_structure():
     expected_top_keys = {
         "meter", "tolerance_percent", "tolerance_interval", 
         "min_consistent_measures", "start_regular_beat_idx", 
-        "end_regular_beat_idx", "stats", "beat_list"
+        "end_regular_beat_idx", "overall_stats", "regular_stats", "beat_list"
     }
     assert set(beats_dict.keys()) == expected_top_keys
     
@@ -66,8 +64,10 @@ def test_beats_to_dict_structure():
         'min_interval', 'max_interval', 'irregularity_percent',
         'tempo_bpm', 'total_beats'
     }
-    assert isinstance(beats_dict["stats"], dict)
-    assert set(beats_dict["stats"].keys()) == expected_stat_keys
+    assert isinstance(beats_dict["overall_stats"], dict)
+    assert set(beats_dict["overall_stats"].keys()) == expected_stat_keys
+    assert isinstance(beats_dict["regular_stats"], dict)
+    assert set(beats_dict["regular_stats"].keys()) == expected_stat_keys
     
     # Check beat_list structure
     assert isinstance(beats_dict["beat_list"], list)
@@ -76,7 +76,7 @@ def test_beats_to_dict_structure():
         # Check keys of the first beat in the list
         expected_beat_info_keys = {
             "timestamp", "index", "is_downbeat", "is_irregular_interval",
-            "is_irregular_count", "is_irregular", "beat_count"
+            "is_irregular", "beat_count"
         }
         assert isinstance(beats_dict["beat_list"][0], dict)
         assert set(beats_dict["beat_list"][0].keys()) == expected_beat_info_keys
