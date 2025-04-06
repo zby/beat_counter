@@ -30,11 +30,11 @@ def test_generate_video_from_beats():
     # --- Beat Detection ---
     try:
         detector = BeatDetector()
-        beats_result = detector.detect_beats(str(TEST_AUDIO_FILE))
-        assert len(beats_result.timestamps) > 0, "No beats were detected."
-        assert beats_result.meter is not None, "Meter was not determined."
+        beats = detector.detect_beats(str(TEST_AUDIO_FILE))
+        assert len(beats.timestamps) > 0, "No beats were detected."
+        assert beats.meter is not None, "Meter was not determined."
         # Assert that the downbeat_indices list is not empty
-        assert len(beats_result.downbeat_indices) > 0, \
+        assert len(beats.downbeat_indices) > 0, \
             f"No downbeats were detected in {TEST_AUDIO_FILE.name}"
 
 
@@ -47,13 +47,11 @@ def test_generate_video_from_beats():
     try:
         video_generator = BeatVideoGenerator() # Use default settings
         
-        # Call the method that takes beat info and audio path
+        # Call the method that takes a Beats object and audio path
         output_path_str = video_generator.generate_video(
             audio_path=TEST_AUDIO_FILE,
-            beats_array=beats_result.timestamps, 
-            output_path=OUTPUT_VIDEO_FILE,
-            downbeats=beats_result.downbeat_indices,
-            detected_meter=beats_result.meter
+            beats=beats, 
+            output_path=OUTPUT_VIDEO_FILE
         )
         
         # Verify output path matches expected (optional, but good practice)
@@ -67,7 +65,7 @@ def test_generate_video_from_beats():
     assert OUTPUT_VIDEO_FILE.is_file(), f"Output video file was not created at {OUTPUT_VIDEO_FILE}"
     assert OUTPUT_VIDEO_FILE.stat().st_size > 0, f"Output video file {OUTPUT_VIDEO_FILE} is empty."
     
-    print(f"Successfully generated video: {OUTPUT_VIDEO_FILE} (Size: {OUTPUT_VIDEO_FILE.stat().st_size} bytes)") 
+    print(f"Successfully generated video: {OUTPUT_VIDEO_FILE} (Size: {OUTPUT_VIDEO_FILE.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":

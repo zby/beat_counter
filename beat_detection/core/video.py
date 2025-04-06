@@ -334,66 +334,7 @@ class BeatVideoGenerator:
                      (center_x + simple_size//4, center_y + simple_size//4)], 
                      fill=white, width=line_width)
     
-
-    
-    def get_current_beat_info(self, t: float, beat_timestamps: np.ndarray, 
-                               downbeats: np.ndarray) -> Tuple[int, int, float, bool]:
-        """
-        Get beat information for a given time point.
-        
-        Parameters:
-        -----------
-        t : float
-            Time in seconds
-        beat_timestamps : numpy.ndarray
-            Array of beat timestamps in seconds
-        downbeats : numpy.ndarray
-            Array of indices that correspond to downbeats (required)
-            
-        Returns:
-        --------
-        tuple
-            (current_beat_idx, beat_count, time_since_beat, is_downbeat) where:
-            - current_beat_idx: Index of the current/most recent beat (-1 if before first beat)
-            - beat_count: Count number (1 to meter) for display
-            - time_since_beat: Time elapsed since the current beat (seconds)
-            - is_downbeat: Whether the current beat is a downbeat
-        """
-        # Check if beat_timestamps is empty
-        if len(beat_timestamps) == 0:
-            return -1, 0, 0.0, False
-            
-        # Find the current beat index
-        current_beat_idx = np.searchsorted(beat_timestamps, t, side='right') - 1
-        
-        if current_beat_idx < 0:
-            # Before first beat
-            return -1, 0, 0.0, False
-        
-        # Determine if this is a downbeat
-        is_downbeat = current_beat_idx in downbeats
-        
-        # Find the last downbeat (or use 0 if no downbeats before current beat)
-        previous_downbeats = downbeats[downbeats <= current_beat_idx]
-        last_downbeat_idx = previous_downbeats[-1] if len(previous_downbeats) > 0 else 0
-        
-        # Calculate beat number within measure (1-based)
-        beats_since_downbeat = current_beat_idx - last_downbeat_idx
-        beat_count = beats_since_downbeat + 1  # 1-based counting
-        
-        # If this is a downbeat, always make it beat 1
-        if is_downbeat:
-            beat_count = 1
-        
-        # Calculate time since the beat
-        beat_time = beat_timestamps[current_beat_idx]
-        time_since_beat = t - beat_time
-        
-        return current_beat_idx, beat_count, time_since_beat, is_downbeat
-    
-    def create_counter_frame(self, t: float, beat_timestamps: np.ndarray, 
-                            downbeats: np.ndarray,
-                            meter: Optional[int] = None) -> np.ndarray:
+    def create_counter_frame(self, t: float, beats: Beats) -> np.ndarray:
         """
         Get the appropriate cached frame for a given time point.
         
@@ -401,29 +342,36 @@ class BeatVideoGenerator:
         -----------
         t : float
             Time in seconds
-        beat_timestamps : numpy.ndarray
-            Array of beat timestamps in seconds
-        downbeats : numpy.ndarray
-            Array of indices that correspond to downbeats
-        meter : int, optional
-            Number of beats per measure (overrides self.meter if provided)
+        beats : Beats
+            Beats object containing beat information
             
         Returns:
         --------
         numpy.ndarray
             Frame with beat counter from cache
         """
-        # Use provided meter or fall back to the instance's meter
-        meter_value = meter if meter is not None else self.meter
+        # Get meter from beats object
+        meter_value = beats.meter
         
-        # Get current beat information with downbeat awareness
-        current_beat_idx, beat_count, time_since_beat, is_downbeat = self.get_current_beat_info(
-            t, beat_timestamps, downbeats
-        )
+        # Get current beat information using beats object
+        beat_info = beats.get_beat_info_at_time(t)
         
-        # If we're before the first beat or have no beats, use the "no beat" frame
-        if current_beat_idx < 0 or beat_count == 0:
+        # If we're before the first beat or no beat is found, use the "no beat" frame
+        if beat_info is None:
             return self._frame_cache[0]
+            
+        # Extract beat index and other information
+        beat_idx = beat_info.index
+        beat_count = beat_info.beat_count
+        is_downbeat = beat_info.is_downbeat
+        
+        # Check if the beat is within the counting range
+        if beat_idx < beats.start_regular_beat_idx or beat_idx > beats.end_regular_beat_idx:
+            return self._frame_cache[0]
+        
+        # Get time of the current beat
+        beat_time = beats.timestamps[beat_idx]
+        time_since_beat = t - beat_time
         
         # Special case for non-accented first beats (beat count 1 that is not a downbeat)
         if beat_count == 1 and not is_downbeat:
@@ -439,65 +387,53 @@ class BeatVideoGenerator:
         # Debug print but only at beat transitions to reduce output
         if time_since_beat < 0.5 / self.fps:  # Just at the start of a beat
             beat_type = "DOWNBEAT" if is_downbeat else "beat"
-            print(f"{beat_type} at t={t:.3f}s: {beat_count}/{meter_value} (beat #{current_beat_idx+1})")
+            print(f"{beat_type} at t={t:.3f}s: {beat_count}/{meter_value} (beat #{beat_idx+1})")
         
         # Return the cached frame
         return self._frame_cache[cache_key]
-    
 
-    
-    def create_counter_video(self, audio_file: Union[str, pathlib.Path], 
-                            output_file: Union[str, pathlib.Path],
-                            beat_timestamps: np.ndarray,
-                            downbeats: np.ndarray,
-                            meter: Optional[int] = None,
-                            sample_beats: Optional[int] = None,
-                            progress_callback: Optional[Callable[[str, float], None]] = None) -> str:
+    def generate_video(self, audio_path: Union[str, pathlib.Path], 
+                      beats: Beats,
+                      output_path: Union[str, pathlib.Path],
+                      sample_beats: Optional[int] = None) -> str:
         """
-        Create a video with beat counter (1-N based on meter).
+        Generate a beat visualization video.
         
         Parameters:
         -----------
-        audio_file : str or pathlib.Path
-            Path to the input audio file
-        output_file : str or pathlib.Path
-            Path to save the output video file
-        beat_timestamps : numpy.ndarray
-            Array of beat timestamps in seconds
-        downbeats : numpy.ndarray
-            Array of indices that correspond to downbeats
-        meter : int, optional
-            Number of beats per measure, overrides object's meter if provided
-            
+        audio_path : str or pathlib.Path
+            Path to the audio file
+        beats : Beats
+            Beats object containing beat information
+        output_path : str or pathlib.Path
+            Path where to save the output video
+        sample_beats : int, optional
+            Number of beats to process (for testing/quick preview)
+        
         Returns:
         --------
         str
-            Path to the created video file
+            Path to the generated video file
         """
         # Ensure paths are strings
-        audio_file_str = str(audio_file)
-        output_file_str = str(output_file)
+        audio_file_str = str(audio_path)
+        output_file_str = str(output_path)
         
-        # Use provided meter or fall back to the instance's meter
-        meter_value = meter if meter is not None else self.meter
+        # Get beat timestamps array from beats object
+        beat_timestamps = beats.timestamps
         
         # If sample_beats is provided, limit the video to just those beats
         if sample_beats is not None and sample_beats > 0 and len(beat_timestamps) > 0:
             # Limit to the first N beats
             max_beats = min(sample_beats, len(beat_timestamps))
             max_time = beat_timestamps[max_beats - 1] + 1.0  # Add 1 second after the last beat
-            
-            # Filter beat_timestamps and downbeats
-            beat_timestamps = beat_timestamps[:max_beats]
-            if downbeats is not None:
-                downbeats = downbeats[downbeats < max_beats]
         else:
             max_time = None  # Use the full audio duration
         
         # Report progress - starting audio loading
-        if progress_callback:
+        if self.progress_callback:
             print("DEBUG: Calling progress callback - Loading audio file")
-            progress_callback("Loading audio file", 0.05)
+            self.progress_callback("Loading audio file", 0.05)
             
         # Load audio file
         audio = AudioFileClip(audio_file_str)
@@ -512,12 +448,12 @@ class BeatVideoGenerator:
                 audio.duration = max_time
         
         # Report progress - preparing frames
-        if progress_callback:
+        if self.progress_callback:
             print("DEBUG: Calling progress callback - Preparing video frames")
-            progress_callback("Preparing video frames", 0.15)
+            self.progress_callback("Preparing video frames", 0.15)
             
         # Fill the frame cache with all possible frames
-        self._fill_frame_cache(meter_value)
+        self._fill_frame_cache(beats.meter)
         
         # Store the last reported beat index and time to avoid duplicate updates
         last_reported = {"beat": -1, "time": 0}  # Using a dict for mutable reference
@@ -525,16 +461,12 @@ class BeatVideoGenerator:
         # Create a function that returns the frame at time t
         def make_frame(t):
             # Calculate approximate progress based on current time position
-            if progress_callback and audio.duration > 0:
+            if self.progress_callback and audio.duration > 0:
                 # Map time to progress between 30% and 80%
                 progress = 0.3 + (t / audio.duration) * 0.5
                 
                 # Find which beat we're currently processing
-                beat_idx = len(beat_timestamps) - 1  # Default to last beat
-                for i, beat_time in enumerate(beat_timestamps):
-                    if t <= beat_time:
-                        beat_idx = max(0, i)  # Ensure we don't go below 0
-                        break
+                beat_info = beats.get_beat_info_at_time(t)
                 
                 # Report progress in two cases:
                 # 1. When we move to a new beat
@@ -542,24 +474,27 @@ class BeatVideoGenerator:
                 current_time = time.time()
                 time_since_last_update = current_time - last_reported["time"]
                 
-                if ((beat_idx != last_reported["beat"]) or (time_since_last_update >= 1.0)) and beat_idx < len(beat_timestamps):
-                    # Update last reported beat and time
-                    last_reported["beat"] = beat_idx
-                    last_reported["time"] = current_time
-                    
-                    # Calculate progress percentage (30% to 80%)
-                    beat_progress = (beat_idx + 1) / len(beat_timestamps)
-                    progress = 0.3 + (beat_progress * 0.5)
-                    
-                    print(f"DEBUG: Calling progress callback - Processing beat {beat_idx+1}/{len(beat_timestamps)} at time {t:.2f}")
-                    progress_callback(f"Processing beat {beat_idx+1}/{len(beat_timestamps)}", progress)
+                # Only update progress if we have valid beat info
+                if beat_info is not None:
+                    beat_idx = beat_info.index
+                    if ((beat_idx != last_reported["beat"]) or (time_since_last_update >= 1.0)) and beat_idx >= 0 and beat_idx < len(beat_timestamps):
+                        # Update last reported beat and time
+                        last_reported["beat"] = beat_idx
+                        last_reported["time"] = current_time
+                        
+                        # Calculate progress percentage (30% to 80%)
+                        beat_progress = (beat_idx + 1) / len(beat_timestamps)
+                        progress = 0.3 + (beat_progress * 0.5)
+                        
+                        print(f"DEBUG: Calling progress callback - Processing beat {beat_idx+1}/{len(beat_timestamps)} at time {t:.2f}")
+                        self.progress_callback(f"Processing beat {beat_idx+1}/{len(beat_timestamps)}", progress)
             
-            return self.create_counter_frame(t, beat_timestamps, downbeats, meter_value)
+            return self.create_counter_frame(t, beats)
         
         # Report progress - creating video
-        if progress_callback:
+        if self.progress_callback:
             print("DEBUG: Calling progress callback - Creating video clip")
-            progress_callback("Creating video clip", 0.3)
+            self.progress_callback("Creating video clip", 0.3)
             
         # Create video clip
         video = VideoClip(make_frame, duration=audio.duration)
@@ -568,73 +503,18 @@ class BeatVideoGenerator:
         video = video.with_audio(audio)
         
         # Report progress - writing video file
-        if progress_callback:
+        if self.progress_callback:
             print("DEBUG: Calling progress callback - Starting video encoding")
-            progress_callback("Starting video encoding", 0.1)
+            self.progress_callback("Starting video encoding", 0.1)
         
         # Write video file without callback
         video.write_videofile(output_file_str, fps=self.fps, 
-                             codec=CODEC, audio_codec=AUDIO_CODEC,
-                             logger='bar')
+                            codec=CODEC, audio_codec=AUDIO_CODEC,
+                            logger='bar')
         
         # Report progress - completed
-        if progress_callback:
+        if self.progress_callback:
             print("DEBUG: Calling progress callback - Video generation complete")
-            progress_callback("Video generation complete", 1.0)
+            self.progress_callback("Video generation complete", 1.0)
             
         return output_file_str
-
-    def generate_video(self, audio_path: Union[str, pathlib.Path], 
-                      beats_array: np.ndarray,
-                      output_path: Union[str, pathlib.Path],
-                      downbeats: Optional[np.ndarray] = None,
-                      detected_meter: Optional[int] = None,
-                      sample_beats: Optional[int] = None) -> str:
-        """
-        Generate a beat visualization video.
-        
-        Parameters:
-        -----------
-        audio_path : str or pathlib.Path
-            Path to the audio file
-        beats_array : numpy.ndarray
-            Array of beat timestamps in seconds
-        output_path : str or pathlib.Path
-            Path where to save the output video
-        downbeats : numpy.ndarray, optional
-            Array of indices corresponding to downbeats (1st beat of measure)
-        detected_meter : int, optional
-            Detected meter (time signature numerator)
-        sample_beats : int, optional
-            Number of beats to process (for testing/quick preview)
-        
-        Returns:
-        --------
-        str
-            Path to the generated video file
-        """
-        # Convert to numpy arrays if not already
-        if not isinstance(beats_array, np.ndarray):
-            beats_array = np.array(beats_array)
-            
-        # Handle empty downbeats safely
-        if downbeats is None or (isinstance(downbeats, np.ndarray) and downbeats.size == 0):
-            # If no downbeats provided, assume every Nth beat is a downbeat (where N is meter)
-            meter = detected_meter if detected_meter is not None else self.meter
-            downbeats = np.arange(0, len(beats_array), meter)
-        elif not isinstance(downbeats, np.ndarray):
-            downbeats = np.array(downbeats)
-            
-        # Use detected meter if provided, otherwise use default
-        meter = detected_meter if detected_meter is not None else self.meter
-        
-        # Call the create_counter_video method to generate the video
-        return self.create_counter_video(
-            audio_file=audio_path,
-            output_file=output_path,
-            beat_timestamps=beats_array,
-            downbeats=downbeats,
-            meter=meter,
-            sample_beats=sample_beats,
-            progress_callback=self.progress_callback
-        )
