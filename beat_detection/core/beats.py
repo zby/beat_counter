@@ -29,14 +29,14 @@ class BeatStatistics:
     def to_dict(self) -> Dict[str, float]:
         """Convert to dictionary for easy serialization."""
         return {
-            'mean_interval': self.mean_interval,
-            'median_interval': self.median_interval,
-            'std_interval': self.std_interval,
-            'min_interval': self.min_interval,
-            'max_interval': self.max_interval,
-            'irregularity_percent': self.irregularity_percent,
-            'tempo_bpm': self.tempo_bpm,
-            'total_beats': self.total_beats
+            'mean_interval': float(self.mean_interval),
+            'median_interval': float(self.median_interval),
+            'std_interval': float(self.std_interval),
+            'min_interval': float(self.min_interval),
+            'max_interval': float(self.max_interval),
+            'irregularity_percent': float(self.irregularity_percent),
+            'tempo_bpm': float(self.tempo_bpm),
+            'total_beats': int(self.total_beats)
         }
 
 
@@ -57,12 +57,13 @@ class BeatInfo:
     def to_dict(self) -> Dict:
         """Convert BeatInfo object to a dictionary, excluding derived properties."""
         return {
-            "timestamp": self.timestamp,
-            "index": self.index,
-            "is_downbeat": self.is_downbeat,
-            "is_irregular_interval": self.is_irregular_interval,
+            "timestamp": float(self.timestamp),
+            "index": int(self.index),
+            # Ensure standard Python bool types for JSON serialization
+            "is_downbeat": bool(self.is_downbeat),
+            "is_irregular_interval": bool(self.is_irregular_interval),
             # Exclude "is_irregular" as it's a derived property
-            "beat_count": self.beat_count,
+            "beat_count": int(self.beat_count),
         }
 
 
@@ -83,8 +84,8 @@ class Beats:
     @classmethod
     def from_timestamps(cls, 
                         timestamps: np.ndarray, 
-                        downbeat_indices: np.ndarray, 
                         meter: int, 
+                        beat_counts: np.ndarray, # Add new parameter for pre-calculated counts
                         tolerance_percent: float = 10.0,
                         min_consistent_measures: int = 5 # Minimum consistent measures required
                        ) -> 'Beats':
@@ -126,61 +127,81 @@ class Beats:
 
         # 1. Calculate intervals and median interval
         intervals = np.diff(timestamps)
-        median_interval = np.median(intervals)
-
-        if median_interval <= 0:
-             raise BeatCalculationError(
-                 f"Cannot calculate reliable beat statistics: Median interval is {median_interval:.4f}. "
-                 f"Check input timestamps: {timestamps[:5]}..."
+        
+        # --- Handle Zero/Single Beat Case for Stats --- 
+        if num_beats <= 1:
+             # Stats are ill-defined or trivial for 0 or 1 beat
+             median_interval = 0.0
+             tempo_bpm = 0.0
+             tolerance_interval_calculated = 0.0
+             irregularity_percent = 0.0
+             overall_stats = BeatStatistics(
+                 mean_interval=0.0,
+                 median_interval=0.0,
+                 std_interval=0.0,
+                 min_interval=0.0,
+                 max_interval=0.0,
+                 irregularity_percent=0.0,
+                 tempo_bpm=0.0,
+                 total_beats=num_beats
              )
+             # Interval irregularities don't make sense here
+             interval_irregularities = [False] * num_beats
+        else:
+             # Proceed with normal calculation for 2+ beats
+             median_interval = np.median(intervals)
+             if median_interval <= 0:
+                  raise BeatCalculationError(
+                      f"Cannot calculate reliable beat statistics: Median interval is {median_interval:.4f}. "
+                      f"Check input timestamps: {timestamps[:5]}..."
+                  )
              
-        # 2. Calculate remaining stats and tolerance
-        tempo_bpm = 60 / median_interval
-        tolerance_interval_calculated = median_interval * (tolerance_percent / 100.0) # Store calculated interval
-        
-        # 3. Initial irregularity check based on intervals
-        interval_irregularities = [False] # First beat cannot be irregular by interval
-        for interval in intervals:
-             interval_irregularities.append(not (median_interval - tolerance_interval_calculated <= interval <= median_interval + tolerance_interval_calculated))
-        
-        irregularity_percent = (sum(interval_irregularities) / num_beats) * 100
+             # 2. Calculate remaining stats and tolerance
+             tempo_bpm = 60 / median_interval
+             tolerance_interval_calculated = median_interval * (tolerance_percent / 100.0) # Store calculated interval
+             
+             # 3. Initial irregularity check based on intervals
+             interval_irregularities = [False] # First beat cannot be irregular by interval
+             for interval in intervals:
+                  interval_irregularities.append(not (median_interval - tolerance_interval_calculated <= interval <= median_interval + tolerance_interval_calculated))
+             
+             irregularity_percent = (sum(interval_irregularities) / num_beats) * 100
+    
+             # Calculate overall statistics
+             overall_stats = BeatStatistics(
+                 mean_interval=np.mean(intervals),
+                 median_interval=median_interval,
+                 std_interval=np.std(intervals),
+                 min_interval=np.min(intervals),
+                 max_interval=np.max(intervals),
+                 irregularity_percent=irregularity_percent,
+                 tempo_bpm=tempo_bpm,
+                 total_beats=num_beats
+             )
+        # --- End Stats Handling ---
 
-        # Calculate overall statistics
-        overall_stats = BeatStatistics(
-            mean_interval=np.mean(intervals),
-            median_interval=median_interval,
-            std_interval=np.std(intervals),
-            min_interval=np.min(intervals),
-            max_interval=np.max(intervals),
-            irregularity_percent=irregularity_percent,
-            tempo_bpm=tempo_bpm,
-            total_beats=num_beats
-        )
-
-        # 4. Populate BeatInfo list and calculate beat counts/count irregularities
+        # 4. Populate BeatInfo list using provided beat_counts
         beat_list = []
-        last_downbeat_idx = -1
         for i, ts in enumerate(timestamps):
             is_irregular_interval = interval_irregularities[i]
-            is_downbeat = i in downbeat_indices
+            # Determine is_downbeat directly from beat_counts
+            is_downbeat = (beat_counts[i] == 1)
             
-            if is_downbeat:
-                last_downbeat_idx = i
-                beat_count = 1
-            elif last_downbeat_idx == -1:
-                 beat_count = 0 # Undetermined count
-            else:
-                beat_count = i - last_downbeat_idx + 1
-
-            display_beat_count = beat_count
-            if beat_count > meter:
-                display_beat_count = 0  # Mark as undetermined if count exceeds meter
-
+            # Use the provided beat count directly
+            original_beat_count = beat_counts[i]
+            
+            # Apply the same logic as before: counts > meter are considered irregular (display as 0)
+            display_beat_count = original_beat_count
+            if original_beat_count > meter or original_beat_count <= 0: # Also treat non-positive counts as irregular
+                display_beat_count = 0
+                # We might also want to flag this beat specifically if needed,
+                # but relying on display_beat_count == 0 for irregularity check should suffice.
+                
             beat_list.append(BeatInfo(
                 timestamp=ts,
                 index=i,
                 is_irregular_interval=is_irregular_interval,
-                beat_count=display_beat_count,
+                beat_count=display_beat_count, # Use the adjusted count
                 is_downbeat=is_downbeat
             ))
             
@@ -273,12 +294,12 @@ class Beats:
     def to_dict(self) -> Dict:
         """Convert the Beats object to a dictionary suitable for JSON serialization."""
         return {
-            "meter": self.meter,
-            "tolerance_percent": self.tolerance_percent,
-            "tolerance_interval": self.tolerance_interval,
-            "min_consistent_measures": self.min_consistent_measures,
-            "start_regular_beat_idx": self.start_regular_beat_idx,
-            "end_regular_beat_idx": self.end_regular_beat_idx,
+            "meter": int(self.meter),
+            "tolerance_percent": float(self.tolerance_percent),
+            "tolerance_interval": float(self.tolerance_interval),
+            "min_consistent_measures": int(self.min_consistent_measures),
+            "start_regular_beat_idx": int(self.start_regular_beat_idx),
+            "end_regular_beat_idx": int(self.end_regular_beat_idx),
             "overall_stats": self.overall_stats.to_dict(),
             "regular_stats": self.regular_stats.to_dict(),
             "beat_list": [beat.to_dict() for beat in self.beat_list],

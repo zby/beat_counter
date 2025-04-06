@@ -52,8 +52,6 @@ class BeatDetector:
         # Initialize processors
         self.beat_processor = RNNBeatProcessor()
         self.downbeat_processor = RNNDownBeatProcessor()
-        # Initialize beat tracker using self.fps
-        self.beat_tracker = BeatTrackingProcessor(fps=self.fps)
         # Initialize downbeat tracker
         self.downbeat_tracker = DBNDownBeatTrackingProcessor(
             beats_per_bar=SUPPORTED_METERS, # Let madmom choose based on activation
@@ -93,28 +91,28 @@ class BeatDetector:
         if cb: # Check if instance callback exists
             report_progress("start", 0.0)
             
-        # Detect beats
-        beat_activations = self.beat_processor(audio_file)
-        beat_timestamps = self.beat_tracker(beat_activations)
+        # Detect beats and downbeats together using DBNDownBeatTrackingProcessor
         
-        if len(beat_timestamps) == 0:
-            raise BeatCalculationError(f"No beats detected in file: {audio_file}")
-        
+        # Detect downbeats, meter, and get all beat info (timestamps and counts)
+        # The _detect_downbeats method now returns the raw array and meter
+        raw_beats_with_counts, meter = self._detect_downbeats(audio_file) # Removed beat_timestamps argument
+
+        if raw_beats_with_counts is None or len(raw_beats_with_counts) == 0:
+             raise BeatCalculationError(f"No beats detected in file (DBN Tracker): {audio_file}")
+
+        beat_timestamps = raw_beats_with_counts[:, 0]
+        beat_counts = raw_beats_with_counts[:, 1].astype(int) # Ensure counts are integers
+
         if cb:
-            report_progress("beats_detected", 0.4)
-            
-        # Detect downbeats and meter
-        downbeat_indices, meter = self._detect_downbeats(audio_file, beat_timestamps)
-        
-        if cb:
-            report_progress("downbeats_detected", 0.8)
+            report_progress("downbeats_detected", 0.8) # Keep this progress step
             
         # Create Beats object using the factory method which handles calculations
         try:
+            # Pass the extracted beat_counts to the factory method
             beats_obj = Beats.from_timestamps(
                 timestamps=beat_timestamps,
-                downbeat_indices=downbeat_indices,
                 meter=meter,
+                beat_counts=beat_counts, # Pass the counts from the processor
                 tolerance_percent=self.tolerance_percent,
                 min_consistent_measures=self.min_consistent_measures
             )
@@ -126,28 +124,27 @@ class BeatDetector:
             
         return beats_obj
     
-    def _detect_downbeats(self, audio_file: str, beat_timestamps: np.ndarray) -> Tuple[np.ndarray, int]:
+    def _detect_downbeats(self, audio_file: str) -> Tuple[np.ndarray, int]:
         """
-        Detect downbeats using madmom and determine the meter.
-        
+        Detect beats and downbeats using madmom's DBNDownBeatTrackingProcessor.
+        Determines the meter based on the processor's output.
+
         Parameters:
-        -----------
+        ----------
         audio_file : str
             Path to the input audio file
-        beat_timestamps : np.ndarray
-            Array of beat timestamps
             
         Returns:
         --------
         Tuple[np.ndarray, int]
             Tuple containing:
-                - downbeat_indices: Array of indices into `beat_timestamps` that are downbeats.
+                - raw_beats_with_counts: Nx2 array where column 0 is timestamp, column 1 is beat count.
                 - meter: Detected meter (time signature numerator, e.g., 2, 3, 4).
                 
         Raises:
         ------
         BeatCalculationError
-            If downbeats cannot be determined or meter is invalid.
+            If beats/downbeats cannot be determined or meter is invalid.
         """
         # --- Input Validation --- 
         if not isinstance(self.min_bpm, int) or self.min_bpm <= 0:
@@ -158,85 +155,42 @@ class BeatDetector:
             )
         # --- End Validation --- 
         
-        # Detect downbeats using RNN
+        # Detect downbeat activations first
         downbeat_activations = self.downbeat_processor(audio_file)
         
-        # Pass SUPPORTED_METERS to let madmom determine best fit based on activations
-        # Add fps=100 and rely on default internal histogram processor
-        # Use the initialized downbeat tracker
+        # Pass activations to the DBNDownBeatTrackingProcessor
+        # This processor handles both beat tracking and downbeat counting
         raw_downbeats = self.downbeat_tracker(downbeat_activations)
         
         if raw_downbeats is None or len(raw_downbeats) == 0:
-            raise BeatCalculationError("Madmom DBNDownBeatTrackingProcessor returned no downbeats.")
+            # Return empty array and potentially default meter or raise error?
+            # Raising error aligns with fail-fast if no beats are detected at all.
+            raise BeatCalculationError("Madmom DBNDownBeatTrackingProcessor returned no beats.")
             
         # Determine meter from the max beat number reported by madmom
         try:
+            # Ensure there's a second column before accessing it
+            if raw_downbeats.shape[1] < 2:
+                raise BeatCalculationError("Madmom output array has unexpected shape (less than 2 columns).")
+                
             meter = int(np.max(raw_downbeats[:, 1]))
             if meter not in SUPPORTED_METERS:
-                 # This case might indicate poor detection or unusual music
                  # Fallback or specific handling might be needed. Raising error for now.
-                 raise BeatCalculationError(f"Madmom detected an unsupported meter: {meter}")
+                 # Check if meter is 0 or negative, which is definitely invalid
+                 if meter <= 0:
+                      raise BeatCalculationError(f"Madmom detected an invalid meter: {meter}")
+                 # If it's positive but not in SUPPORTED_METERS, issue a warning and maybe default?
+                 # For now, strict failure as per instructions.
+                 warnings.warn(f"Madmom detected an unsupported meter: {meter}. Using it anyway.")
+                 # raise BeatCalculationError(f"Madmom detected an unsupported meter: {meter}")
         except (ValueError, IndexError) as e:
              raise BeatCalculationError(f"Could not determine meter from madmom output: {e}") from e
 
-        # Extract timestamps where beat_number is 1 (downbeats)
-        downbeat_timestamps = raw_downbeats[raw_downbeats[:, 1] == 1, 0]
-
-        if len(downbeat_timestamps) == 0:
-            # This can happen if detection is poor or meter > 1 but no beat '1' detected
-            raise BeatCalculationError("No downbeats (beat number 1) found in madmom output.")
-
-        # Find the indices in beat_timestamps that correspond to downbeat_timestamps
-        print(f"beat_timestamps: {beat_timestamps}")
-        print(f"downbeat_timestamps: {downbeat_timestamps}")
-        downbeat_indices = self._align_downbeats_to_beats(beat_timestamps, downbeat_timestamps)
-        print(f"downbeat_indices: {downbeat_indices}")
-
-        if not downbeat_indices:
-             raise BeatCalculationError("Could not align any downbeat timestamps with detected beat timestamps.")
+        # No longer need to extract only downbeats or align
+        # Remove: downbeat_timestamps = raw_downbeats[raw_downbeats[:, 1] == 1, 0]
+        # Remove: if len(downbeat_timestamps) == 0: ...
+        # Remove: downbeat_indices = self._align_downbeats_to_beats(beat_timestamps, downbeat_timestamps)
+        # Remove: if not downbeat_indices: ...
              
-        return np.array(downbeat_indices, dtype=int), meter
-
-    def _align_downbeats_to_beats(
-        self, 
-        beat_timestamps: np.ndarray, 
-        downbeat_timestamps: np.ndarray, 
-        search_tolerance: float = 0.02
-    ) -> List[int]:
-        """
-        Align downbeat timestamps to the closest beat timestamps within a tolerance.
-
-        Parameters:
-        -----------
-        beat_timestamps : np.ndarray
-            Sorted array of detected beat timestamps.
-        downbeat_timestamps : np.ndarray
-            Sorted array of detected downbeat timestamps.
-        search_tolerance : float, optional
-            Tolerance in seconds for matching timestamps (default is 0.02).
-
-        Returns:
-        --------
-        List[int]
-            List of indices in `beat_timestamps` that correspond to the aligned downbeats.
-        """
-        downbeat_indices = []
-        current_beat_idx = 0
-        
-        for dbt in downbeat_timestamps:
-            # Search efficiently in the sorted beat timestamps array
-            while current_beat_idx < len(beat_timestamps) and beat_timestamps[current_beat_idx] < dbt - search_tolerance:
-                current_beat_idx += 1
-            
-            # Add a small epsilon to the tolerance comparison to handle floating point inaccuracies
-            # This ensures that differences *exactly* equal to the tolerance are included.
-            epsilon = 1e-9 
-            if current_beat_idx < len(beat_timestamps) and abs(beat_timestamps[current_beat_idx] - dbt) <= search_tolerance + epsilon:
-                downbeat_indices.append(current_beat_idx)
-                # Move past this beat for the next search to avoid re-matching
-                current_beat_idx += 1
-            # else: Downbeat timestamp didn't align closely with any beat timestamp. 
-            # Consider logging or warning if necessary, but per fail-fast, we might just let the final check catch it.
-            # print(f"Warning: Downbeat at time {dbt:.3f} did not align with any detected beat timestamp.")
-
-        return downbeat_indices
+        # Return the full array and the determined meter
+        return raw_downbeats, meter

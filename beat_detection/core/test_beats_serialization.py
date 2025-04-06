@@ -100,15 +100,17 @@ def test_load_beats_incorrect_type(tmp_path: Path):
 def create_sample_beats_for_serialization() -> Beats:
     """Creates a predictable Beats object for serialization tests."""
     timestamps = np.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0])
-    downbeats = np.array([0, 4, 8]) # Meter 4
     meter = 4
+    num_beats = len(timestamps)
+    # Generate counts based on meter
+    beat_counts = np.array([(i % meter) + 1 for i in range(num_beats)])
     
     # Use from_timestamps to ensure consistency with creation logic
     # Need meter * min_consistent_measures = 4 * 1 = 4 beats minimum. We have 10.
     beats_obj = Beats.from_timestamps(
         timestamps=timestamps,
-        downbeat_indices=downbeats,
         meter=meter,
+        beat_counts=beat_counts, # Add counts
         tolerance_percent=15.0, 
         min_consistent_measures=1 # Lower requirement for this test case
     )
