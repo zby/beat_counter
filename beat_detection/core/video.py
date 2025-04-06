@@ -111,14 +111,6 @@ class BeatVideoGenerator:
             # Cache the frame
             self._frame_cache[0] = no_beat_frame
             print("  - Generated 'no beat' frame")
-
-        if "not_accented_first" not in self._frame_cache:
-            # Create a plain background
-            not_accented_first_frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
-            not_accented_first_frame[:, :] = self.bg_color
-            # Cache the frame
-            self._frame_cache["not_accented_first"] = not_accented_first_frame
-            print("  - Generated 'not accent first' frame")
         
         # Generate frames for each beat count (1 to meter_value)
         for beat_count in range(1, meter_value + 1):
@@ -350,44 +342,16 @@ class BeatVideoGenerator:
         numpy.ndarray
             Frame with beat counter from cache
         """
-        # Get meter from beats object
-        meter_value = beats.meter
         
-        # Get current beat information using beats object
-        beat_info = beats.get_beat_info_at_time(t)
+        # Get current beat count, time since last beat, and beat index
+        beat_count, time_since_beat, beat_idx = beats.get_info_at_time(t)
         
-        # If we're before the first beat or no beat is found, use the "no beat" frame
-        if beat_info is None:
-            return self._frame_cache[0]
-            
-        # Extract beat index and other information
-        beat_idx = beat_info.index
-        beat_count = beat_info.beat_count
-        is_downbeat = beat_info.is_downbeat
-        
-        # Check if the beat is within the counting range
-        if beat_idx < beats.start_regular_beat_idx or beat_idx > beats.end_regular_beat_idx:
+        # If beat_count is 0, return the "no beat" frame
+        if beat_count == 0:
             return self._frame_cache[0]
         
-        # Get time of the current beat
-        beat_time = beats.timestamps[beat_idx]
-        time_since_beat = t - beat_time
-        
-        # Special case for non-accented first beats (beat count 1 that is not a downbeat)
-        if beat_count == 1 and not is_downbeat:
-            cache_key = "not_accented_first"
-        else:
-            # Handle beat counts that exceed the meter value
-            if beat_count > meter_value:
-                print(f"Warning: Beat count {beat_count} exceeds meter value {meter_value}, using modulo")
-                cache_key = (beat_count - 1) % meter_value + 1
-            else:
-                cache_key = beat_count
-        
-        # Debug print but only at beat transitions to reduce output
-        if time_since_beat < 0.5 / self.fps:  # Just at the start of a beat
-            beat_type = "DOWNBEAT" if is_downbeat else "beat"
-            print(f"{beat_type} at t={t:.3f}s: {beat_count}/{meter_value} (beat #{beat_idx+1})")
+        # Use beat_count directly as the cache key - Beats class already ensures it's valid
+        cache_key = beat_count
         
         # Return the cached frame
         return self._frame_cache[cache_key]
@@ -466,7 +430,7 @@ class BeatVideoGenerator:
                 progress = 0.3 + (t / audio.duration) * 0.5
                 
                 # Find which beat we're currently processing
-                beat_info = beats.get_beat_info_at_time(t)
+                _, _, beat_idx = beats.get_info_at_time(t)
                 
                 # Report progress in two cases:
                 # 1. When we move to a new beat
@@ -475,9 +439,8 @@ class BeatVideoGenerator:
                 time_since_last_update = current_time - last_reported["time"]
                 
                 # Only update progress if we have valid beat info
-                if beat_info is not None:
-                    beat_idx = beat_info.index
-                    if ((beat_idx != last_reported["beat"]) or (time_since_last_update >= 1.0)) and beat_idx >= 0 and beat_idx < len(beat_timestamps):
+                if beat_idx >= 0 and beat_idx < len(beat_timestamps):
+                    if (beat_idx != last_reported["beat"]) or (time_since_last_update >= 1.0):
                         # Update last reported beat and time
                         last_reported["beat"] = beat_idx
                         last_reported["time"] = current_time

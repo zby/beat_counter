@@ -200,6 +200,54 @@ def test_beat_info_access():
     assert beat_info_exact.is_downbeat
     assert beat_info_exact.beat_count == 1
 
+def test_get_info_at_time():
+    """Test the get_info_at_time method returns correct count and time since beat."""
+    # Create test beats with 4/4 time signature, 8 beats at 0.5s intervals
+    beats = create_test_beats(meter=4, num_beats=8, interval=0.5, min_measures=2)
+    
+    # Test at exact beat times
+    for i in range(8):
+        time_point = i * 0.5  # Beat times: 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5
+        expected_count = (i % 4) + 1  # Expected counts: 1, 2, 3, 4, 1, 2, 3, 4
+        count, time_since, beat_idx = beats.get_info_at_time(time_point)
+        assert count == expected_count
+        assert time_since == 0.0  # Exactly on the beat, so time_since should be 0
+        assert beat_idx == i  # Beat index should match i
+    
+    # Test between beats
+    count, time_since, beat_idx = beats.get_info_at_time(1.25)  # Between beats at 1.0 and 1.5
+    assert count == 3  # Should be beat count 3
+    assert abs(time_since - 0.25) < 1e-6  # Should be 0.25 seconds after the beat
+    assert beat_idx == 2  # Should be beat at index 2 (timestamp 1.0)
+    
+    # Test time before first beat
+    count, time_since, beat_idx = beats.get_info_at_time(-0.1)  # Before first beat
+    assert count == 0  # No beat count before first beat
+    assert time_since == 0.0  # No prior beat
+    assert beat_idx == -1  # No valid beat index
+    
+    # Test with irregular beats
+    # Create a beat sequence with irregular beats at the beginning
+    irregular_beats = create_test_beats(meter=4, num_beats=8, interval=0.5, min_measures=2)
+    irregular_beats.start_regular_beat_idx = 4  # Make first 4 beats irregular
+    
+    # Check irregular beats return count 0
+    for i in range(4):
+        time_point = i * 0.5  # First 4 beats: 0.0, 0.5, 1.0, 1.5
+        count, time_since, beat_idx = irregular_beats.get_info_at_time(time_point)
+        assert count == 0  # Irregular beats should have count 0
+        assert abs(time_since - 0.0) < 1e-6  # Time since should still be 0 at the exact beat time
+        assert beat_idx == i  # Beat index should still be correct
+    
+    # Check regular beats still return proper counts
+    for i in range(4, 8):
+        time_point = i * 0.5  # Last 4 beats: 2.0, 2.5, 3.0, 3.5
+        expected_count = (i % 4) + 1  # Expected counts: 1, 2, 3, 4
+        count, time_since, beat_idx = irregular_beats.get_info_at_time(time_point)
+        assert count == expected_count
+        assert abs(time_since - 0.0) < 1e-6
+        assert beat_idx == i
+
 def test_filtering_regular_irregular():
     """Test filtering beats into regular/irregular lists."""
     # Combine interval and count irregularities
@@ -463,3 +511,59 @@ def test_regular_section_detection_single_beat():
     assert beats.regular_stats.total_beats == 1
     # For a single beat, there are no intervals, so the median interval is 0.0
     assert np.isclose(beats.regular_stats.median_interval, 0.0)
+
+def test_regular_sequence_starts_from_downbeat():
+    """Test that the longest regular sequence always starts from a downbeat."""
+    # Create a sequence of beats with the following structure:
+    # - First 3 beats: regular intervals but NOT starting with a downbeat
+    # - Next 6 beats: regular intervals starting with a downbeat
+    # - Last 3 beats: irregular
+    
+    # Create timestamps with regular intervals
+    timestamps = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.7])  # Last beat irregular
+
+    # Create beat counts where the first beat is NOT a downbeat
+    # First 3 beats: 2,3,4 (not starting with a downbeat)
+    # Next 6 beats: 1,2,3,4,1,2 (starting with a downbeat at position 3)
+    # Last 3 beats: 3,4,1 (with irregular interval for the last beat)
+    beat_counts = np.array([2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1])
+    
+    beats = Beats.from_timestamps(
+        timestamps=timestamps,
+        meter=4,
+        beat_counts=beat_counts,
+        tolerance_percent=10.0,
+        min_consistent_measures=2  # Require at least 2 complete measures
+    )
+    
+    # Regular sequence should start at index 3 (beat_count = 1) and end at index 8
+    assert beats.start_regular_beat_idx == 3
+    
+    # Even though the first 3 beats have regular intervals, they don't start with a downbeat,
+    # so the algorithm should prefer the sequence starting at index 3
+    
+    # Create another test case with multiple potential downbeat-starting sequences
+    # but different lengths
+    timestamps2 = np.array([
+        0.0, 0.5, 1.0, 1.5,  # 4 regular beats starting with downbeat
+        2.0, 2.7, 3.2, 3.7,  # 4 irregular beats
+        4.0, 4.5, 5.0, 5.5, 6.0, 6.5  # 6 regular beats starting with downbeat
+    ])
+    
+    beat_counts2 = np.array([
+        1, 2, 3, 4,          # First sequence (starts with downbeat)
+        1, 2, 3, 4,          # Irregular sequence (but still has downbeat)
+        1, 2, 3, 4, 1, 2     # Longest sequence (starts with downbeat)
+    ])
+    
+    beats2 = Beats.from_timestamps(
+        timestamps=timestamps2,
+        meter=4,
+        beat_counts=beat_counts2,
+        tolerance_percent=10.0,
+        min_consistent_measures=1  # Only require 1 measure for this test
+    )
+    
+    # The algorithm should choose the longest sequence starting with a downbeat
+    assert beats2.start_regular_beat_idx == 8  # Start of the third sequence (longest)
+    assert beats2.end_regular_beat_idx == 14   # End of the third sequence (inclusive)

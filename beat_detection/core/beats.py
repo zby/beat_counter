@@ -326,6 +326,34 @@ class Beats:
         beat_info = self.get_beat_info_at_time(t)
         return beat_info.beat_count if beat_info else 0
 
+    def get_info_at_time(self, t: float) -> Tuple[int, float, int]:
+        """
+        Get count, time since last beat, and beat index at time t.
+        
+        Returns a tuple of (count, time_since_beat, beat_idx) where:
+        - count: The beat count (0 if before first beat or not in regular section)
+        - time_since_beat: Time in seconds since the last beat (0.0 if before first beat)
+        - beat_idx: Index of the beat in the beat_list (-1 if before first beat)
+        
+        The count will be 0 for any beats outside the regular interval,
+        otherwise it will be the beat_count from the BeatInfo.
+        """
+        beat_info = self.get_beat_info_at_time(t)
+        
+        # If no beat found or before first beat
+        if beat_info is None:
+            return 0, 0.0, -1
+            
+        # Extract beat index
+        beat_idx = beat_info.index
+        
+        # Return 0 count if the beat is outside the regular interval
+        if beat_idx < self.start_regular_beat_idx or beat_idx > self.end_regular_beat_idx:
+            return 0, t - beat_info.timestamp, beat_idx
+            
+        # Return count and time since beat for regular intervals
+        return beat_info.beat_count, t - beat_info.timestamp, beat_idx
+
     def is_downbeat_at_time(self, t: float) -> bool:
         """Check if the beat at time t is a downbeat."""
         beat_info = self.get_beat_info_at_time(t)
@@ -375,8 +403,9 @@ class Beats:
         Find the longest sequence of beats where intervals are regular and beat counts are determined.
 
         Regularity Conditions:
-        1. All beats within the sequence must have `beat_count > 0`.
-        2. The time interval between any two consecutive beats in the sequence must be
+        1. The sequence must start with a downbeat (beat_count == 1).
+        2. All beats within the sequence must have `beat_count > 0`.
+        3. The time interval between any two consecutive beats in the sequence must be
            within `tolerance_interval` of the overall `median_interval`.
 
         Parameters:
@@ -427,15 +456,15 @@ class Beats:
         best_end = -1
         max_len = 0
 
-        # Handle the first beat separately
-        current_start = 0 if beat_list[0].beat_count > 0 else -1
+        # Only start a sequence from a downbeat (beat count 1)
+        current_start = 0 if beat_list[0].beat_count == 1 else -1
 
         # Start from the second beat (if available)
         for i in range(1, len(beat_list)):
             # First, check if we're starting a new sequence
             if current_start == -1:
-                # Only beat_count matters for starting a new sequence
-                if beat_list[i].beat_count > 0:
+                # Only start new sequences at downbeats (beat_count == 1)
+                if beat_list[i].beat_count == 1:
                     current_start = i
             # If we're in an existing sequence, check interval regularity
             elif beat_list[i].beat_count > 0:
@@ -447,7 +476,8 @@ class Beats:
                         max_len = current_len
                         best_start = current_start
                         best_end = i - 1
-                    current_start = -1
+                    # Look for a new sequence only if this beat is a downbeat
+                    current_start = i if beat_list[i].beat_count == 1 else -1
             else:
                 # Irregular beat_count - end the sequence
                 current_len = (i - 1) - current_start + 1
@@ -455,7 +485,8 @@ class Beats:
                     max_len = current_len
                     best_start = current_start
                     best_end = i - 1
-                current_start = -1
+                # Look for a new sequence only if this beat is a downbeat
+                current_start = i if beat_list[i].beat_count == 1 else -1
 
         # --- Check the last sequence after the loop finishes ---
         if current_start != -1:
