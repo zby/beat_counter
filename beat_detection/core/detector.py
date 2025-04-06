@@ -54,6 +54,13 @@ class BeatDetector:
         self.downbeat_processor = RNNDownBeatProcessor()
         # Initialize beat tracker using self.fps
         self.beat_tracker = BeatTrackingProcessor(fps=self.fps)
+        # Initialize downbeat tracker
+        self.downbeat_tracker = DBNDownBeatTrackingProcessor(
+            beats_per_bar=SUPPORTED_METERS, # Let madmom choose based on activation
+            min_bpm=self.min_bpm, 
+            max_bpm=self.max_bpm, 
+            fps=self.fps # Use self.fps here too
+        )
     
     def detect_beats(
         self,
@@ -156,15 +163,8 @@ class BeatDetector:
         
         # Pass SUPPORTED_METERS to let madmom determine best fit based on activations
         # Add fps=100 and rely on default internal histogram processor
-        downbeat_tracker = DBNDownBeatTrackingProcessor(
-            beats_per_bar=SUPPORTED_METERS, # Let madmom choose based on activation
-            min_bpm=self.min_bpm, 
-            max_bpm=self.max_bpm, 
-            fps=self.fps # Use self.fps here too
-        )
-        
-        # Get raw downbeat info [timestamp, beat_number]
-        raw_downbeats = downbeat_tracker(downbeat_activations)
+        # Use the initialized downbeat tracker
+        raw_downbeats = self.downbeat_tracker(downbeat_activations)
         
         if raw_downbeats is None or len(raw_downbeats) == 0:
             raise BeatCalculationError("Madmom DBNDownBeatTrackingProcessor returned no downbeats.")
