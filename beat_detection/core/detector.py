@@ -7,9 +7,7 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional, Callable, Protocol
-from madmom.features.beats import RNNBeatProcessor, BeatTrackingProcessor
 from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
-from madmom.features.tempo import CombFilterTempoHistogramProcessor
 from beat_detection.utils.constants import SUPPORTED_METERS
 from beat_detection.core.beats import Beats, BeatCalculationError
 
@@ -50,7 +48,6 @@ class BeatDetector:
         self.fps = fps
         
         # Initialize processors
-        self.beat_processor = RNNBeatProcessor()
         self.downbeat_processor = RNNDownBeatProcessor()
         # Initialize downbeat tracker
         self.downbeat_tracker = DBNDownBeatTrackingProcessor(

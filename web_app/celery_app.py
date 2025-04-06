@@ -18,7 +18,7 @@ from web_app.storage import FileMetadataStorage
 from web_app.utils.task_utils import (
     IOCapture, create_progress_updater, safe_error, safe_info, safe_print
 )
-from beat_detection.core.detector import BeatDetector, MadmomBeatProcessor
+from beat_detection.core.detector import BeatDetector
 from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.utils import reporting
 from beat_detection.utils.beat_file import load_beat_data, save_beats
@@ -90,7 +90,9 @@ app.context = AppContext(
 # --- Celery Tasks (Base class removed) ---
 
 @app.task(bind=True, name='detect_beats_task', queue='beat_detection')
-def detect_beats_task(self: Task, audio_file: str, output_dir: str) -> dict:
+def detect_beats_task(self: Task, audio_file: str, output_dir: str, min_bpm: int = 60, max_bpm: int = 200, 
+                     tolerance_percent: float = 10.0, min_consistent_measures: int = 1, 
+                     beats_per_bar: int = None) -> dict:
     """
     Detect beats in an audio file.
     
@@ -100,6 +102,16 @@ def detect_beats_task(self: Task, audio_file: str, output_dir: str) -> dict:
         Path to input audio file
     output_dir : str
         Path to output directory
+    min_bpm : int
+        Minimum BPM to detect (default: 60)
+    max_bpm : int
+        Maximum BPM to detect (default: 200)
+    tolerance_percent : float
+        Percentage tolerance for beat intervals (default: 10.0)
+    min_consistent_measures : int
+        Minimum number of consistent measures for stable section analysis (default: 1)
+    beats_per_bar : int
+        Number of beats per bar for downbeat detection (default: None, will try all supported meters)
         
     Returns:
     --------
@@ -110,20 +122,17 @@ def detect_beats_task(self: Task, audio_file: str, output_dir: str) -> dict:
         # Create output directory if it doesn't exist
         ensure_output_dir(output_dir)
         
-        # Configure processor and detector
-        processor = MadmomBeatProcessor(
-            min_bpm=60,
-            max_bpm=200,
-            fps=30
-        )
+        # Create progress updater callback
+        update_progress = create_progress_updater(self, {"file": audio_file}, 'beat_detection_progress')
         
+        # Configure detector
         detector = BeatDetector(
-            beat_processor=processor.process_beats,
-            downbeat_processor=processor.process_downbeats,
-            beat_tracker=processor.track_beats,
-            downbeat_tracker=processor.track_downbeats,
-            skip_intro=True,
-            skip_ending=True
+            min_bpm=min_bpm,
+            max_bpm=max_bpm,
+            tolerance_percent=tolerance_percent,
+            min_consistent_measures=min_consistent_measures,
+            beats_per_bar=beats_per_bar,
+            progress_callback=update_progress
         )
         
         # Detect beats
@@ -144,7 +153,7 @@ def detect_beats_task(self: Task, audio_file: str, output_dir: str) -> dict:
         }
         
     except Exception as e:
-        logger.error(f"Error processing {audio_file}: {str(e)}")
+        logger.error(f"Error processing {audio_file}: {str(e)}", exc_info=True)
         return {
             'status': 'error',
             'error': str(e)
@@ -152,11 +161,22 @@ def detect_beats_task(self: Task, audio_file: str, output_dir: str) -> dict:
 
 
 @app.task(bind=True, name='generate_video_task', queue='video_generation')
-def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]: # self is now celery.Task
-    """Celery task for generating a beat visualization video."""
+def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]:
+    """
+    Celery task for generating a beat visualization video.
+    
+    Parameters:
+    -----------
+    file_id : str
+        Identifier for the file to process
+        
+    Returns:
+    --------
+    dict
+        Task result with status and file paths
+    """
     task_info = {'file_id': file_id}
-    # self._io_capture = IOCapture() # Avoid modifying 'self' directly
-    io_capture = IOCapture() # Manage IOCapture separately
+    io_capture = IOCapture()
     old_cwd = None
 
     with io_capture:
@@ -197,13 +217,11 @@ def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]: # self is n
             logger.info(f"Changed working directory to: {job_dir}")
 
             # --- Progress & Generation ---
-            # Pass io_capture explicitly if needed by updater, or manage output differently
             update_progress = create_progress_updater(self, task_info, 'video_generation_output')
             update_progress("Initializing video generation", 0)
 
             try:
                 beat_timestamps, downbeats, _, _, detected_meter = load_beat_data(beats_path)
-                # --- FIX: Check for None or empty array explicitly ---
                 if beat_timestamps is None or beat_timestamps.size == 0:
                     raise ValueError("No valid beat timestamps found in beats file.")
                 logger.info(f"Loaded {len(beat_timestamps)} beats from {beats_path}")
@@ -234,10 +252,10 @@ def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]: # self is n
                  raise
 
             update_progress("Video generation complete", 1.0)
-            final_stdout, final_stderr = io_capture.get_output() # Use separate capture object
+            final_stdout, final_stderr = io_capture.get_output()
 
-            logger.info(f"Video generation successful for file_id: {file_id}")
             return {
+                "status": "success",
                 "file_id": file_id,
                 "video_file": video_output,
                 "video_generation_output": {"stdout": final_stdout, "stderr": final_stderr}
@@ -247,21 +265,15 @@ def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]: # self is n
             error_msg = f"Video generation error for {file_id}: {type(e).__name__} - {e}"
             logger.error(error_msg, exc_info=True)
             safe_error(error_msg)
-            # Use separate io_capture object
             io_capture.write_stderr(error_msg + "\n")
             final_stdout, final_stderr = io_capture.get_output()
 
-            try:
-                self.update_state(state=states.FAILURE, meta={
-                    'file_id': file_id,
-                    'exc_type': type(e).__name__,
-                    'exc_message': str(e),
-                    'video_generation_output': {'stdout': final_stdout, 'stderr': final_stderr}
-                })
-            except Exception as update_state_e:
-                 logger.error(f"Failed to update Celery task state for {file_id} during error handling: {update_state_e}")
-
-            raise e
+            return {
+                "status": "error",
+                "file_id": file_id,
+                "error": str(e),
+                "video_generation_output": {"stdout": final_stdout, "stderr": final_stderr}
+            }
 
         finally:
             if old_cwd and Path.cwd() != old_cwd:
@@ -272,9 +284,21 @@ def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]: # self is n
                     logger.error(f"Error restoring original working directory ({old_cwd}): {chdir_e}")
 
 
-@app.task(bind=True)
-def debug_task(self: Task): # self is now celery.Task
-    """Simple task for debugging worker setup."""
+@app.task(bind=True, name='debug_task')
+def debug_task(self: Task):
+    """
+    Simple task for debugging worker setup.
+    
+    Returns:
+    --------
+    dict
+        Debug information about the task execution
+    """
+    task_id = self.request.id if self.request else "unknown"
     logger.info(f'Debug task executed. Request: {self.request!r}')
-    print(f'Debug task executed. Request: {self.request!r}')
-    return {"status": "ok", "request_id": self.request.id}
+    
+    return {
+        "status": "ok", 
+        "request_id": task_id,
+        "worker_hostname": self.request.hostname if self.request else "unknown"
+    }
