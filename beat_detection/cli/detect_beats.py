@@ -21,11 +21,10 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Tuple
 
-from beat_detection.core.detector import BeatDetector, MadmomBeatProcessor
-from beat_detection.core.video import BeatVideoGenerator
+from beat_detection.core.detector import BeatDetector 
 from beat_detection.utils import file_utils, reporting
 from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from beat_detection.utils.file_utils import get_audio_files, ensure_output_dir
+from beat_detection.utils.file_utils import find_audio_files
 from beat_detection.utils.beat_file import save_beats
 
 
@@ -71,14 +70,6 @@ def parse_args():
         help="Percentage tolerance for beat intervals (default: 10.0)"
     )
     parser.add_argument(
-        "--no-skip-intro", action="store_true",
-        help="Don't attempt to detect and skip intro sections"
-    )
-    parser.add_argument(
-        "--no-skip-ending", action="store_true",
-        help="Don't attempt to detect and skip ending sections"
-    )
-    parser.add_argument(
         "--beats-per-bar", type=int, default=None,
         help="Number of beats per bar for downbeat detection (default: None, will try all supported meters)"
     )
@@ -92,6 +83,10 @@ def parse_args():
         "--no-progress", action="store_true",
         help="Don't show progress bar"
     )
+    parser.add_argument(
+        "--min-measures", type=int, default=1,
+        help="Minimum number of consistent measures for stable section analysis (default: 5)"
+    )
     
     return parser.parse_args()
 
@@ -100,11 +95,11 @@ def process_file(
     audio_file: str,
     output_dir: str,
     detector: BeatDetector,
-    video_generator: Optional[BeatVideoGenerator] = None,
     verbose: bool = False
 ) -> bool:
     """
     Process a single audio file.
+    Raises exceptions if processing fails.
     
     Parameters:
     -----------
@@ -114,77 +109,57 @@ def process_file(
         Path to output directory
     detector : BeatDetector
         Beat detector instance
-    video_generator : Optional[BeatVideoGenerator]
-        Optional video generator instance
     verbose : bool
         Whether to print verbose output
         
     Returns:
     --------
     bool
-        True if processing was successful
+        True if processing was successful (exception indicates failure)
     """
-    try:
-        # Create output directory if it doesn't exist
-        ensure_output_dir(output_dir)
+    # Create output directory if it doesn't exist
+    pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Get base filename without extension
+    base_name = Path(audio_file).stem
+    
+    # Detect beats
+    beats = detector.detect_beats(audio_file)
+    
+    # Save beat data
+    beat_file = os.path.join(output_dir, f"{base_name}.beats")
+    save_beats(beat_file, beats)
+    
+    if verbose:
+        logging.info(f"Saved beat data to {beat_file}")
         
-        # Get base filename without extension
-        base_name = Path(audio_file).stem
-        
-        # Detect beats
-        beats = detector.detect_beats(audio_file)
-        
-        # Save beat data
-        beat_file = os.path.join(output_dir, f"{base_name}.beats")
-        save_beats(beat_file, beats)
-        
-        if verbose:
-            logging.info(f"Saved beat data to {beat_file}")
-            
-        # Generate video if requested
-        if video_generator:
-            video_file = os.path.join(output_dir, f"{base_name}.mp4")
-            video_generator.generate_video(beats, video_file)
-            
-            if verbose:
-                logging.info(f"Generated video at {video_file}")
-                
-        return True
-        
-    except Exception as e:
-        logging.error(f"Error processing {audio_file}: {str(e)}")
-        return False
+    return True
 
 
 def main():
     """Main entry point for the CLI."""
     args = parse_args()
     
-    # Configure processor and detector based on args
-    processor = MadmomBeatProcessor(
-        min_bpm=args.min_bpm,
-        max_bpm=args.max_bpm,
-        fps=args.fps
-    )
+    # Setup progress bar if not quiet and not disabled
+    pbar = None
+    progress_callback = None
+    if not args.quiet and not args.no_progress:
+        pbar = tqdm(total=100, desc="Processing", unit="%", ncols=80)
+        def update_progress(progress_value: float):
+            if pbar:
+                pbar.n = int(progress_value * 100) # Update progress based on 0.0-1.0 value
+                pbar.refresh()
+        progress_callback = update_progress
     
+    # Configure detector based on args
     detector = BeatDetector(
-        beat_processor=processor.process_beats,
-        downbeat_processor=processor.process_downbeats,
-        beat_tracker=processor.track_beats,
-        downbeat_tracker=processor.track_downbeats,
         min_bpm=args.min_bpm,
         max_bpm=args.max_bpm,
-        fps=args.fps,
         tolerance_percent=args.tolerance,
+        min_consistent_measures=args.min_measures,
         beats_per_bar=args.beats_per_bar,
-        skip_intro=not args.no_skip_intro,
-        skip_ending=not args.no_skip_ending
+        progress_callback=progress_callback
     )
-    
-    # Configure video generator if requested
-    video_generator = None
-    if args.generate_video:
-        video_generator = BeatVideoGenerator(fps=args.fps)
     
     # Determine base input and output directories
     input_base_dir = "data/input"
@@ -194,7 +169,7 @@ def main():
     input_path = args.input if args.input else input_base_dir
     
     # Find audio files to process
-    audio_files = file_utils.find_audio_files(input_path)
+    audio_files = find_audio_files(input_path)
     
     if not audio_files:
         print(f"No audio files found in {input_path}")
@@ -207,24 +182,30 @@ def main():
     results = []
     
     for audio_file in audio_files:
-        try:
-            if not args.quiet:
-                print(f"\nProcessing: {audio_file}")
-                print("=" * 80)
+        if pbar:
+            pbar.set_description(f"Processing {audio_file.name}")
+            pbar.reset() # Reset progress for new file
+        elif not args.quiet:
+             print(f"\nProcessing: {audio_file}")
+             print("=" * 80)
             
+        try:
             success = process_file(
                 str(audio_file),
                 str(output_base_dir),
                 detector,
-                video_generator,
                 not args.quiet
             )
             if success:
                 results.append((audio_file.name, success))
         except Exception as e:
-            print(f"Error processing {audio_file}: {e}")
+            # Log the full exception traceback
+            logging.exception(f"Error processing {audio_file}: {e}") 
             results.append((audio_file.name, False))
     
+    if pbar:
+        pbar.close()
+        
     # Generate summary if multiple files were processed
     if len(results) > 1 and not args.quiet:
         summary_file = output_base_dir / "batch_summary.txt"

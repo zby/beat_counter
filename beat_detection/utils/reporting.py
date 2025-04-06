@@ -6,267 +6,228 @@ import numpy as np
 import pathlib
 import json
 from typing import List, Dict, Tuple, Any, Optional, Union
-from ..core.detector import BeatStatistics
+# Import Beats class
+from ..core.beats import Beats, BeatStatistics # Assuming core is sibling to utils
 
 
-def save_beat_timestamps(timestamps: np.ndarray, output_file: Union[str, pathlib.Path], 
-                      downbeats: Optional[np.ndarray] = None,
-                      intro_end_idx: int = 0,
-                      ending_start_idx: Optional[int] = None,
-                      detected_meter: Optional[int] = None) -> None:
-    """
-    Save beat timestamps to a text file, including downbeat, intro, ending, and meter information.
-    
-    Parameters:
-    -----------
-    timestamps : numpy.ndarray
-        Array of beat timestamps in seconds
-    output_file : str or pathlib.Path
-        Path to the output file
-    downbeats : numpy.ndarray, optional
-        Array of indices that correspond to downbeats
-    intro_end_idx : int, optional
-        Index where the intro ends (0 if no intro detected)
-    ending_start_idx : int, optional
-        Index where the ending begins (len(timestamps) if no ending detected)
-    detected_meter : int, optional
-        Detected meter (time signature numerator, typically 2, 3, or 4)
-    """
-    from .beat_file import save_beat_data
-    
-    # Convert pathlib.Path to string if needed
-    if not isinstance(output_file, str):
-        output_file = str(output_file)
-    
-    # Use the dedicated beat_file module to save the data
-    save_beat_data(timestamps, output_file, downbeats, intro_end_idx, ending_start_idx, detected_meter)
-
-
-def get_beat_statistics_dict(stats: BeatStatistics, irregular_beats: List[int], 
-                            regular_stats: Optional[BeatStatistics] = None,
+def get_beat_statistics_dict(beats: Beats,
                             filename: Optional[str] = None,
-                            detected_meter: Optional[int] = None,
                             duration: Optional[float] = None) -> Dict[str, Any]:
     """
-    Convert beat statistics to a dictionary for JSON serialization.
-    
+    Convert beat statistics from a Beats object to a dictionary for JSON serialization.
+
     Parameters:
     -----------
-    stats : BeatStatistics
-        Beat statistics object for overall stats
-    irregular_beats : list of int
-        List of indices of irregular beats
-    regular_stats : BeatStatistics, optional
-        Statistics for the regular section only
+    beats : Beats
+        The Beats object containing the statistics.
     filename : str, optional
         Original filename to include in the report
-    detected_meter : int, optional
-        Detected meter (time signature numerator)
     duration : float, optional
         Duration of the audio in seconds
-        
+
     Returns:
     --------
     dict
-        Dictionary containing beat statistics
+        Dictionary containing beat statistics formatted for reporting.
     """
+    overall_stats = beats.overall_stats
+    regular_stats = beats.regular_stats
+    irregular_indices = beats.irregular_beat_indices
+
     stats_dict = {
-        "tempo_bpm": round(stats.tempo_bpm, 1),
-        "mean_interval": round(stats.mean_interval, 3),
-        "median_interval": round(stats.median_interval, 3),
-        "std_interval": round(stats.std_interval, 3),
-        "min_interval": round(stats.min_interval, 3),
-        "max_interval": round(stats.max_interval, 3),
-        "irregular_beats_count": len(irregular_beats),
-        "total_beats": stats.total_beats,
-        "irregularity_percent": round(stats.irregularity_percent, 1),
-        "irregular_beat_indices": irregular_beats
+        "tempo_bpm": round(overall_stats.tempo_bpm, 1),
+        "mean_interval": round(overall_stats.mean_interval, 3),
+        "median_interval": round(overall_stats.median_interval, 3),
+        "std_interval": round(overall_stats.std_interval, 3),
+        "min_interval": round(overall_stats.min_interval, 3),
+        "max_interval": round(overall_stats.max_interval, 3),
+        "irregular_beats_count": len(irregular_indices),
+        "total_beats": overall_stats.total_beats,
+        # Note: overall_stats.irregularity_percent is based on interval deviation
+        # Consider if a different definition based on final irregular_indices is needed here.
+        "irregularity_percent": round(overall_stats.irregularity_percent, 1),
+        "irregular_beat_indices": irregular_indices,
+        # Add regular section stats
+        "regular_section_tempo_bpm": round(regular_stats.tempo_bpm, 1),
+        "regular_section_mean_interval": round(regular_stats.mean_interval, 3),
+        "regular_section_median_interval": round(regular_stats.median_interval, 3),
+        "regular_section_std_interval": round(regular_stats.std_interval, 3),
+        "regular_section_min_interval": round(regular_stats.min_interval, 3),
+        "regular_section_max_interval": round(regular_stats.max_interval, 3),
+        "regular_section_irregularity_percent": round(regular_stats.irregularity_percent, 1),
+        "regular_section_total_beats": regular_stats.total_beats,
+        # Add info from Beats object itself
+        "detected_meter": beats.meter,
+        "tolerance_percent": beats.tolerance_percent,
+        "regular_section_start_idx": beats.start_regular_beat_idx,
+        "regular_section_end_idx": beats.end_regular_beat_idx
     }
-    
-    # Add regular section stats if available
-    if regular_stats:
-        stats_dict.update({
-            "regular_section_tempo_bpm": round(regular_stats.tempo_bpm, 1),
-            "regular_section_mean_interval": round(regular_stats.mean_interval, 3),
-            "regular_section_median_interval": round(regular_stats.median_interval, 3),
-            "regular_section_std_interval": round(regular_stats.std_interval, 3),
-            "regular_section_min_interval": round(regular_stats.min_interval, 3),
-            "regular_section_max_interval": round(regular_stats.max_interval, 3),
-            "regular_section_irregularity_percent": round(regular_stats.irregularity_percent, 1),
-            "regular_section_total_beats": regular_stats.total_beats
-        })
-    
+
     if filename:
         stats_dict["filename"] = filename
-        
-    if detected_meter is not None:
-        stats_dict["detected_meter"] = detected_meter
-        
+
     if duration is not None:
         stats_dict["duration"] = round(duration, 3)
-    
+
     return stats_dict
 
 
-def save_beat_statistics(stats: BeatStatistics, irregular_beats: List[int], 
-                        output_file: Union[str, pathlib.Path],
-                        regular_stats: Optional[BeatStatistics] = None,
-                        filename: Optional[str] = None,
-                        detected_meter: Optional[int] = None,
-                        duration: Optional[float] = None) -> None:
-    """
-    Save beat statistics to a JSON file.
-    
-    Parameters:
-    -----------
-    stats : BeatStatistics
-        Beat statistics object for overall stats
-    irregular_beats : list of int
-        List of indices of irregular beats
-    output_file : str or pathlib.Path
-        Path to the output file
-    regular_stats : BeatStatistics, optional
-        Statistics for the regular section only
-    filename : str, optional
-        Original filename to include in the report
-    detected_meter : int, optional
-        Detected meter (time signature numerator)
-    duration : float, optional
-        Duration of the audio in seconds
-    """
-    stats_dict = get_beat_statistics_dict(
-        stats, 
-        irregular_beats,
-        regular_stats=regular_stats,
-        filename=filename,
-        detected_meter=detected_meter,
-        duration=duration
-    )
-    
-    with open(output_file, 'w') as f:
-        json.dump(stats_dict, f, indent=4)
-
-
-def save_batch_summary(file_stats: List[Tuple[str, Tuple[BeatStatistics, List[int]]]], 
+def save_batch_summary(file_results: List[Tuple[str, Optional[Beats]]],
                        output_file: Union[str, pathlib.Path]) -> None:
     """
-    Save summary statistics for batch processing.
-    
+    Save summary statistics for batch processing results.
+
     Parameters:
     -----------
-    file_stats : list of (str, (BeatStatistics, List[int]))
-        List of tuples with filename and a tuple of (statistics, irregular_beats)
+    file_results : list of (str, Optional[Beats])
+        List of tuples with filename and the corresponding Beats object (or None if processing failed).
     output_file : str or pathlib.Path
-        Path to the output file
+        Path to the output summary text file.
     """
-    if not file_stats:
+    if not file_results:
         return
-    
-    # Filter out any None results
-    valid_stats = [(filename, stats_tuple) for filename, stats_tuple in file_stats if stats_tuple is not None]
-    
-    if not valid_stats:
-        with open(output_file, 'w') as f:
+
+    # Filter out None results (failed files)
+    valid_results = [(fname, b) for fname, b in file_results if b is not None]
+
+    output_path = pathlib.Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open('w', encoding='utf-8') as f:
+        if not valid_results:
             f.write("No valid statistics available for any processed files.\n")
-        return
-        
-    # Calculate summary statistics
-    tempos = [stats_tuple[0].tempo_bpm for _, stats_tuple in valid_stats]
-    avg_tempo = sum(tempos) / len(tempos)
-    min_tempo = min(tempos)
-    max_tempo = max(tempos)
-    
-    # Find file with most irregular beats
-    most_irregular = max(valid_stats, key=lambda x: x[1][0].irregularity_percent)
-    
-    with open(output_file, 'w') as f:
-        f.write(f"Summary Statistics for {len(valid_stats)} Files\n")
+            return
+
+        total_processed = len(file_results)
+        total_successful = len(valid_results)
+
+        # Calculate summary statistics from Beats objects
+        tempos = [b.overall_stats.tempo_bpm for _, b in valid_results]
+        avg_tempo = sum(tempos) / total_successful
+        min_tempo = min(tempos)
+        max_tempo = max(tempos)
+
+        # Find file with highest overall irregularity percentage
+        # Using overall_stats.irregularity_percent which is based on intervals
+        most_irregular = max(valid_results, key=lambda item: item[1].overall_stats.irregularity_percent)
+
+        f.write(f"Summary Statistics for {total_successful} / {total_processed} Files\n")
         f.write("=" * 50 + "\n\n")
         f.write(f"Average tempo: {avg_tempo:.1f} BPM\n")
-        f.write(f"Tempo range: {min_tempo:.1f} - {max_tempo:.1f} BPM\n\n")
+        f.write(f"Tempo range: {min_tempo:.1f} - {max_tempo:.1f} BPM\n")
+        f.write(f"Most irregular file (by interval deviation): {most_irregular[0]} ({most_irregular[1].overall_stats.irregularity_percent:.1f}%)\n\n")
         f.write("Individual File Statistics:\n")
         f.write("-" * 50 + "\n")
-        for filename, (stats, _) in valid_stats:
-            f.write(f"{filename}: {stats.tempo_bpm:.1f} BPM, {stats.irregularity_percent:.1f}% irregular\n")
+        for filename, beats_obj in valid_results:
+            f.write(f"{filename}: {beats_obj.overall_stats.tempo_bpm:.1f} BPM, {beats_obj.overall_stats.irregularity_percent:.1f}% irregular intervals\n")
+
+        # Add a section for files that failed
+        failed_files = [fname for fname, b in file_results if b is None]
+        if failed_files:
+            f.write("\nFiles that failed processing:\n")
+            f.write("-" * 50 + "\n")
+            for fname in failed_files:
+                f.write(f"{fname}\n")
 
 
-def print_beat_timestamps(timestamps: np.ndarray, irregular_beats: List[int] = None, 
-                         downbeats: Optional[np.ndarray] = None) -> None:
+def print_beat_timestamps(beats: Beats) -> None:
     """
-    Print beat timestamps to the console.
-    
+    Print beat timestamps from a Beats object to the console.
+
     Parameters:
     -----------
-    timestamps : numpy.ndarray
-        Array of beat timestamps in seconds
-    irregular_beats : list of int, optional
-        List of indices of irregular beats to mark
-    downbeats : numpy.ndarray, optional
-        Array of indices that correspond to downbeats
+    beats : Beats
+        The Beats object containing the beat information.
     """
     print("Detected Beats (in seconds):")
-    for i, beat in enumerate(timestamps, 1):
-        # Mark irregular beats and downbeats if provided
-        irregular_mark = " (irregular)" if irregular_beats and i in irregular_beats else ""
-        downbeat_mark = " (DOWNBEAT)" if downbeats is not None and (i-1) in downbeats else ""
-        
-        print(f"Beat {i}: {beat:.3f} seconds{irregular_mark}{downbeat_mark}")
+    timestamps = beats.timestamps
+    irregular_indices = set(beats.irregular_beat_indices) # Use set for faster lookup
+    downbeat_indices = set(beats.downbeat_indices)
+
+    for i, timestamp in enumerate(timestamps):
+        is_irregular = i in irregular_indices
+        is_downbeat = i in downbeat_indices
+
+        irregular_mark = " (irregular)" if is_irregular else ""
+        downbeat_mark = " (DOWNBEAT)" if is_downbeat else ""
+        # Assuming 1-based index for printing
+        print(f"Beat {i+1} (idx {i}): {timestamp:.3f} seconds{irregular_mark}{downbeat_mark}")
 
 
-def print_statistics(stats: BeatStatistics, irregular_beats: List[int]) -> None:
+def print_statistics(beats: Beats) -> None:
     """
-    Print beat statistics to the console.
-    
+    Print overall beat statistics from a Beats object to the console.
+
     Parameters:
     -----------
-    stats : BeatStatistics
-        Beat statistics object
-    irregular_beats : list of int
-        List of indices of irregular beats
+    beats : Beats
+        The Beats object containing the statistics.
     """
-    print("\nBeat Statistics:")
-    print(f"Tempo: {stats.tempo_bpm:.1f} BPM")
+    stats = beats.overall_stats
+    irregular_indices = beats.irregular_beat_indices
+
+    print("\nOverall Beat Statistics:")
+    print(f"Tempo (median-based): {stats.tempo_bpm:.1f} BPM")
     print(f"Mean interval: {stats.mean_interval:.3f} seconds")
     print(f"Median interval: {stats.median_interval:.3f} seconds")
     print(f"Standard deviation: {stats.std_interval:.3f} seconds")
     print(f"Min interval: {stats.min_interval:.3f} seconds")
     print(f"Max interval: {stats.max_interval:.3f} seconds")
-    print(f"Irregular beats: {len(irregular_beats)} ({stats.irregularity_percent:.1f}%)")
+    print(f"Irregular beats (final count): {len(irregular_indices)} ({len(irregular_indices)/stats.total_beats*100:.1f}%)")
+    print(f"  (Note: Initial interval irregularity was {stats.irregularity_percent:.1f}%)")
+    print(f"Detected Meter: {beats.meter}")
+    print(f"Regular Section: Beats {beats.start_regular_beat_idx} to {beats.end_regular_beat_idx-1}")
+    # Optionally print regular stats too
+    # print("\nRegular Section Statistics:")
+    # ... print regular_stats ...
 
 
-def print_batch_summary(file_stats: List[Tuple[str, Tuple[BeatStatistics, List[int]]]]) -> None:
+def print_batch_summary(file_results: List[Tuple[str, Optional[Beats]]]) -> None:
     """
-    Print summary statistics for batch processing.
-    
+    Print summary statistics for batch processing results to the console.
+
     Parameters:
     -----------
-    file_stats : list of (str, (BeatStatistics, List[int]))
-        List of tuples with filename and a tuple of (statistics, irregular_beats)
+    file_results : list of (str, Optional[Beats])
+        List of tuples with filename and the corresponding Beats object (or None).
     """
-    if not file_stats:
+    if not file_results:
         return
-    
-    # Filter out any None results
-    valid_stats = [(filename, stats_tuple) for filename, stats_tuple in file_stats if stats_tuple is not None]
-    
-    if not valid_stats:
+
+    valid_results = [(fname, b) for fname, b in file_results if b is not None]
+
+    if not valid_results:
         print("\nNo valid statistics available for any processed files.")
         return
-    
+
+    total_processed = len(file_results)
+    total_successful = len(valid_results)
+
     print("\n" + "=" * 80)
-    print("SUMMARY STATISTICS ACROSS ALL FILES")
+    print("BATCH PROCESSING SUMMARY")
     print("=" * 80)
-    print(f"Total files processed successfully: {len(valid_stats)} out of {len(file_stats)}")
-    
+    print(f"Total files processed: {total_processed}")
+    print(f"Successful: {total_successful}")
+    print(f"Failed: {total_processed - total_successful}")
+
     # Calculate average tempo
-    tempos = [stats_tuple[0].tempo_bpm for _, stats_tuple in valid_stats]
-    avg_tempo = sum(tempos) / len(tempos)
+    tempos = [b.overall_stats.tempo_bpm for _, b in valid_results]
+    avg_tempo = sum(tempos) / total_successful
     min_tempo = min(tempos)
     max_tempo = max(tempos)
-    
+
     print(f"Average tempo: {avg_tempo:.1f} BPM")
     print(f"Tempo range: {min_tempo:.1f} - {max_tempo:.1f} BPM")
-    
-    # Show file with most irregular beats
-    most_irregular = max(valid_stats, key=lambda x: x[1][0].irregularity_percent)
-    print(f"Most irregular file: {most_irregular[0]} ({most_irregular[1][0].irregularity_percent:.1f}% irregular beats)")
+
+    # Show file with most irregular beats (based on final irregular count)
+    most_irregular = max(valid_results, key=lambda item: len(item[1].irregular_beat_indices))
+    irreg_count = len(most_irregular[1].irregular_beat_indices)
+    irreg_percent = (irreg_count / most_irregular[1].overall_stats.total_beats * 100) if most_irregular[1].overall_stats.total_beats > 0 else 0
+    print(f"File with most irregular beats: {most_irregular[0]} ({irreg_count} beats, {irreg_percent:.1f}%)")
+
+    failed_files = [fname for fname, b in file_results if b is None]
+    if failed_files:
+        print("\nFiles that failed processing:")
+        for fname in failed_files:
+            print(f"- {fname}")
+    print("=" * 80 + "\n")

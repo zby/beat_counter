@@ -97,6 +97,15 @@ class Beats:
         BeatCalculationError
             If beat statistics or counts cannot be reliably calculated.
         """
+        # --- Validation Checks --- 
+        if not isinstance(tolerance_percent, (int, float)) or tolerance_percent < 0:
+            raise BeatCalculationError(
+                f"Invalid tolerance_percent provided: {tolerance_percent}. Must be a non-negative number."
+            )
+            
+        if meter <= 0:
+             raise BeatCalculationError(f"Invalid meter provided: {meter}. Meter must be positive.")
+             
         num_beats = len(timestamps)
         end_regular_beat_idx_calc = num_beats 
         start_regular_beat_idx_calc = 0 
