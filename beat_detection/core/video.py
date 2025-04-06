@@ -6,7 +6,6 @@ import os
 import numpy as np
 import pathlib
 import time
-import cv2
 from typing import List, Tuple, Optional, Union, Callable
 from PIL import Image, ImageDraw, ImageFont
 from moviepy import (
@@ -44,7 +43,8 @@ class BeatVideoGenerator:
         downbeat_color: Tuple[int, int, int] = (255, 255, 0),
         font_path: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         font_size: int = 72,
-        fps: int = DEFAULT_FPS
+        fps: int = DEFAULT_FPS,
+        progress_callback: Optional[Callable[[str, float], None]] = None
     ):
         """
         Initialize the video generator.
@@ -65,6 +65,8 @@ class BeatVideoGenerator:
             Font size for beat numbers
         fps : int
             Frames per second (default: 100 for smooth video)
+        progress_callback : Optional[Callable[[str, float], None]]
+            Callback function for progress updates
         """
         self.resolution = resolution
         self.bg_color = bg_color
@@ -82,98 +84,12 @@ class BeatVideoGenerator:
         # Initialize font
         self.font = ImageFont.truetype(font_path, font_size)
         
+        # Store progress callback
+        self.progress_callback = progress_callback
+        
         # Cache for generated frames
         self._frame_cache = {}
         
-    def generate_video(
-        self,
-        beats: Beats,
-        output_file: str,
-        duration: Optional[float] = None,
-        start_time: float = 0.0
-    ) -> None:
-        """
-        Generate a video with beat indicators.
-        
-        Parameters:
-        -----------
-        beats : Beats
-            Beat information
-        output_file : str
-            Path to output video file
-        duration : Optional[float]
-            Duration in seconds (default: use last beat)
-        start_time : float
-            Start time in seconds
-        """
-        # Calculate duration if not specified
-        if duration is None:
-            duration = beats.timestamps[-1] - start_time
-            
-        # Create video writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(
-            output_file,
-            fourcc,
-            self.fps,
-            self.resolution
-        )
-        
-        # Generate frames
-        frame_count = int(duration * self.fps)
-        for frame_idx in range(frame_count):
-            t = start_time + frame_idx / self.fps
-            frame = self.generate_frame(beats, t)
-            out.write(frame)
-            
-        out.release()
-        
-    def generate_frame(self, beats: Beats, t: float) -> np.ndarray:
-        """
-        Generate a single frame for time t.
-        
-        Parameters:
-        -----------
-        beats : Beats
-            Beat information
-        t : float
-            Current time in seconds
-            
-        Returns:
-        --------
-        numpy.ndarray
-            Frame as BGR image
-        """
-        # Get beat information
-        current_beat_idx, beat_count, time_since_beat, is_downbeat = beats.get_beat_info(t)
-        
-        # Create frame
-        frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
-        frame[:] = self.bg_color
-        
-        # Convert to PIL Image for text drawing
-        pil_image = Image.fromarray(frame)
-        draw = ImageDraw.Draw(pil_image)
-        
-        # Draw beat number
-        text = str(beat_count)
-        text_bbox = draw.textbbox((0, 0), text, font=self.font)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_height = text_bbox[3] - text_bbox[1]
-        
-        # Center text
-        x = (self.resolution[0] - text_width) // 2
-        y = (self.resolution[1] - text_height) // 2
-        
-        # Choose color based on whether it's a downbeat
-        color = self.downbeat_color if is_downbeat else self.count_colors[beat_count - 1]
-        
-        # Draw text
-        draw.text((x, y), text, font=self.font, fill=color)
-        
-        # Convert back to OpenCV format
-        return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-
     def _fill_frame_cache(self, meter_value: int):
         """
         Pre-generate all possible frames for caching.
