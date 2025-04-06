@@ -1,12 +1,100 @@
 """
-Tests for the serialization of Beats objects.
+Tests for the serialization and deserialization of the Beats class.
 """
 
-import json
-import numpy as np
 import pytest
+import json
+from pathlib import Path
+import numpy as np
 
-from beat_detection.core.beats import Beats, BeatInfo, BeatStatistics, BeatCalculationError
+from beat_detection.core.beats import Beats, BeatCalculationError, BeatInfo, BeatStatistics
+# Assuming create_test_beats is accessible, either defined here or imported
+# For simplicity, let's import it from the other test file
+# (In a real scenario, you might move helpers to a common conftest.py)
+from beat_detection.core.test_beats import create_test_beats
+
+def test_save_and_load_beats(tmp_path: Path):
+    """Test saving a Beats object to JSON and loading it back."""
+    # 1. Create a sample Beats object
+    original_beats = create_test_beats(meter=3, num_beats=15, interval=0.6, tolerance=15.0, min_measures=2)
+    file_path = tmp_path / "test_beats.json"
+
+    # 2. Save the object
+    original_beats.save_to_file(file_path)
+    assert file_path.is_file()
+
+    # 3. Load the object
+    loaded_beats = Beats.load_from_file(file_path)
+
+    # 4. Compare original and loaded objects
+    assert isinstance(loaded_beats, Beats)
+    assert loaded_beats.meter == original_beats.meter
+    assert loaded_beats.tolerance_percent == original_beats.tolerance_percent
+    assert loaded_beats.min_consistent_measures == original_beats.min_consistent_measures
+    assert np.isclose(loaded_beats.tolerance_interval, original_beats.tolerance_interval)
+    assert loaded_beats.start_regular_beat_idx == original_beats.start_regular_beat_idx
+    assert loaded_beats.end_regular_beat_idx == original_beats.end_regular_beat_idx
+
+    # Compare stats (using np.isclose for float comparisons)
+    assert np.isclose(loaded_beats.overall_stats.mean_interval, original_beats.overall_stats.mean_interval)
+    assert np.isclose(loaded_beats.overall_stats.median_interval, original_beats.overall_stats.median_interval)
+    assert loaded_beats.overall_stats.total_beats == original_beats.overall_stats.total_beats
+    assert np.isclose(loaded_beats.regular_stats.tempo_bpm, original_beats.regular_stats.tempo_bpm)
+    assert loaded_beats.regular_stats.total_beats == original_beats.regular_stats.total_beats
+    
+    # Compare beat lists
+    assert len(loaded_beats.beat_list) == len(original_beats.beat_list)
+    for i, loaded_beat in enumerate(loaded_beats.beat_list):
+        original_beat = original_beats.beat_list[i]
+        assert loaded_beat.index == original_beat.index
+        assert np.isclose(loaded_beat.timestamp, original_beat.timestamp)
+        assert loaded_beat.is_downbeat == original_beat.is_downbeat
+        assert loaded_beat.is_irregular_interval == original_beat.is_irregular_interval
+        assert loaded_beat.beat_count == original_beat.beat_count
+        assert loaded_beat.is_irregular == original_beat.is_irregular
+
+def test_load_beats_file_not_found(tmp_path: Path):
+    """Test loading from a non-existent file path."""
+    file_path = tmp_path / "non_existent_beats.json"
+    with pytest.raises(FileNotFoundError, match=f"Beats file not found: {file_path}"):
+        Beats.load_from_file(file_path)
+
+def test_load_beats_invalid_json(tmp_path: Path):
+    """Test loading from a file with invalid JSON content."""
+    file_path = tmp_path / "invalid_beats.json"
+    file_path.write_text("this is not valid json{")
+
+    with pytest.raises(BeatCalculationError, match="Error decoding JSON from Beats file"):
+        Beats.load_from_file(file_path)
+
+def test_load_beats_missing_key(tmp_path: Path):
+    """Test loading from a JSON file missing a required key."""
+    file_path = tmp_path / "missing_key_beats.json"
+    # Create valid data, then remove a key
+    original_beats = create_test_beats(min_measures=1) # Use simpler object
+    data = original_beats.to_dict()
+    del data['regular_stats'] # Remove a required key
+    
+    with file_path.open('w') as f:
+        json.dump(data, f)
+        
+    # Adjust regex to match the double single quotes in the KeyError representation
+    with pytest.raises(BeatCalculationError, match="Missing expected key \'\'regular_stats\'\'"):
+        Beats.load_from_file(file_path)
+
+def test_load_beats_incorrect_type(tmp_path: Path):
+    """Test loading from JSON where a value has an incorrect type."""
+    file_path = tmp_path / "incorrect_type_beats.json"
+    original_beats = create_test_beats(min_measures=1)
+    data = original_beats.to_dict()
+    data['meter'] = "not_an_integer" # Corrupt the type
+    
+    with file_path.open('w') as f:
+        json.dump(data, f)
+    
+    # Match the exact beginning of the error message
+    with pytest.raises(BeatCalculationError, match=r"Type or value error reconstructing Beats object from"):
+        Beats.load_from_file(file_path)
 
 # Helper function to create a sample Beats object for testing
 def create_sample_beats_for_serialization() -> Beats:
@@ -40,7 +128,6 @@ def test_beat_info_to_dict():
         "index": 5,
         "is_downbeat": True,
         "is_irregular_interval": False,
-        "is_irregular": True, # Property should be True because beat_count is 0
         "beat_count": 0,
     }
     assert beat_info.to_dict() == expected_dict
@@ -76,7 +163,7 @@ def test_beats_to_dict_structure():
         # Check keys of the first beat in the list
         expected_beat_info_keys = {
             "timestamp", "index", "is_downbeat", "is_irregular_interval",
-            "is_irregular", "beat_count"
+            "beat_count"
         }
         assert isinstance(beats_dict["beat_list"][0], dict)
         assert set(beats_dict["beat_list"][0].keys()) == expected_beat_info_keys
@@ -101,7 +188,6 @@ def test_beats_to_dict_values():
     assert beat_info_dict["index"] == beat_info_obj.index
     assert beat_info_dict["is_downbeat"] == beat_info_obj.is_downbeat
     assert beat_info_dict["beat_count"] == beat_info_obj.beat_count
-    assert beat_info_dict["is_irregular"] == beat_info_obj.is_irregular
 
 def test_json_serialization():
     """Test that the dictionary from to_dict can be serialized by the json library."""

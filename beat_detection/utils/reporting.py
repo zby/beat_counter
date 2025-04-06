@@ -43,6 +43,7 @@ def save_beat_timestamps(timestamps: np.ndarray, output_file: Union[str, pathlib
 
 
 def get_beat_statistics_dict(stats: BeatStatistics, irregular_beats: List[int], 
+                            regular_stats: Optional[BeatStatistics] = None,
                             filename: Optional[str] = None,
                             detected_meter: Optional[int] = None,
                             duration: Optional[float] = None) -> Dict[str, Any]:
@@ -52,9 +53,11 @@ def get_beat_statistics_dict(stats: BeatStatistics, irregular_beats: List[int],
     Parameters:
     -----------
     stats : BeatStatistics
-        Beat statistics object
+        Beat statistics object for overall stats
     irregular_beats : list of int
         List of indices of irregular beats
+    regular_stats : BeatStatistics, optional
+        Statistics for the regular section only
     filename : str, optional
         Original filename to include in the report
     detected_meter : int, optional
@@ -80,6 +83,19 @@ def get_beat_statistics_dict(stats: BeatStatistics, irregular_beats: List[int],
         "irregular_beat_indices": irregular_beats
     }
     
+    # Add regular section stats if available
+    if regular_stats:
+        stats_dict.update({
+            "regular_section_tempo_bpm": round(regular_stats.tempo_bpm, 1),
+            "regular_section_mean_interval": round(regular_stats.mean_interval, 3),
+            "regular_section_median_interval": round(regular_stats.median_interval, 3),
+            "regular_section_std_interval": round(regular_stats.std_interval, 3),
+            "regular_section_min_interval": round(regular_stats.min_interval, 3),
+            "regular_section_max_interval": round(regular_stats.max_interval, 3),
+            "regular_section_irregularity_percent": round(regular_stats.irregularity_percent, 1),
+            "regular_section_total_beats": regular_stats.total_beats
+        })
+    
     if filename:
         stats_dict["filename"] = filename
         
@@ -93,21 +109,24 @@ def get_beat_statistics_dict(stats: BeatStatistics, irregular_beats: List[int],
 
 
 def save_beat_statistics(stats: BeatStatistics, irregular_beats: List[int], 
-                         output_file: Union[str, pathlib.Path], 
-                         filename: Optional[str] = None,
-                         detected_meter: Optional[int] = None,
-                         duration: Optional[float] = None) -> None:
+                        output_file: Union[str, pathlib.Path],
+                        regular_stats: Optional[BeatStatistics] = None,
+                        filename: Optional[str] = None,
+                        detected_meter: Optional[int] = None,
+                        duration: Optional[float] = None) -> None:
     """
     Save beat statistics to a JSON file.
     
     Parameters:
     -----------
     stats : BeatStatistics
-        Beat statistics object
+        Beat statistics object for overall stats
     irregular_beats : list of int
         List of indices of irregular beats
     output_file : str or pathlib.Path
         Path to the output file
+    regular_stats : BeatStatistics, optional
+        Statistics for the regular section only
     filename : str, optional
         Original filename to include in the report
     detected_meter : int, optional
@@ -115,12 +134,17 @@ def save_beat_statistics(stats: BeatStatistics, irregular_beats: List[int],
     duration : float, optional
         Duration of the audio in seconds
     """
-    # Convert stats to a dictionary and save as JSON
-    stats_dict = get_beat_statistics_dict(stats, irregular_beats, filename, detected_meter, duration)
+    stats_dict = get_beat_statistics_dict(
+        stats, 
+        irregular_beats,
+        regular_stats=regular_stats,
+        filename=filename,
+        detected_meter=detected_meter,
+        duration=duration
+    )
     
-    # Save to JSON file
     with open(output_file, 'w') as f:
-        json.dump(stats_dict, f, indent=2)
+        json.dump(stats_dict, f, indent=4)
 
 
 def save_batch_summary(file_stats: List[Tuple[str, Tuple[BeatStatistics, List[int]]]], 

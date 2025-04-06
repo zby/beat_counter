@@ -229,7 +229,7 @@ def test_edge_cases_creation():
     # Beat counts (m=4, d=[1,5]): 0, 1, 2, 3, 4, 1, 2, 3, 0
     # Regular sequence check (req 8 beats):
     # Start 1: [1,2,3,4,5,6,7]. Intervals: 0.5,0.5,0.5,0.5,0.5,0.5. Irreg=0%. Len=7. Need 8. Invalid.
-    with pytest.raises(BeatCalculationError, match="Could not determine a stable regular section: No regular sequence found"):
+    with pytest.raises(BeatCalculationError, match="Could not determine a stable regular section: Longest regular sequence found .* is shorter than required"):
          # Pass args by keyword
          Beats.from_timestamps(timestamps_short_regular, downbeats_short_regular, meter=4, tolerance_percent=10.0, min_consistent_measures=2)
 
@@ -251,7 +251,7 @@ def test_edge_cases_creation():
     # Seq 0..2: Len 3. 2 Ints (0.6, 0.5). 1 Irreg (0.5). Irreg 50%. Invalid.
     # ... No sequence of length >= 4 will have <= 10% irregularity.
     # Test now expects failure
-    with pytest.raises(BeatCalculationError, match="Could not determine a stable regular section: No regular sequence found"):
+    with pytest.raises(BeatCalculationError, match="Could not determine a stable regular section: Longest regular sequence found .* is shorter than required"):
         Beats.from_timestamps(timestamps_all_irr, downbeats_all_irr, meter=meter_irr, tolerance_percent=tolerance_irr, min_consistent_measures=min_measures_irr)
 
     # Test case where only a short section in the middle is regular
@@ -385,7 +385,7 @@ def test_regular_section_detection_insufficient():
     # Check sequence finder (req 6):
     # Seq [1..3]: Len 3. Invalid.
     # Seq [4..5]: Len 2. Invalid.
-    with pytest.raises(BeatCalculationError, match="Could not determine a stable regular section: No regular sequence found"):
+    with pytest.raises(BeatCalculationError, match="Could not determine a stable regular section: Longest regular sequence found .* is shorter than required"):
         # Pass args by keyword
         Beats.from_timestamps(timestamps, downbeats, meter=meter_insuf, tolerance_percent=10.0, min_consistent_measures=min_measures_insuf)
 

@@ -5,6 +5,8 @@ Core beat data structures and utilities.
 import numpy as np
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
+import json
+from pathlib import Path
 
 
 class BeatCalculationError(Exception):
@@ -53,13 +55,13 @@ class BeatInfo:
         return self.is_irregular_interval or self.beat_count == 0
         
     def to_dict(self) -> Dict:
-        """Convert BeatInfo object to a dictionary."""
+        """Convert BeatInfo object to a dictionary, excluding derived properties."""
         return {
             "timestamp": self.timestamp,
             "index": self.index,
             "is_downbeat": self.is_downbeat,
             "is_irregular_interval": self.is_irregular_interval,
-            "is_irregular": self.is_irregular,
+            # Exclude "is_irregular" as it's a derived property
             "beat_count": self.beat_count,
         }
 
@@ -176,10 +178,19 @@ class Beats:
         # 5. Find the longest regular sequence using the static helper
         try:
             start_idx, end_idx, _ = cls._find_longest_regular_sequence_static(
-                beat_list, tolerance_percent, meter, min_consistent_measures
+                beat_list, tolerance_percent
             )
             start_regular_beat_idx_calc = start_idx
             end_regular_beat_idx_calc = end_idx + 1 # Convert inclusive end index to exclusive
+            
+            # Check if the found sequence meets the minimum length requirement
+            sequence_length = end_regular_beat_idx_calc - start_regular_beat_idx_calc
+            required_beats = meter * min_consistent_measures
+            if sequence_length < required_beats:
+                raise BeatCalculationError(
+                    f"Longest regular sequence found ({sequence_length} beats) is shorter than required "
+                    f"({required_beats} beats = {min_consistent_measures} measures of {meter}/X time)."
+                )
         except BeatCalculationError as e:
              # Re-raise with more context if finding the sequence failed
              raise BeatCalculationError(f"Could not determine a stable regular section: {e}") from e
@@ -327,152 +338,189 @@ class Beats:
         return [b for b in self.beat_list if b.is_downbeat and b.is_irregular]
 
     @staticmethod
-    def _find_longest_regular_sequence_static(beat_list: List[BeatInfo], 
-                                              tolerance_percent: float, 
-                                              meter: int, 
-                                              min_consistent_measures: int
+    def _find_longest_regular_sequence_static(beat_list: List[BeatInfo],
+                                              tolerance_percent: float
                                              ) -> Tuple[int, int, float]:
         """
-        Find the longest sequence of beats where the interval irregularity percentage 
-        is low and minimum length requirements are met.
-        Only considers interval irregularities for threshold check, but excludes beats 
-        with undetermined counts (beat_count == 0) entirely from potential sequences.
-        
+        Find the longest sequence of beats where intervals are regular and beat counts are determined.
+
+        Regularity Conditions:
+        1. All beats within the sequence must have `beat_count > 0`.
+        2. The time interval between any two consecutive beats in the sequence must be
+           within `tolerance_interval` of the overall `median_interval`.
+
         Parameters:
         -----------
         beat_list : List[BeatInfo]
             The list of BeatInfo objects to analyze.
         tolerance_percent : float
-            The tolerance percentage used to define interval regularity.
-        meter: int
-            The musical meter.
-        min_consistent_measures: int
-            Minimum number of measures the regular section must span.
-            
+            The tolerance percentage used to define interval regularity relative to the median.
+
         Returns:
         --------
         Tuple[int, int, float]
-            start_idx: Index of first beat in the sequence
-            end_idx: Index of last beat in the sequence (inclusive)
+            start_idx: Index of first beat in the longest sequence
+            end_idx: Index of last beat in the longest sequence (inclusive)
             irregularity_percent: Actual interval irregularity percentage in the sequence
-            
+                                  (calculated *after* finding the sequence).
+
         Raises:
         -------
         BeatCalculationError
-            If no suitable sequence meeting the criteria is found.
+            If no regular sequence is found, or if basic calculations fail.
         """
         if not beat_list:
-            raise BeatCalculationError("Cannot find regular sequence in empty beat list")
-            
-        if tolerance_percent < 0 or tolerance_percent > 100:
-             # Although tolerance_percent is used for calculation, treat it like threshold for validation here
+            raise BeatCalculationError("Cannot find regular sequence in empty beat list.")
+
+        if not (0 <= tolerance_percent <= 100):
             raise BeatCalculationError(f"Invalid tolerance percent: {tolerance_percent}. Must be between 0 and 100.")
 
-        required_beats = meter * min_consistent_measures
-        if len(beat_list) < required_beats:
-             # This check should technically be caught earlier in from_timestamps, but good to have defensively
-             raise BeatCalculationError(f"Input beat list length ({len(beat_list)}) is less than required beats ({required_beats}).")
-
-        # Calculate median interval from the entire sequence for reference
+        # Calculate overall median interval for reference
         timestamps = np.array([b.timestamp for b in beat_list])
         intervals = np.diff(timestamps)
+
         if len(intervals) == 0:
-             # Handle case with 0 or 1 beat
-             if len(beat_list) >= required_beats: # Should not happen if required_beats > 1
-                raise BeatCalculationError("Insufficient intervals to calculate median for sequence finding.")
-             elif len(beat_list) > 0 : # Single beat might be valid if required_beats is 1 (meter=1, min_measures=1)
-                 if required_beats <= 1:
-                     return 0, 0, 0.0 # A single beat is trivially regular sequence
-                 else:
-                     raise BeatCalculationError(f"Only one beat found, less than required {required_beats}.")
-             else: # No beats
-                  raise BeatCalculationError("Cannot find regular sequence in empty beat list (no intervals).")
-                  
+            # Handle case with 0 or 1 beat
+            if len(beat_list) == 1:
+                 return 0, 0, 0.0 # Single beat is trivially regular
+            else: # Empty list - should be caught by the first check, but just in case
+                 raise BeatCalculationError("Cannot find regular sequence in empty beat list (no intervals).")
+
         median_interval = np.median(intervals)
         if median_interval <= 0:
             raise BeatCalculationError(f"Median interval ({median_interval:.4f}) is non-positive, cannot determine regularity.")
-            
-        tolerance_interval = median_interval * (tolerance_percent / 100.0)
-        # Use the tolerance_percent itself also as the irregularity threshold for simplicity here
-        irregularity_threshold = tolerance_percent 
 
-        # Initialize variables for tracking the longest valid sequence
-        max_valid_length = 0
+        tolerance_interval = median_interval * (tolerance_percent / 100.0)
+
+        # --- Single Pass Logic ---
         best_start = -1
         best_end = -1
-        best_irregularity = 100.0
+        max_len = 0
 
-        # Try all possible start positions
-        for start in range(len(beat_list)):
-            # Skip if starting beat has irregular (undetermined) count
-            if beat_list[start].beat_count == 0:
-                continue
-                
-            irregular_interval_count = 0
+        # Handle the first beat separately
+        current_start = 0 if beat_list[0].beat_count > 0 else -1
+
+        # Start from the second beat (if available)
+        for i in range(1, len(beat_list)):
+            # First, check if we're starting a new sequence
+            if current_start == -1:
+                # Only beat_count matters for starting a new sequence
+                if beat_list[i].beat_count > 0:
+                    current_start = i
+            # If we're in an existing sequence, check interval regularity
+            elif beat_list[i].beat_count > 0:
+                interval = beat_list[i].timestamp - beat_list[i-1].timestamp
+                if abs(interval - median_interval) > tolerance_interval:
+                    # Irregular interval - end the sequence
+                    current_len = (i - 1) - current_start + 1
+                    if current_len > max_len:
+                        max_len = current_len
+                        best_start = current_start
+                        best_end = i - 1
+                    current_start = -1
+            else:
+                # Irregular beat_count - end the sequence
+                current_len = (i - 1) - current_start + 1
+                if current_len > max_len:
+                    max_len = current_len
+                    best_start = current_start
+                    best_end = i - 1
+                current_start = -1
+
+        # --- Check the last sequence after the loop finishes ---
+        if current_start != -1:
+            current_len = len(beat_list) - current_start
+            if current_len > max_len:
+                max_len = current_len
+                best_start = current_start
+                best_end = len(beat_list) - 1
+
+        if best_start == -1:
+            raise BeatCalculationError(
+                f"No regular sequence found with the given tolerance ({tolerance_percent}%)."
+            )
+
+        # Calculate irregularity percentage for the *found* best sequence
+        best_sequence_intervals = np.diff([b.timestamp for b in beat_list[best_start:best_end+1]])
+        irregular_interval_count = 0
+        if len(best_sequence_intervals) > 0:
+             for interval in best_sequence_intervals:
+                 if abs(interval - median_interval) > tolerance_interval:
+                      irregular_interval_count += 1
+             best_irregularity = (irregular_interval_count / len(best_sequence_intervals)) * 100
+        else:
+             best_irregularity = 0.0 # Single beat sequence has 0% irregularity
+
+        return best_start, best_end, best_irregularity
+
+    # --- Serialization Methods ---
+
+    def save_to_file(self, file_path: Path):
+        """Serialize the Beats object to a JSON file."""
+        file_path = Path(file_path) # Ensure it's a Path object
+        file_path.parent.mkdir(parents=True, exist_ok=True) # Create directory if needed
+        data_dict = self.to_dict()
+        try:
+            with file_path.open('w', encoding='utf-8') as f:
+                json.dump(data_dict, f, indent=4)
+        except IOError as e:
+            raise BeatCalculationError(f"Error writing Beats object to {file_path}: {e}") from e
+        except TypeError as e:
+             # This might happen if numpy types weren't properly converted in to_dict
+             raise BeatCalculationError(f"Error serializing Beats object data to JSON: {e}") from e
+
+    @classmethod
+    def load_from_file(cls, file_path: Path) -> 'Beats':
+        """Deserialize a Beats object from a JSON file."""
+        file_path = Path(file_path) # Ensure it's a Path object
+        if not file_path.is_file():
+             raise FileNotFoundError(f"Beats file not found: {file_path}")
+             
+        try:
+            with file_path.open('r', encoding='utf-8') as f:
+                data = json.load(f)
+        except IOError as e:
+            raise BeatCalculationError(f"Error reading Beats file {file_path}: {e}") from e
+        except json.JSONDecodeError as e:
+            raise BeatCalculationError(f"Error decoding JSON from Beats file {file_path}: {e}") from e
             
-            # For each start position, try extending the sequence
-            for end in range(start, len(beat_list)):
-                # Stop if we hit a beat with irregular count
-                if beat_list[end].beat_count == 0:
-                    break # End the inner loop, sequence broken by undetermined beat count
-                    
-                # Check interval irregularity (only for beats after the first in the sequence)
-                if end > start:
-                    interval = beat_list[end].timestamp - beat_list[end-1].timestamp
-                    # Use the pre-calculated tolerance_interval
-                    if abs(interval - median_interval) > tolerance_interval:
-                        irregular_interval_count += 1
-                    
-                current_length = end - start + 1
-                num_intervals = current_length - 1
-                
-                if num_intervals > 0: 
-                    current_interval_irregularity = (irregular_interval_count / num_intervals) * 100
-                else:
-                    current_interval_irregularity = 0.0 # Single beat sequence has 0% interval irregularity
-
-                # Check if current sequence meets criteria:
-                # 1. Interval irregularity is below threshold
-                # 2. Length is sufficient (>= required_beats)
-                if current_interval_irregularity <= irregularity_threshold:
-                     if current_length >= required_beats:
-                          # This is a *valid* sequence meeting all criteria
-                          if current_length > max_valid_length:
-                               # Found a new longest valid sequence
-                               max_valid_length = current_length
-                               best_start = start
-                               best_end = end
-                               best_irregularity = current_interval_irregularity
-                elif num_intervals > 0 : 
-                     # Exceeded interval irregularity threshold, stop extending from this start
-                     # We only break if we've actually evaluated at least one interval
-                     break 
-
-        if best_start == -1: # Check if we ever found a valid sequence
-            # Try to find *any* sequence even if too short, for error reporting
-            min_overall_irregularity = 100.0
-            found_any_sequence = False
-            # (Simplified search for error message - just find minimum irregularity)
-            for i in range(1, len(beat_list)):
-                 if beat_list[i].beat_count != 0 and beat_list[i-1].beat_count != 0:
-                     interval = beat_list[i].timestamp - beat_list[i-1].timestamp
-                     if abs(interval - median_interval) <= tolerance_interval:
-                          min_overall_irregularity = 0.0 # At least one regular interval exists
-                          found_any_sequence = True
-                          break
-                     else: # Found an irregular interval
-                         found_any_sequence = True 
-                         # Keep track of minimum irregularity? More complex logic needed here.
-                         # For simplicity, we'll just report failure to meet length/threshold.
+        try:
+            # Reconstruct BeatInfo list
+            beat_list = [BeatInfo(**beat_data) for beat_data in data['beat_list']]
             
-            error_message = (f"No regular sequence found meeting the criteria: "
-                             f"minimum length {required_beats} beats ({min_consistent_measures} measures) "
-                             f"and max interval irregularity {irregularity_threshold:.1f}%.")
-            if not found_any_sequence and len(beat_list) > 1:
-                 error_message += " All intervals are irregular or sequences are broken by undetermined beat counts."
-            elif len(beat_list) <= 1 and required_beats > len(beat_list):
-                 error_message += f" Insufficient total beats ({len(beat_list)})."
+            # Reconstruct BeatStatistics
+            overall_stats = BeatStatistics(**data['overall_stats'])
+            regular_stats = BeatStatistics(**data['regular_stats'])
             
-            raise BeatCalculationError(error_message)
+            # Explicitly convert/validate types before final instantiation
+            try:
+                meter_val = int(data['meter'])
+                tolerance_percent_val = float(data['tolerance_percent'])
+                tolerance_interval_val = float(data['tolerance_interval'])
+                min_consistent_measures_val = int(data['min_consistent_measures'])
+                start_regular_beat_idx_val = int(data['start_regular_beat_idx'])
+                end_regular_beat_idx_val = int(data['end_regular_beat_idx'])
+            except (ValueError, TypeError) as e:
+                # Specific handling for type conversion errors
+                raise BeatCalculationError(f"Type or value error reconstructing Beats object from {file_path}: {e}") from e
+            
+            # Create the Beats object - ensure all required fields are present
+            instance = cls(
+                beat_list=beat_list,
+                overall_stats=overall_stats,
+                regular_stats=regular_stats,
+                meter=meter_val, # Use converted value
+                tolerance_percent=tolerance_percent_val, # Use converted value
+                tolerance_interval=tolerance_interval_val, # Use converted value
+                min_consistent_measures=min_consistent_measures_val, # Use converted value
+                start_regular_beat_idx=start_regular_beat_idx_val, # Use converted value
+                end_regular_beat_idx=end_regular_beat_idx_val # Use converted value
+            )
+            return instance # Return the successfully created instance
+        except KeyError as e:
+            raise BeatCalculationError(f"Missing expected key '{e}' in Beats file {file_path}. File may be corrupt or incompatible.") from e
+        except (TypeError, ValueError) as e: # Catch remaining conversion errors
+            # Might happen if data types in file don't match dataclass fields or fail conversion
+            raise BeatCalculationError(f"Type or value error reconstructing Beats object from {file_path}: {e}") from e
 
-        return best_start, best_end, best_irregularity 
+    # --- End Serialization Methods --- 
