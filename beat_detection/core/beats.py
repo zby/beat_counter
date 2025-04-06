@@ -77,7 +77,7 @@ class Beats:
     meter: int
     tolerance_percent: float # The percentage tolerance used for interval calculations
     tolerance_interval: float # The calculated absolute tolerance in seconds
-    min_consistent_measures: int # The minimum number of consistent measures required for analysis
+    min_measures: int # The minimum number of consistent measures required for analysis
     start_regular_beat_idx: int # Index of the first beat considered part of the regular section
     end_regular_beat_idx: int   # Index+1 of the last beat considered part of the regular section (exclusive index)
 
@@ -87,7 +87,7 @@ class Beats:
                         meter: int, 
                         beat_counts: np.ndarray, # Add new parameter for pre-calculated counts
                         tolerance_percent: float = 10.0,
-                        min_consistent_measures: int = 5 # Minimum consistent measures required
+                        min_measures: int = 5 # Minimum consistent measures required
                        ) -> 'Beats':
         """
         Factory method to create a Beats object from raw timestamp data.
@@ -98,87 +98,81 @@ class Beats:
         BeatCalculationError
             If beat statistics or counts cannot be reliably calculated.
         """
+        # --- Input Validation --- 
+        if not isinstance(timestamps, np.ndarray) or timestamps.ndim != 1:
+            raise BeatCalculationError("Timestamps must be a 1D numpy array.")
+        
+        num_beats = len(timestamps)
+        
+        # Check for strictly increasing timestamps
+        # The required_beats check later ensures num_beats >= 2, so np.diff is safe
+        intervals = np.diff(timestamps)
+        if not np.all(intervals > 0):
+            # Find first non-positive interval index for better error message
+            first_bad_idx = np.where(intervals <= 0)[0][0]
+            raise BeatCalculationError(
+                f"Timestamps must be strictly increasing. Error found after index {first_bad_idx} "
+                f"(timestamps: {timestamps[first_bad_idx]:.4f} -> {timestamps[first_bad_idx+1]:.4f})"
+            )
+
         # --- Validation Checks --- 
         if not isinstance(tolerance_percent, (int, float)) or tolerance_percent < 0:
             raise BeatCalculationError(
                 f"Invalid tolerance_percent provided: {tolerance_percent}. Must be a non-negative number."
             )
-            
-        if meter <= 0:
-             raise BeatCalculationError(f"Invalid meter provided: {meter}. Meter must be positive.")
-             
-        num_beats = len(timestamps)
-        end_regular_beat_idx_calc = num_beats 
-        start_regular_beat_idx_calc = 0 
-        
-        # --- Validation Checks --- 
-        if meter <= 0:
-             raise BeatCalculationError(f"Invalid meter provided: {meter}. Meter must be positive.")
-             
-        required_beats = meter * min_consistent_measures 
+
+        # Ensure meter is at least 2
+        if meter <= 1:
+             raise BeatCalculationError(f"Invalid meter provided: {meter}. Meter must be 2 or greater.")
+
+        end_regular_beat_idx_calc = num_beats
+        start_regular_beat_idx_calc = 0
+
+        # This check implicitly handles num_beats <= 1 if min_measures >= 1
+        required_beats = meter * min_measures
         if num_beats < required_beats:
             raise BeatCalculationError(
                 f"Insufficient number of beats ({num_beats}) for analysis with meter {meter}. "
-                f"Requires at least {required_beats} beats ({min_consistent_measures} measures)."
+                f"Requires at least {required_beats} beats ({min_measures} measures)."
             )
         # --- End Validation Checks ---
-            
+
         beat_list: List[BeatInfo] = []
 
         # 1. Calculate intervals and median interval
+        # This will be empty if num_beats <= 1, handled later by stats calculations
         intervals = np.diff(timestamps)
-        
-        # --- Handle Zero/Single Beat Case for Stats --- 
-        if num_beats <= 1:
-             # Stats are ill-defined or trivial for 0 or 1 beat
-             median_interval = 0.0
-             tempo_bpm = 0.0
-             tolerance_interval_calculated = 0.0
-             irregularity_percent = 0.0
-             overall_stats = BeatStatistics(
-                 mean_interval=0.0,
-                 median_interval=0.0,
-                 std_interval=0.0,
-                 min_interval=0.0,
-                 max_interval=0.0,
-                 irregularity_percent=0.0,
-                 tempo_bpm=0.0,
-                 total_beats=num_beats
+
+        # Calculate median interval - needed for tolerance
+        # Raises error if intervals is empty, but num_beats < required_beats check prevents this
+        median_interval = np.median(intervals)
+        if median_interval <= 0:
+             raise BeatCalculationError(
+                 f"Cannot calculate reliable beat statistics: Median interval is {median_interval:.4f}. "
+                 f"Check input timestamps: {timestamps[:5]}..."
              )
-             # Interval irregularities don't make sense here
-             interval_irregularities = [False] * num_beats
-        else:
-             # Proceed with normal calculation for 2+ beats
-             median_interval = np.median(intervals)
-             if median_interval <= 0:
-                  raise BeatCalculationError(
-                      f"Cannot calculate reliable beat statistics: Median interval is {median_interval:.4f}. "
-                      f"Check input timestamps: {timestamps[:5]}..."
-                  )
-             
-             # 2. Calculate remaining stats and tolerance
-             tempo_bpm = 60 / median_interval
-             tolerance_interval_calculated = median_interval * (tolerance_percent / 100.0) # Store calculated interval
-             
-             # 3. Initial irregularity check based on intervals
-             interval_irregularities = [False] # First beat cannot be irregular by interval
-             for interval in intervals:
-                  interval_irregularities.append(not (median_interval - tolerance_interval_calculated <= interval <= median_interval + tolerance_interval_calculated))
-             
-             irregularity_percent = (sum(interval_irregularities) / num_beats) * 100
-    
-             # Calculate overall statistics
-             overall_stats = BeatStatistics(
-                 mean_interval=np.mean(intervals),
-                 median_interval=median_interval,
-                 std_interval=np.std(intervals),
-                 min_interval=np.min(intervals),
-                 max_interval=np.max(intervals),
-                 irregularity_percent=irregularity_percent,
-                 tempo_bpm=tempo_bpm,
-                 total_beats=num_beats
-             )
-        # --- End Stats Handling ---
+
+        # 2. Calculate remaining stats and tolerance
+        tempo_bpm = 60 / median_interval
+        tolerance_interval_calculated = median_interval * (tolerance_percent / 100.0) # Store calculated interval
+
+        # 3. Initial irregularity check based on intervals
+        interval_irregularities = [False] # First beat cannot be irregular by interval
+        for interval in intervals:
+             interval_irregularities.append(not (median_interval - tolerance_interval_calculated <= interval <= median_interval + tolerance_interval_calculated))
+
+        # Calculate overall statistics (temporarily, irregularity_percent recalculated later)
+        initial_irregularity_percent = (sum(interval_irregularities) / num_beats) * 100 if num_beats > 0 else 0.0
+        overall_stats = BeatStatistics(
+            mean_interval=np.mean(intervals) if len(intervals) > 0 else 0.0,
+            median_interval=median_interval,
+            std_interval=np.std(intervals) if len(intervals) > 0 else 0.0,
+            min_interval=np.min(intervals) if len(intervals) > 0 else 0.0,
+            max_interval=np.max(intervals) if len(intervals) > 0 else 0.0,
+            irregularity_percent=initial_irregularity_percent, # Will be updated later
+            tempo_bpm=tempo_bpm,
+            total_beats=num_beats
+        )
 
         # 4. Populate BeatInfo list using provided beat_counts
         beat_list = []
@@ -225,11 +219,11 @@ class Beats:
             
             # Check if the found sequence meets the minimum length requirement
             sequence_length = end_regular_beat_idx_calc - start_regular_beat_idx_calc
-            required_beats = meter * min_consistent_measures
+            required_beats = meter * min_measures
             if sequence_length < required_beats:
                 raise BeatCalculationError(
                     f"Longest regular sequence found ({sequence_length} beats) is shorter than required "
-                    f"({required_beats} beats = {min_consistent_measures} measures of {meter}/X time)."
+                    f"({required_beats} beats = {min_measures} measures of {meter}/X time)."
                 )
         except BeatCalculationError as e:
              # Re-raise with more context if finding the sequence failed
@@ -297,7 +291,7 @@ class Beats:
                    meter=meter, 
                    tolerance_percent=tolerance_percent, 
                    tolerance_interval=tolerance_interval_calculated,
-                   min_consistent_measures=min_consistent_measures,
+                   min_measures=min_measures,
                    start_regular_beat_idx=start_regular_beat_idx_calc,
                    end_regular_beat_idx=end_regular_beat_idx_calc)
 
@@ -307,7 +301,7 @@ class Beats:
             "meter": int(self.meter),
             "tolerance_percent": float(self.tolerance_percent),
             "tolerance_interval": float(self.tolerance_interval),
-            "min_consistent_measures": int(self.min_consistent_measures),
+            "min_measures": int(self.min_measures),
             "start_regular_beat_idx": int(self.start_regular_beat_idx),
             "end_regular_beat_idx": int(self.end_regular_beat_idx),
             "overall_stats": self.overall_stats.to_dict(),
@@ -433,12 +427,13 @@ class Beats:
         timestamps = np.array([b.timestamp for b in beat_list])
         intervals = np.diff(timestamps)
 
+        # The num_beats < required_beats check in from_timestamps should prevent
+        # len(intervals) == 0 if min_measures >= 1 and meter >= 2.
+        # However, keep a check for safety, but it shouldn't return a valid sequence.
         if len(intervals) == 0:
-            # Handle case with 0 or 1 beat
-            if len(beat_list) == 1:
-                 return 0, 0, 0.0 # Single beat is trivially regular
-            else: # Empty list - should be caught by the first check, but just in case
-                 raise BeatCalculationError("Cannot find regular sequence in empty beat list (no intervals).")
+            raise BeatCalculationError(
+                "Cannot find regular sequence: Not enough intervals to analyze (requires at least 1 interval)."
+            )
 
         median_interval = np.median(intervals)
         if median_interval <= 0:
@@ -553,7 +548,7 @@ class Beats:
                 meter_val = int(data['meter'])
                 tolerance_percent_val = float(data['tolerance_percent'])
                 tolerance_interval_val = float(data['tolerance_interval'])
-                min_consistent_measures_val = int(data['min_consistent_measures'])
+                min_measures_val = int(data['min_measures'])
                 start_regular_beat_idx_val = int(data['start_regular_beat_idx'])
                 end_regular_beat_idx_val = int(data['end_regular_beat_idx'])
             except (ValueError, TypeError) as e:
@@ -568,7 +563,7 @@ class Beats:
                 meter=meter_val, # Use converted value
                 tolerance_percent=tolerance_percent_val, # Use converted value
                 tolerance_interval=tolerance_interval_val, # Use converted value
-                min_consistent_measures=min_consistent_measures_val, # Use converted value
+                min_measures=min_measures_val, # Use converted value
                 start_regular_beat_idx=start_regular_beat_idx_val, # Use converted value
                 end_regular_beat_idx=end_regular_beat_idx_val # Use converted value
             )

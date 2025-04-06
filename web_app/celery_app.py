@@ -91,7 +91,7 @@ app.context = AppContext(
 
 @app.task(bind=True, name='detect_beats_task', queue='beat_detection')
 def detect_beats_task(self: Task, audio_file: str, output_dir: str, min_bpm: int = 60, max_bpm: int = 200, 
-                     tolerance_percent: float = 10.0, min_consistent_measures: int = 1, 
+                     tolerance_percent: float = 10.0, min_measures: int = 1, 
                      beats_per_bar: int = None) -> dict:
     """
     Detect beats in an audio file.
@@ -108,7 +108,7 @@ def detect_beats_task(self: Task, audio_file: str, output_dir: str, min_bpm: int
         Maximum BPM to detect (default: 200)
     tolerance_percent : float
         Percentage tolerance for beat intervals (default: 10.0)
-    min_consistent_measures : int
+    min_measures : int
         Minimum number of consistent measures for stable section analysis (default: 1)
     beats_per_bar : int
         Number of beats per bar for downbeat detection (default: None, will try all supported meters)
@@ -130,7 +130,7 @@ def detect_beats_task(self: Task, audio_file: str, output_dir: str, min_bpm: int
             min_bpm=min_bpm,
             max_bpm=max_bpm,
             tolerance_percent=tolerance_percent,
-            min_consistent_measures=min_consistent_measures,
+            min_measures=min_measures,
             beats_per_bar=beats_per_bar,
             progress_callback=update_progress
         )

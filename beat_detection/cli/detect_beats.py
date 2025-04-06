@@ -156,7 +156,7 @@ def main():
         min_bpm=args.min_bpm,
         max_bpm=args.max_bpm,
         tolerance_percent=args.tolerance,
-        min_consistent_measures=args.min_measures,
+        min_measures=args.min_measures,
         beats_per_bar=args.beats_per_bar,
         progress_callback=progress_callback
     )

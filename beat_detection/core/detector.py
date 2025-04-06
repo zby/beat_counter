@@ -16,7 +16,7 @@ class BeatDetector:
     """Detect beats and downbeats in audio files."""
     
     def __init__(self, min_bpm: int = 60, max_bpm: int = 240, 
-                 tolerance_percent: float = 10.0, min_consistent_measures: int = 5,
+                 tolerance_percent: float = 10.0, min_measures: int = 5,
                  beats_per_bar: Optional[int] = None,
                  progress_callback: Optional[Callable[[str, float], None]] = None,
                  fps: int = 100):
@@ -31,7 +31,7 @@ class BeatDetector:
             Maximum beats per minute to detect
         tolerance_percent : float
             Percentage tolerance for beat intervals
-        min_consistent_measures : int
+        min_measures : int
             Minimum number of consistent measures required for stable section analysis in Beats class.
         beats_per_bar : Optional[int]
             Number of beats per bar to use for downbeat alignment. If None, will try all supported meters (2, 3, 4).
@@ -42,7 +42,7 @@ class BeatDetector:
         self.min_bpm = min_bpm
         self.max_bpm = max_bpm
         self.tolerance_percent = tolerance_percent
-        self.min_consistent_measures = min_consistent_measures
+        self.min_measures = min_measures
         self.beats_per_bar = beats_per_bar
         self.progress_callback = progress_callback
         self.fps = fps
@@ -111,7 +111,7 @@ class BeatDetector:
                 meter=meter,
                 beat_counts=beat_counts, # Pass the counts from the processor
                 tolerance_percent=self.tolerance_percent,
-                min_consistent_measures=self.min_consistent_measures
+                min_measures=self.min_measures
             )
         except BeatCalculationError as e:
             raise BeatCalculationError(f"Error creating Beats object for {audio_file}: {e}") from e

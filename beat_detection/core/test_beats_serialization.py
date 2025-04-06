@@ -30,7 +30,7 @@ def test_save_and_load_beats(tmp_path: Path):
     assert isinstance(loaded_beats, Beats)
     assert loaded_beats.meter == original_beats.meter
     assert loaded_beats.tolerance_percent == original_beats.tolerance_percent
-    assert loaded_beats.min_consistent_measures == original_beats.min_consistent_measures
+    assert loaded_beats.min_measures == original_beats.min_measures
     assert np.isclose(loaded_beats.tolerance_interval, original_beats.tolerance_interval)
     assert loaded_beats.start_regular_beat_idx == original_beats.start_regular_beat_idx
     assert loaded_beats.end_regular_beat_idx == original_beats.end_regular_beat_idx
@@ -106,13 +106,13 @@ def create_sample_beats_for_serialization() -> Beats:
     beat_counts = np.array([(i % meter) + 1 for i in range(num_beats)])
     
     # Use from_timestamps to ensure consistency with creation logic
-    # Need meter * min_consistent_measures = 4 * 1 = 4 beats minimum. We have 10.
+    # Need meter * min_measures = 4 * 1 = 4 beats minimum. We have 10.
     beats_obj = Beats.from_timestamps(
         timestamps=timestamps,
         meter=meter,
         beat_counts=beat_counts, # Add counts
         tolerance_percent=15.0, 
-        min_consistent_measures=1 # Lower requirement for this test case
+        min_measures=1 # Lower requirement for this test case
     )
     return beats_obj
 
@@ -142,7 +142,7 @@ def test_beats_to_dict_structure():
     # Check top-level keys
     expected_top_keys = {
         "meter", "tolerance_percent", "tolerance_interval", 
-        "min_consistent_measures", "start_regular_beat_idx", 
+        "min_measures", "start_regular_beat_idx", 
         "end_regular_beat_idx", "overall_stats", "regular_stats", "beat_list"
     }
     assert set(beats_dict.keys()) == expected_top_keys
@@ -178,7 +178,7 @@ def test_beats_to_dict_values():
     assert beats_dict["meter"] == beats_obj.meter
     assert beats_dict["tolerance_percent"] == beats_obj.tolerance_percent
     assert beats_dict["tolerance_interval"] == beats_obj.tolerance_interval
-    assert beats_dict["min_consistent_measures"] == beats_obj.min_consistent_measures
+    assert beats_dict["min_measures"] == beats_obj.min_measures
     assert beats_dict["start_regular_beat_idx"] == beats_obj.start_regular_beat_idx
     assert beats_dict["end_regular_beat_idx"] == beats_obj.end_regular_beat_idx
     
