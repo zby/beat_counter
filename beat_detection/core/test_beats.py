@@ -80,7 +80,8 @@ def test_beat_counting_regular():
     for i, beat_info in enumerate(beats.beat_list):
         assert beat_info.beat_count == expected_counts[i]
         # Test time-based lookup as well (check time just after the beat starts)
-        assert beats.get_beat_count_at_time(beat_info.timestamp + 0.01) == expected_counts[i]
+        count, _, _ = beats.get_info_at_time(beat_info.timestamp + 0.01)
+        assert count == expected_counts[i]
 
 def test_downbeat_detection():
     """Test downbeat identification."""
@@ -92,7 +93,9 @@ def test_downbeat_detection():
     actual_downbeat_indices = []
     for i, beat_info in enumerate(beats.beat_list):
         assert beat_info.is_downbeat == expected_downbeats[i]
-        assert beats.is_downbeat_at_time(beat_info.timestamp + 0.01) == expected_downbeats[i]
+        # Test using get_info_at_time and checking if count == 1 for downbeats
+        count, _, _ = beats.get_info_at_time(beat_info.timestamp + 0.01)
+        assert (count == 1) == expected_downbeats[i]
         if beat_info.is_downbeat:
              actual_downbeat_indices.append(i)
     # Check the collected indices match expectation
@@ -129,18 +132,19 @@ def test_irregular_interval_beats():
     # Beat 3 should be irregular due to interval
     assert irregular_indices == [3]
     assert beats.beat_list[3].is_irregular == True
-    assert beats.is_irregular_at_time(beats.beat_list[3].timestamp + 0.01) == True
+    # Check if beat is irregular using get_info_at_time
+    count, _, _ = beats.get_info_at_time(beats.beat_list[3].timestamp + 0.01)
+    assert count == 0  # Irregular beats have count 0
     # Check a regular one
     assert beats.beat_list[2].is_irregular == False 
-    # Irregularity check now only considers intervals, as beat counts come from input
-    # The `is_irregular` property still checks `beat_count == 0`, which is handled inside from_timestamps
-    # Update the assertion for overall_stats.irregularity_percent to only reflect interval irregularity
-    assert beats.is_irregular_at_time(beats.beat_list[2].timestamp + 0.01) == False
-    
-    # Check that irregularity_percent in stats reflects only interval irregularities
-    # In this case, we have 1 irregular interval out of 6 beats = 16.67%
-    # The overall_stats.irregularity_percent is based *only* on interval deviations now
-    assert np.isclose(beats.overall_stats.irregularity_percent, 16.67, atol=0.01)
+    # Check if beat is regular using get_info_at_time
+    count, _, _ = beats.get_info_at_time(beats.beat_list[2].timestamp + 0.01)
+    assert count > 0  # Regular beats have count > 0
+
+    # Check that overall irregularity reflects the FINAL count of irregular beats (1 out of 6)
+    irregularity_percent = beats.overall_stats.irregularity_percent
+    expected_percent = (1 / 6) * 100
+    assert np.isclose(irregularity_percent, expected_percent, atol=0.01)
 
 def test_irregular_count_beats():
     """Test identification of beats with irregular counts (exceeding meter)."""
@@ -171,10 +175,19 @@ def test_irregular_count_beats():
     # Beat 4 should be irregular due to count
     assert irregular_indices == [4]
     assert beats.beat_list[4].is_irregular == True
-    assert beats.is_irregular_at_time(beats.beat_list[4].timestamp + 0.01) == True
+    # Check if beat is irregular using get_info_at_time
+    count, _, _ = beats.get_info_at_time(beats.beat_list[4].timestamp + 0.01)
+    assert count == 0  # Irregular beats have count 0
     # Check a regular one
     assert beats.beat_list[3].is_irregular == False
-    assert beats.is_irregular_at_time(beats.beat_list[3].timestamp + 0.01) == False
+    # Check if beat is regular using get_info_at_time
+    count, _, _ = beats.get_info_at_time(beats.beat_list[3].timestamp + 0.01)
+    assert count > 0  # Regular beats have count > 0
+    
+    # Check that overall irregularity reflects the FINAL count of irregular beats (1 out of 7)
+    irregularity_percent = beats.overall_stats.irregularity_percent
+    expected_percent = (1 / 7) * 100
+    assert np.isclose(irregularity_percent, expected_percent, atol=0.01)
 
 def test_beat_info_access():
     """Test accessing BeatInfo objects at specific times."""

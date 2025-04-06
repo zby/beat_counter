@@ -205,7 +205,17 @@ class Beats:
                 is_downbeat=is_downbeat
             ))
             
-        # 5. Find the longest regular sequence using the static helper
+        # 5. Recalculate overall irregularity based on the final beat_list status
+        # This now includes irregularities from counts (beat_count == 0)
+        final_irregular_count = sum(1 for beat in beat_list if beat.is_irregular)
+        final_irregularity_percent = (final_irregular_count / num_beats) * 100 if num_beats > 0 else 0.0
+        # Update overall_stats with the final irregularity percentage
+        # Keep the original interval-based irregularity in overall_stats if needed for specific reporting,
+        # but the primary irregularity measure should reflect the final state.
+        # For simplicity, we'll overwrite it here. If needed, store both.
+        overall_stats.irregularity_percent = final_irregularity_percent
+
+        # 6. Find the longest regular sequence using the static helper
         try:
             start_idx, end_idx, _ = cls._find_longest_regular_sequence_static(
                 beat_list, tolerance_percent
@@ -225,7 +235,7 @@ class Beats:
              # Re-raise with more context if finding the sequence failed
              raise BeatCalculationError(f"Could not determine a stable regular section: {e}") from e
 
-        # 6. Calculate statistics for the identified regular section
+        # 7. Calculate statistics for the identified regular section
         if start_regular_beat_idx_calc >= end_regular_beat_idx_calc:
              # This case might happen if the sequence finding logic has issues or input is degenerate
              raise BeatCalculationError(
@@ -321,21 +331,16 @@ class Beats:
             
         return self.beat_list[current_beat_idx]
 
-    def get_beat_count_at_time(self, t: float) -> int:
-        """Get the beat count (1-meter, or 0 if before first downbeat) at time t."""
-        beat_info = self.get_beat_info_at_time(t)
-        return beat_info.beat_count if beat_info else 0
-
     def get_info_at_time(self, t: float) -> Tuple[int, float, int]:
         """
         Get count, time since last beat, and beat index at time t.
         
         Returns a tuple of (count, time_since_beat, beat_idx) where:
-        - count: The beat count (0 if before first beat or not in regular section)
+        - count: The beat count (0 if before first beat, irregular, or not in regular section)
         - time_since_beat: Time in seconds since the last beat (0.0 if before first beat)
         - beat_idx: Index of the beat in the beat_list (-1 if before first beat)
         
-        The count will be 0 for any beats outside the regular interval,
+        The count will be 0 for any beats outside the regular interval or for irregular beats,
         otherwise it will be the beat_count from the BeatInfo.
         """
         beat_info = self.get_beat_info_at_time(t)
@@ -347,22 +352,12 @@ class Beats:
         # Extract beat index
         beat_idx = beat_info.index
         
-        # Return 0 count if the beat is outside the regular interval
-        if beat_idx < self.start_regular_beat_idx or beat_idx > self.end_regular_beat_idx:
+        # Return 0 count if the beat is outside the regular interval or is irregular
+        if beat_idx < self.start_regular_beat_idx or beat_idx > self.end_regular_beat_idx or beat_info.is_irregular:
             return 0, t - beat_info.timestamp, beat_idx
             
         # Return count and time since beat for regular intervals
         return beat_info.beat_count, t - beat_info.timestamp, beat_idx
-
-    def is_downbeat_at_time(self, t: float) -> bool:
-        """Check if the beat at time t is a downbeat."""
-        beat_info = self.get_beat_info_at_time(t)
-        return beat_info.is_downbeat if beat_info else False
-        
-    def is_irregular_at_time(self, t: float) -> bool:
-        """Check if the beat at time t is irregular."""
-        beat_info = self.get_beat_info_at_time(t)
-        return beat_info.is_irregular if beat_info else False
 
     @property
     def timestamps(self) -> np.ndarray:
