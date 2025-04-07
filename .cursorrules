@@ -22,6 +22,7 @@
 4. Limit usage of monkey patching to extraordinary cases only
 5. Use clear error messages that indicate what went wrong
 6. Don't add complexity for future-proofing - we can modify the code later when needs arise
+7. Be very careful about adding nested try/except blocks
 
 ## Testing
 

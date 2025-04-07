@@ -21,21 +21,22 @@ class BeatDetector:
                  progress_callback: Optional[Callable[[str, float], None]] = None,
                  fps: int = 100):
         """
-        Initialize the beat detector.
+        Initialize the BeatDetector.
         
         Parameters:
-        -----------
+        ----------
         min_bpm : int
-            Minimum beats per minute to detect
+            Minimum tempo to consider (default: 60).
         max_bpm : int
-            Maximum beats per minute to detect
+            Maximum tempo to consider (default: 240).
         tolerance_percent : float
-            Percentage tolerance for beat intervals
+            Allowed deviation (%) for classifying beats as regular (default: 10.0).
         min_measures : int
-            Minimum number of consistent measures required for stable section analysis in Beats class.
+            Minimum number of full measures required for stable tempo/meter (default: 5).
         beats_per_bar : Optional[int]
-            Number of beats per bar to use for downbeat alignment. If None, will try all supported meters (2, 3, 4).
-            Default: None
+            Expected beats per bar (meter numerator). If None, it's auto-detected (default: None).
+        progress_callback : Optional[Callable[[str, float], None]]
+            Callback function for progress updates (default: None).
         fps : int
             Frames per second expected for the activation functions (default: 100).
         """
@@ -52,9 +53,9 @@ class BeatDetector:
         # Initialize downbeat tracker
         self.downbeat_tracker = DBNDownBeatTrackingProcessor(
             beats_per_bar=SUPPORTED_METERS, # Let madmom choose based on activation
-            min_bpm=self.min_bpm, 
-            max_bpm=self.max_bpm, 
-            fps=self.fps # Use self.fps here too
+            min_bpm=float(self.min_bpm), 
+            max_bpm=float(self.max_bpm), 
+            fps=float(self.fps) # Use self.fps here too (now it's a float)
         )
     
     def detect_beats(
