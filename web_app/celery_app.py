@@ -110,22 +110,29 @@ def _perform_beat_detection(
     audio_path_str = str(storage.get_audio_file_path(file_id))
     beats = detector.detect_beats(audio_path_str)
     
+    # Create metadata for the beat detection result
+    metadata = {
+        'detected_beats_per_bar': beats.beats_per_bar,
+        'total_beats': len(beats.timestamps),
+        'tempo_bpm': beats.overall_stats.tempo_bpm,
+        'irregularity_percent': beats.overall_stats.irregularity_percent
+    }
+    
+    # Save beat data to JSON
+    beat_data = {
+        'timestamps': beats.timestamps.tolist(),
+        'beats_per_bar': beats.beats_per_bar,
+        'downbeats': [i for i, beat in enumerate(beats.beat_list) if beat.beat_count == 1],
+        'intro_end_idx': beats.start_regular_beat_idx,
+        'ending_start_idx': beats.end_regular_beat_idx
+    }
+
     # Save beat data
     beats_file_path = storage.get_beats_file_path(file_id)
     beats.save_to_file(beats_file_path)
 
-    # Prepare metadata update
-    update_data = {
-        'beat_detection_status': 'success',
-        'beat_file': str(beats_file_path), # Store as string path
-        'total_beats': len(beats.timestamps),
-        'detected_meter': beats.meter,
-        'irregular_beats_count': len(beats.get_irregular_beats()),
-        'detected_tempo_bpm': beats.overall_stats.tempo_bpm
-    }
-
     # Update the central metadata store
-    storage.update_metadata(file_id, update_data)
+    storage.update_metadata(file_id, metadata)
     logger.info(f"Metadata updated for file_id {file_id} after beat detection.")
 
     # Return success information
@@ -133,7 +140,7 @@ def _perform_beat_detection(
         'status': 'success',
         'beat_file': str(beats_file_path), # Return string path
         'total_beats': len(beats.timestamps),
-        'meter': beats.meter,
+        'beats_per_bar': beats.beats_per_bar,
         'irregular_beats': len(beats.get_irregular_beats()),
         'tempo_bpm': beats.overall_stats.tempo_bpm
     }

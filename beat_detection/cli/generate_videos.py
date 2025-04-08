@@ -17,7 +17,7 @@ If nothing is provided, processes all audio files in data/input/.
 import pathlib
 import argparse
 import numpy as np
-from typing import Optional, Union, Tuple, Callable
+from typing import Optional, Union, Tuple, Callable, List
 
 from beat_detection.core.video import BeatVideoGenerator, DEFAULT_VIDEO_RESOLUTION, DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT, DEFAULT_FPS
 from beat_detection.utils import file_utils
@@ -68,36 +68,36 @@ def parse_args():
 
 from ..utils.beat_file import load_beat_data as base_load_beat_data
 
-def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.ndarray], int, int, int]:
+def load_beat_data(beat_file: Union[str, pathlib.Path]) -> Tuple[np.ndarray, np.ndarray, int, int, int]:
     """
-    Load beat timestamps, downbeat information, intro/ending indices, and detected meter from a file.
+    Load beat timestamps, downbeat information, intro/ending indices, and detected beats_per_bar from a file.
     
     Parameters:
     -----------
-    beat_file : pathlib.Path
-        Path to the beat timestamp file
-    
+    beat_file : Union[str, Path]
+        Path to the beat data file
+        
     Returns:
     --------
-    tuple
-        (beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter) where:
-        - beat_timestamps: Array of beat timestamps in seconds
-        - downbeats: Array of indices that correspond to downbeats, or None if not available
-        - intro_end_idx: Index where the intro ends (0 if no intro detected)
-        - ending_start_idx: Index where the ending begins (len(beat_timestamps) if no ending detected)
-        - detected_meter: Detected meter (time signature numerator, typically 3 or 4)
+    Tuple[np.ndarray, np.ndarray, int, int, int]
+        (beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_beats_per_bar) where:
+        - beat_timestamps: Array of beat timestamps
+        - downbeats: Array of downbeat indices
+        - intro_end_idx: Index of the last intro beat
+        - ending_start_idx: Index of the first ending beat
+        - detected_beats_per_bar: Detected beats per bar (time signature numerator, typically 3 or 4)
     """
     try:
         # Use the base load_beat_data function from the beat_file module
-        beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = base_load_beat_data(str(beat_file))
+        beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_beats_per_bar = base_load_beat_data(str(beat_file))
         
         # Check if we have any data at all
         if len(beat_timestamps) == 0:
             raise ValueError(f"No beat timestamps found in {beat_file}")
             
-        # Check if detected_meter was found in the header
-        if detected_meter is None:
-            raise ValueError(f"No detected meter information found in {beat_file}. Please ensure the file has a '# DETECTED_METER=X' header.")
+        # Check if detected_beats_per_bar was found in the header
+        if detected_beats_per_bar is None:
+            raise ValueError(f"No detected beats_per_bar information found in {beat_file}. Please ensure the file has a '# DETECTED_BEATS_PER_BAR=X' header.")
         
         # Check if we have any downbeats
         if len(downbeats) == 0:
@@ -113,140 +113,72 @@ def load_beat_data(beat_file: pathlib.Path) -> Tuple[np.ndarray, Optional[np.nda
             print(f"Intro section ends at beat {intro_end_idx}")
         if ending_start_idx < len(beat_timestamps):
             print(f"Ending section starts at beat {ending_start_idx}")
-        print(f"Detected meter: {detected_meter}/4 time signature")
+        print(f"Detected beats per bar: {detected_beats_per_bar}/4 time signature")
             
-        return beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter
+        return beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_beats_per_bar
     except Exception as e:
         print(f"Error loading beats from {beat_file}: {e}")
         raise ValueError(f"Failed to load beat data from {beat_file}: {e}")
 
 
-def generate_counter_video(audio_path: pathlib.Path, output_file: pathlib.Path,
-                        beat_timestamps: np.ndarray, downbeats: np.ndarray,
-                        intro_end_idx: int = 0, ending_start_idx: Optional[int] = None,
-                        resolution=DEFAULT_VIDEO_RESOLUTION, fps=30, meter=4, 
-                        sample_beats=None, verbose=True,
-                        progress_callback: Optional[Callable[[str, float], None]] = None) -> bool:
-    """Generate a counter video for a given audio file with beat timestamps.
+def generate_counter_video(
+    audio_file: Union[str, pathlib.Path],
+    output_file: Union[str, pathlib.Path],
+    beats_file: Optional[Union[str, pathlib.Path]] = None,
+    resolution: Tuple[int, int] = DEFAULT_VIDEO_RESOLUTION,
+    fps: int = 30,
+    beats_per_bar: int = 4,
+    sample_beats: Optional[int] = None,
+    verbose: bool = True
+) -> str:
+    """
+    Generate a beat counter video.
     
     Parameters:
     -----------
-    audio_path : pathlib.Path
-        Path to the audio file
-    output_file : pathlib.Path
-        Path where the output video will be saved
-    beat_timestamps : numpy.ndarray
-        Array of beat timestamps in seconds
-    downbeats : numpy.ndarray
-        Array of indices that correspond to downbeats
-    resolution : tuple
-        Video resolution as (width, height)
+    audio_file : Union[str, Path]
+        Path to the input audio file
+    output_file : Union[str, Path]
+        Path to save the output video
+    beats_file : Optional[Union[str, Path]]
+        Path to a pre-computed beats file (optional)
+    resolution : Tuple[int, int]
+        Video resolution (width, height)
     fps : int
-        Frames per second for the video
-    meter : int
-        Number of beats per measure
+        Frames per second
+    beats_per_bar : int
+        Number of beats per bar (time signature numerator)
+    sample_beats : Optional[int]
+        Number of beats to process (for testing)
     verbose : bool
-        Whether to print progress
+        Whether to print progress information
         
     Returns:
     --------
-    bool
-        True if video was successfully generated, False otherwise
+    str
+        Path to the generated video file
     """
-    # Create video generator with meter settings
-    video_generator = BeatVideoGenerator(
+    # Create video generator with beats_per_bar settings
+    video_gen = BeatVideoGenerator(
         resolution=resolution,
         fps=fps,
-        meter=meter
+        beats_per_bar=beats_per_bar
     )
     
     if verbose:
-        print(f"Generating counter video with {meter}/4 time and downbeat detection...")
-    try:
-        # Validate inputs
-        if len(beat_timestamps) == 0:
-            if verbose:
-                print("Warning: No beats detected in the audio file")
-            return False
-            
-        # Ensure downbeats is not None and has at least one element
-        if downbeats is None or len(downbeats) == 0:
-            if verbose:
-                print("Warning: No downbeats provided, using first beat as downbeat")
-            # Create a single downbeat at the first beat
-            downbeats = np.array([0], dtype=np.int64)
-        
-        # Apply intro and ending filtering if specified
-        filtered_beat_timestamps = beat_timestamps
-        filtered_downbeats = downbeats
-        
-        # Filter out intro beats if intro_end_idx is provided
-        if intro_end_idx > 0:
-            if verbose:
-                print(f"Skipping intro section (first {intro_end_idx} beats)")
-            filtered_beat_timestamps = beat_timestamps[intro_end_idx:]
-            if downbeats is not None:
-                # Adjust downbeat indices to account for removed intro beats
-                filtered_downbeats = downbeats[downbeats >= intro_end_idx] - intro_end_idx
-        
-        # Filter out ending beats if ending_start_idx is provided
-        if ending_start_idx is not None and ending_start_idx < len(beat_timestamps):
-            if verbose:
-                print(f"Skipping ending section (last {len(beat_timestamps) - ending_start_idx} beats)")
-            # Apply ending filter after intro filter
-            ending_idx_adjusted = ending_start_idx - intro_end_idx if intro_end_idx > 0 else ending_start_idx
-            if ending_idx_adjusted > 0:  # Make sure we have beats left after filtering
-                filtered_beat_timestamps = filtered_beat_timestamps[:ending_idx_adjusted]
-                if filtered_downbeats is not None:
-                    filtered_downbeats = filtered_downbeats[filtered_downbeats < ending_idx_adjusted]
-        
-        # Ensure we have at least one downbeat
-        if len(filtered_downbeats) == 0:
-            if verbose:
-                print("Warning: No downbeats after filtering, using first beat as downbeat")
-            # Create a single downbeat at the first beat
-            filtered_downbeats = np.array([0], dtype=np.int64)
-            
-        try:
-            video_generator.create_counter_video(
-                audio_file=str(audio_path), 
-                output_file=str(output_file),
-                beat_timestamps=filtered_beat_timestamps,
-                downbeats=filtered_downbeats,
-                meter=meter,
-                sample_beats=sample_beats,
-                progress_callback=progress_callback
-            )
-        except Exception as inner_e:
-            # Try to recover from specific errors
-            if verbose:
-                print(f"Encountered error during video creation: {inner_e}")
-                print("Attempting to recover...")
-            
-            # Check if output file exists despite the error
-            if output_file.exists() and output_file.stat().st_size > 0:
-                if verbose:
-                    print(f"Video file was created despite the error: {output_file}")
-                return True
-            
-            # If no recovery is possible, re-raise the exception
-            raise
-        if verbose:
-            print(f"Counter video saved: {output_file}")
-        return True
-    except Exception as e:
-        if verbose:
-            print(f"Error generating counter video: {e}")
-            
-        # Check if the output file was created despite the error
-        if output_file.exists() and output_file.stat().st_size > 0:
-            if verbose:
-                print(f"Video file was created despite the error: {output_file}")
-            return True
-        return False
+        print(f"Generating counter video with {beats_per_bar}/4 time and downbeat detection...")
+    
+    # Generate the video
+    return video_gen.generate_video(
+        audio_file,
+        beats_file,
+        output_file,
+        sample_beats=sample_beats,
+        verbose=verbose
+    )
 
 def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RESOLUTION, fps=30, 
-                      meter=4, sample_beats=None, verbose=True, 
+                      beats_per_bar=4, sample_beats=None, verbose=True, 
                       input_base_dir="data/input", output_base_dir="data/output"):
     """
     Process an audio file to generate a beat visualization video.
@@ -266,7 +198,8 @@ def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RES
         Video resolution as (width, height)
     fps : int
         Frames per second for the video
-
+    beats_per_bar : int
+        Number of beats per bar (time signature numerator)
     verbose : bool
         Whether to print progress
     input_base_dir : str
@@ -301,14 +234,14 @@ def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RES
     if beats_file is not None and beats_file.exists():
         if verbose:
             print(f"Found corresponding beats file: {beats_file}")
-        beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_meter = load_beat_data(beats_file)
+        beat_timestamps, downbeats, intro_end_idx, ending_start_idx, detected_beats_per_bar = load_beat_data(beats_file)
         if len(beat_timestamps) == 0:
             raise ValueError(f"No beats found in {beats_file}. Please generate beat data first using the beat detection tool.")
         
-        # Use the detected meter from the beat file
-        meter = detected_meter
+        # Use the detected beats_per_bar from the beat file
+        beats_per_bar = detected_beats_per_bar
         if verbose:
-            print(f"Using detected meter {meter}/4 from beats file")
+            print(f"Using detected beats_per_bar {beats_per_bar}/4 from beats file")
     else:
         raise FileNotFoundError(f"No beats file found for {audio_path.name}. Please generate beat data first using the beat detection tool.")
     
@@ -326,17 +259,14 @@ def process_audio_file(audio_file, output_dir=None, resolution=DEFAULT_VIDEO_RES
     )
     
     success = generate_counter_video(
-        audio_path=audio_path,
+        audio_file=audio_path,
         output_file=counter_video,
-        beat_timestamps=beat_timestamps,
-        downbeats=downbeats,
-        intro_end_idx=intro_end_idx,
-        ending_start_idx=ending_start_idx,
+        beats_file=beats_file,
         resolution=resolution,
         fps=fps,
-        meter=meter,
-        verbose=verbose,
-        sample_beats=sample_beats
+        beats_per_bar=beats_per_bar,
+        sample_beats=sample_beats,
+        verbose=verbose
     )
     
     return success
@@ -394,6 +324,7 @@ def process_directory(directory, output_dir, resolution=DEFAULT_VIDEO_RESOLUTION
                 output_dir=output_dir,
                 resolution=resolution,
                 fps=fps,
+                beats_per_bar=4,
                 sample_beats=sample_beats,
                 verbose=verbose
             )
@@ -453,6 +384,7 @@ def main():
                 output_dir=output_base_dir,
                 resolution=resolution,
                 fps=args.fps,
+                beats_per_bar=4,
                 sample_beats=args.sample,
                 verbose=not args.quiet,
                 input_base_dir=input_base_dir,

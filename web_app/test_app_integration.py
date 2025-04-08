@@ -150,7 +150,7 @@ def mock_beat_detector():
         np.array([0], dtype=int),    # 4. downbeats (index 0)
         0,                           # 5. intro_end_idx
         2,                           # 6. ending_start_idx
-        4                            # 7. detected_meter
+        4                           # 7. beats_per_bar
     )
     assert len(mock_return_tuple) == 7, "Mock return tuple does not have 7 elements!"
 

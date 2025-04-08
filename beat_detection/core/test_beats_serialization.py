@@ -16,7 +16,7 @@ from beat_detection.core.test_beats import create_test_beats
 def test_save_and_load_beats(tmp_path: Path):
     """Test saving a Beats object to JSON and loading it back."""
     # 1. Create a sample Beats object
-    original_beats = create_test_beats(meter=3, num_beats=15, interval=0.6, tolerance=15.0, min_measures=2)
+    original_beats = create_test_beats(beats_per_bar=3, num_beats=15, interval=0.6, tolerance=15.0, min_measures=2)
     file_path = tmp_path / "test_beats.json"
 
     # 2. Save the object
@@ -28,7 +28,7 @@ def test_save_and_load_beats(tmp_path: Path):
 
     # 4. Compare original and loaded objects
     assert isinstance(loaded_beats, Beats)
-    assert loaded_beats.meter == original_beats.meter
+    assert loaded_beats.beats_per_bar == original_beats.beats_per_bar
     assert loaded_beats.tolerance_percent == original_beats.tolerance_percent
     assert loaded_beats.min_measures == original_beats.min_measures
     assert np.isclose(loaded_beats.tolerance_interval, original_beats.tolerance_interval)
@@ -86,7 +86,7 @@ def test_load_beats_incorrect_type(tmp_path: Path):
     file_path = tmp_path / "incorrect_type_beats.json"
     original_beats = create_test_beats(min_measures=1)
     data = original_beats.to_dict()
-    data['meter'] = "not_an_integer" # Corrupt the type
+    data['beats_per_bar'] = "not_an_integer" # Corrupt the type
     
     with file_path.open('w') as f:
         json.dump(data, f)
@@ -99,16 +99,16 @@ def test_load_beats_incorrect_type(tmp_path: Path):
 def create_sample_beats_for_serialization() -> Beats:
     """Creates a predictable Beats object for serialization tests."""
     timestamps = np.array([0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0])
-    meter = 4
+    beats_per_bar = 4
     num_beats = len(timestamps)
-    # Generate counts based on meter
-    beat_counts = np.array([(i % meter) + 1 for i in range(num_beats)])
+    # Generate counts based on beats_per_bar
+    beat_counts = np.array([(i % beats_per_bar) + 1 for i in range(num_beats)])
     
     # Use from_timestamps to ensure consistency with creation logic
-    # Need meter * min_measures = 4 * 1 = 4 beats minimum. We have 10.
+    # Need beats_per_bar * min_measures = 4 * 1 = 4 beats minimum. We have 10.
     beats_obj = Beats.from_timestamps(
         timestamps=timestamps,
-        meter=meter,
+        beats_per_bar=beats_per_bar,
         beat_counts=beat_counts, # Add counts
         tolerance_percent=15.0, 
         min_measures=1 # Lower requirement for this test case
@@ -138,7 +138,7 @@ def test_beats_to_dict_structure():
     
     # Check top-level keys
     expected_top_keys = {
-        "meter", "tolerance_percent", "tolerance_interval", 
+        "beats_per_bar", "tolerance_percent", "tolerance_interval", 
         "min_measures", "start_regular_beat_idx", 
         "end_regular_beat_idx", "overall_stats", "regular_stats", "beat_list"
     }
@@ -172,7 +172,7 @@ def test_beats_to_dict_values():
     beats_obj = create_sample_beats_for_serialization()
     beats_dict = beats_obj.to_dict()
     
-    assert beats_dict["meter"] == beats_obj.meter
+    assert beats_dict["beats_per_bar"] == beats_obj.beats_per_bar
     assert beats_dict["tolerance_percent"] == beats_obj.tolerance_percent
     assert beats_dict["tolerance_interval"] == beats_obj.tolerance_interval
     assert beats_dict["min_measures"] == beats_obj.min_measures

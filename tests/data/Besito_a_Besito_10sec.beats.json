@@ -1,5 +1,5 @@
 {
-    "meter": 4,
+    "beats_per_bar": 4,
     "tolerance_percent": 10.0,
     "tolerance_interval": 0.04500000000000002,
     "min_measures": 5,

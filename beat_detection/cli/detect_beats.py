@@ -70,8 +70,10 @@ def parse_args():
         help="Percentage tolerance for beat intervals (default: 10.0)"
     )
     parser.add_argument(
-        "--beats-per-bar", type=int, default=None,
-        help="Number of beats per bar for downbeat detection (default: None, will try all supported meters)"
+        "--beats-per-bar",
+        type=int,
+        default=None,
+        help="Number of beats per bar for downbeat detection (default: None, will try all supported values)"
     )
     
     # Output options

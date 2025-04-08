@@ -170,7 +170,7 @@ def test_detect_beats_task_integration_success(sample_audio_file, temp_storage_i
             beat_data_json = json.load(f)
         # Verify expected top-level keys based on the actual output
         assert 'beat_list' in beat_data_json
-        assert 'meter' in beat_data_json
+        assert 'beats_per_bar' in beat_data_json
         assert 'overall_stats' in beat_data_json
         assert 'tempo_bpm' in beat_data_json['overall_stats']
         print(f"\nSuccessfully loaded beats JSON from {expected_beats_path}")
@@ -190,7 +190,7 @@ def test_detect_beats_task_integration_success(sample_audio_file, temp_storage_i
     assert metadata.get('beat_file') == str(expected_beats_path)
     # Compare total beats count with the length of the beat_list
     assert metadata.get('total_beats') == len(beat_data_json['beat_list']) 
-    assert metadata.get('detected_meter') == beat_data_json.get('meter')
+    assert metadata.get('detected_beats_per_bar') == beat_data_json.get('beats_per_bar')
     # Calculate irregular beats count from the loaded JSON for comparison
     json_irregular_count = sum(1 for beat in beat_data_json.get('beat_list', []) if beat.get('is_irregular_interval'))
     assert metadata.get('irregular_beats_count') == json_irregular_count
@@ -199,6 +199,17 @@ def test_detect_beats_task_integration_success(sample_audio_file, temp_storage_i
     assert 'detected_tempo_bpm' in metadata
     assert abs(metadata['detected_tempo_bpm'] - beat_data_json['overall_stats']['tempo_bpm']) < 0.01
     print(f"\nSuccessfully verified metadata update for file_id {file_id}")
+
+    # Test beat data JSON structure
+    assert isinstance(beat_data_json, dict), "Beat data should be a dictionary"
+    assert 'beats_per_bar' in beat_data_json, "Beat data should contain beats_per_bar"
+    
+    # Test metadata structure
+    assert isinstance(metadata, dict), "Metadata should be a dictionary"
+    assert metadata.get('detected_beats_per_bar') == beat_data_json.get('beats_per_bar'), "Metadata beats_per_bar mismatch"
+
+    assert result['beat_stats']['total_beats'] == 4
+    assert result['beat_stats']['beats_per_bar'] == 4
 
 
 def test_generate_video_integration_success(sample_beats_file, temp_storage_integration):
@@ -269,6 +280,9 @@ def test_generate_video_integration_success(sample_beats_file, temp_storage_inte
     # Ensure CWD is back to what it was when the test started.
     assert Path.cwd() == workspace_root, f"Current working directory not restored! Expected {workspace_root}, but got {Path.cwd()}"
     print(f"\nSuccessfully verified video generation and metadata update for file_id {file_id}")
+
+    assert result['beat_stats']['total_beats'] == 4
+    assert result['beat_stats']['beats_per_bar'] == 4
 
 
 if __name__ == "__main__":

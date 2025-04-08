@@ -85,8 +85,8 @@
                             <p id="result-duration">--</p>
                         </div>
                         <div class="result-item">
-                            <h3>Meter</h3>
-                            <p id="result-meter">--</p>
+                            <h3>Beats per Bar</h3>
+                            <p id="result-beats-per-bar">--</p>
                         </div>
                     </div>
                     
@@ -141,7 +141,7 @@
          data-bpm="{{ file_status.beat_stats.tempo_bpm if file_status.beat_stats and file_status.beat_stats.tempo_bpm else 0 }}"
          data-total-beats="{{ file_status.beat_stats.total_beats if file_status.beat_stats and file_status.beat_stats.total_beats else 0 }}"
          data-duration="{{ file_status.beat_stats.duration if file_status.beat_stats and file_status.beat_stats.duration else 0 }}"
-         data-detected-meter="{{ file_status.beat_stats.detected_meter if file_status.beat_stats and file_status.beat_stats.detected_meter else 0 }}"
+         data-detected-beats-per-bar="{{ file_status.beat_stats.detected_beats_per_bar if file_status.beat_stats and file_status.beat_stats.detected_beats_per_bar else 0 }}"
          data-original-duration="{{ file_status.original_duration if file_status.original_duration else 0 }}"
          data-duration-limit="{{ file_status.duration_limit if file_status.duration_limit else 60 }}"
          data-app-dir="{{ app_dir }}"
@@ -160,7 +160,7 @@
             bpm: Number(dataElement.getAttribute('data-bpm') || 0),
             totalBeats: Number(dataElement.getAttribute('data-total-beats') || 0),
             duration: Number(dataElement.getAttribute('data-duration') || 0),
-            detectedMeter: Number(dataElement.getAttribute('data-detected-meter') || 0),
+            detectedBeatsPerBar: Number(dataElement.getAttribute('data-detected-beats-per-bar') || 0),
             originalDuration: Number(dataElement.getAttribute('data-original-duration') || 0),
             durationLimit: Number(dataElement.getAttribute('data-duration-limit') || 60),
             appDir: dataElement.getAttribute('data-app-dir')

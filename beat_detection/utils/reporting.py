@@ -57,7 +57,7 @@ def get_beat_statistics_dict(beats: Beats,
         "regular_section_irregularity_percent": round(regular_stats.irregularity_percent, 1),
         "regular_section_total_beats": regular_stats.total_beats,
         # Add info from Beats object itself
-        "detected_meter": beats.meter,
+        "beats_per_bar": beats.beats_per_bar,
         "tolerance_percent": beats.tolerance_percent,
         "regular_section_start_idx": beats.start_regular_beat_idx,
         "regular_section_end_idx": beats.end_regular_beat_idx
@@ -175,7 +175,7 @@ def print_statistics(beats: Beats) -> None:
     print(f"Max interval: {stats.max_interval:.3f} seconds")
     print(f"Irregular beats (final count): {len(irregular_indices)} ({len(irregular_indices)/stats.total_beats*100:.1f}%)")
     print(f"  (Note: Initial interval irregularity was {stats.irregularity_percent:.1f}%)")
-    print(f"Detected Meter: {beats.meter}")
+    print(f"Beats per Bar: {beats.beats_per_bar}")
     print(f"Regular Section: Beats {beats.start_regular_beat_idx} to {beats.end_regular_beat_idx-1}")
     # Optionally print regular stats too
     # print("\nRegular Section Statistics:")

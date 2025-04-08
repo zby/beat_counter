@@ -413,10 +413,18 @@ function displayAnalysisResults(data) {
         }
     };
 
-    setText('result-bpm', data.bpm, ' BPM');
-    setText('result-total-beats', data.totalBeats);
-    setText('result-duration', data.duration, 's');
-    setText('result-meter', data.detectedMeter); // Assuming meter is not a number needing formatting
+    setText('result-total-beats', formatNumber(data.totalBeats));
+    setText('result-beats-per-bar', data.detectedBeatsPerBar); // Assuming beatsPerBar is not a number needing formatting
+    setText('result-tempo', formatNumber(data.tempoBpm, 1) + ' BPM');
+    setText('result-irregularity', formatNumber(data.irregularityPercent, 1) + '%');
+
+    // Update the summary text
+    const summaryText = `
+        Total Beats:  ${formatNumber(data.totalBeats)}
+        Beats/Bar:    ${data.detectedBeatsPerBar || 'N/A'}
+        Tempo:        ${formatNumber(data.tempoBpm, 1)} BPM
+        Irregularity: ${formatNumber(data.irregularityPercent, 1)}%
+    `;
 }
 
 
@@ -709,7 +717,7 @@ App Dir:        ${data.appDir || 'N/A'}
 BPM:         ${data.bpm?.toFixed(1) || 'N/A'}
 Total Beats: ${data.totalBeats || 'N/A'}
 Audio Dur:   ${data.duration?.toFixed(2) || 'N/A'}s
-Meter:       ${data.detectedMeter || 'N/A'}
+Beats per bar:       ${data.detectedMeter || 'N/A'}
 
 --- Tasks ---
 Beat Task ID:    ${beatTask.id || 'N/A'}

@@ -72,7 +72,7 @@ class Beats:
     beat_list: List[BeatInfo]
     overall_stats: BeatStatistics  # Statistics for the entire track
     regular_stats: BeatStatistics  # Statistics for the regular section only
-    meter: int
+    beats_per_bar: int
     tolerance_percent: float # The percentage tolerance used for interval calculations
     tolerance_interval: float # The calculated absolute tolerance in seconds
     min_measures: int # The minimum number of consistent measures required for analysis
@@ -82,7 +82,7 @@ class Beats:
     @classmethod
     def from_timestamps(cls, 
                         timestamps: np.ndarray, 
-                        meter: int, 
+                        beats_per_bar: int, 
                         beat_counts: np.ndarray, # Add new parameter for pre-calculated counts
                         tolerance_percent: float = 10.0,
                         min_measures: int = 5 # Minimum consistent measures required
@@ -119,18 +119,18 @@ class Beats:
                 f"Invalid tolerance_percent provided: {tolerance_percent}. Must be a non-negative number."
             )
 
-        # Ensure meter is at least 2
-        if meter <= 1:
-             raise BeatCalculationError(f"Invalid meter provided: {meter}. Meter must be 2 or greater.")
+        # Ensure beats_per_bar is at least 2
+        if beats_per_bar <= 1:
+             raise BeatCalculationError(f"Invalid beats_per_bar provided: {beats_per_bar}. Must be 2 or greater.")
 
         end_regular_beat_idx_calc = num_beats
         start_regular_beat_idx_calc = 0
 
         # This check implicitly handles num_beats <= 1 if min_measures >= 1
-        required_beats = meter * min_measures
+        required_beats = beats_per_bar * min_measures
         if num_beats < required_beats:
             raise BeatCalculationError(
-                f"Insufficient number of beats ({num_beats}) for analysis with meter {meter}. "
+                f"Insufficient number of beats ({num_beats}) for analysis with beats_per_bar {beats_per_bar}. "
                 f"Requires at least {required_beats} beats ({min_measures} measures)."
             )
         # --- End Validation Checks ---
@@ -179,9 +179,9 @@ class Beats:
             # Use the provided beat count directly
             original_beat_count = beat_counts[i]
             
-            # Apply the same logic as before: counts > meter are considered irregular (display as 0)
+            # Apply the same logic as before: counts > beats_per_bar are considered irregular (display as 0)
             display_beat_count = original_beat_count
-            if original_beat_count > meter or original_beat_count <= 0: # Also treat non-positive counts as irregular
+            if original_beat_count > beats_per_bar or original_beat_count <= 0: # Also treat non-positive counts as irregular
                 display_beat_count = 0
                 # We might also want to flag this beat specifically if needed,
                 # but relying on display_beat_count == 0 for irregularity check should suffice.
@@ -206,18 +206,18 @@ class Beats:
         # 6. Find the longest regular sequence using the static helper
         try:
             start_idx, end_idx, _ = cls._find_longest_regular_sequence_static(
-                beat_list, tolerance_percent, meter
+                beat_list, tolerance_percent, beats_per_bar
             )
             start_regular_beat_idx_calc = start_idx
             end_regular_beat_idx_calc = end_idx + 1 # Convert inclusive end index to exclusive
             
             # Check if the found sequence meets the minimum length requirement
             sequence_length = end_regular_beat_idx_calc - start_regular_beat_idx_calc
-            required_beats = meter * min_measures
+            required_beats = beats_per_bar * min_measures
             if sequence_length < required_beats:
                 raise BeatCalculationError(
                     f"Longest regular sequence found ({sequence_length} beats) is shorter than required "
-                    f"({required_beats} beats = {min_measures} measures of {meter}/X time)."
+                    f"({required_beats} beats = {min_measures} measures of {beats_per_bar}/X time)."
                 )
         except BeatCalculationError as e:
              # Re-raise with more context if finding the sequence failed
@@ -282,7 +282,7 @@ class Beats:
         return cls(beat_list=beat_list, 
                    overall_stats=overall_stats,
                    regular_stats=regular_stats,
-                   meter=meter, 
+                   beats_per_bar=beats_per_bar, 
                    tolerance_percent=tolerance_percent, 
                    tolerance_interval=tolerance_interval_calculated,
                    min_measures=min_measures,
@@ -292,7 +292,7 @@ class Beats:
     def to_dict(self) -> Dict:
         """Convert the Beats object to a dictionary suitable for JSON serialization."""
         return {
-            "meter": int(self.meter),
+            "beats_per_bar": int(self.beats_per_bar),
             "tolerance_percent": float(self.tolerance_percent),
             "tolerance_interval": float(self.tolerance_interval),
             "min_measures": int(self.min_measures),
@@ -368,7 +368,7 @@ class Beats:
     @staticmethod
     def _find_longest_regular_sequence_static(beat_list: List[BeatInfo],
                                               tolerance_percent: float,
-                                              meter: int
+                                              beats_per_bar: int
                                              ) -> Tuple[int, int, float]:
         """
         Find the longest sequence of beats where intervals are regular and beat counts are determined.
@@ -378,7 +378,7 @@ class Beats:
         2. All beats within the sequence must have `beat_count > 0`.
         3. The time interval between any two consecutive beats in the sequence must be
            within `tolerance_interval` of the overall `median_interval`.
-        4. Beat counts must increment correctly (1, 2, ..., meter, 1, ...).
+        4. Beat counts must increment correctly (1, 2, ..., beats_per_bar, 1, ...).
 
         Parameters:
         -----------
@@ -386,7 +386,7 @@ class Beats:
             The list of BeatInfo objects to analyze.
         tolerance_percent : float
             The tolerance percentage used to define interval regularity relative to the median.
-        meter : int
+        beats_per_bar : int
             The time signature's upper numeral (e.g., 4 for 4/4 time).
 
         Returns:
@@ -405,8 +405,8 @@ class Beats:
         if not beat_list:
             raise BeatCalculationError("Cannot find regular sequence in empty beat list.")
 
-        if meter <= 1:
-            raise BeatCalculationError(f"Invalid meter ({meter}) passed to sequence finder. Must be > 1.")
+        if beats_per_bar <= 1:
+            raise BeatCalculationError(f"Invalid beats_per_bar ({beats_per_bar}) passed to sequence finder. Must be > 1.")
 
         if not (0 <= tolerance_percent <= 100):
             raise BeatCalculationError(f"Invalid tolerance percent: {tolerance_percent}. Must be between 0 and 100.")
@@ -416,7 +416,7 @@ class Beats:
         intervals = np.diff(timestamps)
 
         # The num_beats < required_beats check in from_timestamps should prevent
-        # len(intervals) == 0 if min_measures >= 1 and meter >= 2.
+        # len(intervals) == 0 if min_measures >= 1 and beats_per_bar >= 2.
         # However, keep a check for safety, but it shouldn't return a valid sequence.
         if len(intervals) == 0:
             raise BeatCalculationError(
@@ -449,7 +449,7 @@ class Beats:
                 interval = beat_list[i].timestamp - beat_list[i-1].timestamp
                 prev_count = beat_list[i-1].beat_count
                 current_count = beat_list[i].beat_count
-                expected_next_count = (prev_count % meter) + 1
+                expected_next_count = (prev_count % beats_per_bar) + 1
 
                 # Check BOTH interval regularity AND correct count sequence
                 is_interval_regular = abs(interval - median_interval) <= tolerance_interval
@@ -541,7 +541,7 @@ class Beats:
             
             # Explicitly convert/validate types before final instantiation
             try:
-                meter_val = int(data['meter'])
+                beats_per_bar_val = int(data['beats_per_bar'])
                 tolerance_percent_val = float(data['tolerance_percent'])
                 tolerance_interval_val = float(data['tolerance_interval'])
                 min_measures_val = int(data['min_measures'])
@@ -556,12 +556,12 @@ class Beats:
                 beat_list=beat_list,
                 overall_stats=overall_stats,
                 regular_stats=regular_stats,
-                meter=meter_val, # Use converted value
-                tolerance_percent=tolerance_percent_val, # Use converted value
-                tolerance_interval=tolerance_interval_val, # Use converted value
-                min_measures=min_measures_val, # Use converted value
-                start_regular_beat_idx=start_regular_beat_idx_val, # Use converted value
-                end_regular_beat_idx=end_regular_beat_idx_val # Use converted value
+                beats_per_bar=beats_per_bar_val,
+                tolerance_percent=tolerance_percent_val,
+                tolerance_interval=tolerance_interval_val,
+                min_measures=min_measures_val,
+                start_regular_beat_idx=start_regular_beat_idx_val,
+                end_regular_beat_idx=end_regular_beat_idx_val
             )
             return instance # Return the successfully created instance
         except KeyError as e:
