@@ -38,8 +38,9 @@ def test_generate_video_from_beats():
         beats = detector.detect_beats(str(TEST_AUDIO_FILE))
         assert len(beats.timestamps) > 0, "No beats were detected."
         assert beats.meter is not None, "Meter was not determined."
-        assert len(beats.downbeat_indices) > 0, \
-            f"No downbeats were detected in {TEST_AUDIO_FILE.name}"
+        # Check if at least one beat has count 1 (indicating a downbeat)
+        assert any(b.beat_count == 1 for b in beats.beat_list), \
+            f"No downbeats (beat_count == 1) were detected in {TEST_AUDIO_FILE.name}"
 
         # --- Save Beats to File ---
         try:
