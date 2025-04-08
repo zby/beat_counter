@@ -308,6 +308,7 @@ class FileMetadataStorage:
                 "upload_time": datetime.now().isoformat(),
                 "duration_limit": self.max_audio_secs,  # Store in seconds
                 "original_duration": original_duration,  # Store original duration
+                "duration": len(truncated_audio) / 1000,  # Store truncated duration in seconds
                 "original_filename": filename
             }
             

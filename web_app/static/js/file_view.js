@@ -39,6 +39,12 @@ const setVisibility = (element, shouldBeVisible) => {
     }
 };
 
+// --- Helper function to format numbers with optional decimal places ---
+const formatNumber = (value, decimalPlaces = 0) => {
+    if (value === null || value === undefined) return 'N/A';
+    if (typeof value !== 'number') return value;
+    return value.toFixed(decimalPlaces);
+};
 
 // Initialize the application when the DOM is fully loaded
 document.addEventListener('DOMContentLoaded', function() {
@@ -415,7 +421,8 @@ function displayAnalysisResults(data) {
 
     setText('result-total-beats', formatNumber(data.totalBeats));
     setText('result-beats-per-bar', data.detectedBeatsPerBar); // Assuming beatsPerBar is not a number needing formatting
-    setText('result-tempo', formatNumber(data.tempoBpm, 1) + ' BPM');
+    setText('result-bpm', formatNumber(data.bpm, 1) + ' BPM');
+    setText('result-duration', formatNumber(data.duration, 0) + 's');
     setText('result-irregularity', formatNumber(data.irregularityPercent, 1) + '%');
 
     // Update the summary text

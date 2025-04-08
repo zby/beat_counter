@@ -272,14 +272,6 @@ def _perform_video_generation(
         )
         logger.info(f"Video generation process finished. Output: {generated_video_file}")
 
-        # --- Update Metadata ---
-        storage.update_metadata(file_id, {
-            "video_file": video_output, 
-            "video_generation_status": "success",
-            "video_generation_error": None
-            })
-        logger.info("Metadata updated with video generation results.")
-
         update_progress("Video generation complete", 1.0)
         return
 
@@ -289,6 +281,13 @@ def _perform_video_generation(
             try:
                 os.chdir(str(old_cwd))
                 logger.info(f"Restored original working directory: {old_cwd}")
+                # --- Update Metadata ---
+                storage.update_metadata(file_id, {
+                    "video_file": str(video_output),  # Ensure path is stored as string
+                    "video_generation_status": "success",
+                    "video_generation_error": None
+                    })
+                logger.info("Metadata updated with video generation results.")
             except Exception as chdir_e:
                 logger.error(f"Error restoring original working directory ({old_cwd}): {chdir_e}")
 

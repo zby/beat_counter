@@ -296,6 +296,7 @@ async def get_file_status_route(
         "upload_timestamp": metadata.get("upload_timestamp"),
         "uploaded_by": metadata.get("uploaded_by"),
         "original_duration": metadata.get("original_duration"),
+        "duration": metadata.get("duration"),  # Add the truncated duration
         "duration_limit": metadata.get("duration_limit"),
         "beat_detection": metadata.get("beat_detection"), # Beat Task ID
         "video_generation": metadata.get("video_generation"), # Video Task ID
@@ -307,7 +308,7 @@ async def get_file_status_route(
         response_data["beat_stats"] = {
             "tempo_bpm": metadata.get("detected_tempo_bpm"),
             "total_beats": metadata.get("total_beats"),
-            "beats_per_bar": metadata.get("detected_beats_per_bar"),
+            "detected_beats_per_bar": metadata.get("detected_beats_per_bar"),
             "irregularity_percent": metadata.get("irregularity_percent"),
             "irregular_beats_count": metadata.get("irregular_beats_count"),
             "status": beat_status,

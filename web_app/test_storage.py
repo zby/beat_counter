@@ -195,3 +195,24 @@ def test_file_extension_handling(storage):
         with open(temp_file.name, 'rb') as f:
             path = storage.save_audio_file(file_id, '.xyz', f, "test.xyz")
             assert path.suffix == '.mp3'  # Should fall back to MP3 
+
+def test_audio_duration_storage(storage):
+    """Test that both original and truncated durations are stored correctly in metadata."""
+    file_id = "test123"
+    
+    # Create an audio segment longer than the limit
+    original_duration_ms = storage.max_audio_secs * 1000 + 1000  # 1 second over limit
+    audio = AudioSegment.silent(duration=original_duration_ms)
+    
+    # Save the audio file
+    with tempfile.NamedTemporaryFile(suffix='.mp3') as temp_file:
+        audio.export(temp_file.name, format='mp3')
+        with open(temp_file.name, 'rb') as f:
+            path = storage.save_audio_file(file_id, '.mp3', f, "test.mp3")
+    
+    # Verify metadata has both durations
+    metadata = storage.get_metadata(file_id)
+    assert metadata is not None
+    assert metadata['original_duration'] == original_duration_ms / 1000  # Convert to seconds
+    assert metadata['duration'] == storage.max_audio_secs  # Should be truncated to limit
+    assert metadata['duration'] < metadata['original_duration']  # Truncated should be shorter 
