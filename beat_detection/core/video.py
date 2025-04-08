@@ -136,6 +136,14 @@ class BeatVideoGenerator:
         # Create a blank frame with background color
         frame = np.full((self.resolution[1], self.resolution[0], 3), self.bg_color, dtype=np.uint8)
         
+        # Convert frame to PIL Image for drawing
+        img = Image.fromarray(frame)
+        draw = ImageDraw.Draw(img)
+        
+        # If we're not in a regular sequence (current_beat = 0), just return white background
+        if current_beat == 0:
+            return np.array(img)
+        
         # Calculate dimensions for the beat indicators
         indicator_width = self.resolution[0] // beats_per_bar
         indicator_height = self.resolution[1] // 2
@@ -148,22 +156,28 @@ class BeatVideoGenerator:
             y_start = (self.resolution[1] - indicator_height) // 2
             y_end = y_start + indicator_height
             
-            # For no beat (current_beat = 0), use a dimmed version of the normal colors
-            if current_beat == 0:
-                # Use a dimmed version of the normal color for this position
-                base_color = self.count_colors[beat - 1] if beat > 1 else self.downbeat_color
-                color = tuple(max(c // 4, 0) for c in base_color)  # Dim the color to 25% brightness
-            else:
-                # Normal coloring logic
-                if beat == current_beat:
-                    color = self.downbeat_color
-                else:
-                    color = self.count_colors[beat - 1]
-                
-            # Draw the rectangle for this beat
-            frame[y_start:y_end, x_start:x_end] = color
+            # Use gray for downbeat (beat 1), white for other beats
+            color = (200, 200, 200) if beat == 1 else (255, 255, 255)
             
-        return frame
+            # Draw the rectangle for this beat
+            draw.rectangle([x_start, y_start, x_end, y_end], fill=color)
+            
+            # Only draw the number for the current beat
+            if beat == current_beat:
+                text = str(beat)
+                # Increase text size to 90% of the smaller dimension
+                text_size = int(min(indicator_width, indicator_height) * 0.9)
+                font = self._find_large_font(text_size)
+                
+                # Calculate text position
+                text_x = x_start + (indicator_width - text_size) // 2
+                text_y = y_start + (indicator_height - text_size) // 2
+                
+                # Draw the number in black
+                self._draw_number_with_font(draw, text, (text_x, text_y), (0, 0, 0), font, text_size)
+        
+        # Convert back to numpy array
+        return np.array(img)
     
     def _find_large_font(self, text_size: int) -> Optional[ImageFont.ImageFont]:
         """Find a font suitable for large text display."""
