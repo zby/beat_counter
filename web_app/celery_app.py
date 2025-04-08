@@ -94,7 +94,7 @@ def _perform_beat_detection(
     min_measures: int,
     beats_per_bar: Optional[int],
     update_progress: Callable[[str, float], None]
-) -> dict:
+) -> None:
     """Performs the actual beat detection, saving, and metadata update."""
     # Configure detector
     detector = BeatDetector(
@@ -110,55 +110,40 @@ def _perform_beat_detection(
     audio_path_str = str(storage.get_audio_file_path(file_id))
     beats = detector.detect_beats(audio_path_str)
     
+    # --- Add temporary debugging --- 
+    logger.info(f"DEBUG: Type of 'beats' variable after call: {type(beats)}")
+    logger.info(f"DEBUG: Value of 'beats' variable: {beats!r}") # Use !r for detailed repr
+    # --- End temporary debugging --- 
+    
     # Create metadata for the beat detection result
-    metadata = {
+    beats_file_path = storage.get_beats_file_path(file_id)
+    metadata_update = {
         'beat_detection_status': 'success',
+        'beat_detection_error': None,
         'detected_beats_per_bar': beats.beats_per_bar,
         'total_beats': len(beats.timestamps),
         'detected_tempo_bpm': beats.overall_stats.tempo_bpm,
         'irregularity_percent': beats.overall_stats.irregularity_percent,
-        'irregular_beats_count': len(beats.get_irregular_beats())
+        'irregular_beats_count': len(beats.get_irregular_beats()),
+        'beats_file': str(beats_file_path)
     }
     
-    # Save beat data to JSON
-    beat_data = {
-        'timestamps': beats.timestamps.tolist(),
-        'beats_per_bar': beats.beats_per_bar,
-        'downbeats': [i for i, beat in enumerate(beats.beat_list) if beat.beat_count == 1],
-        'intro_end_idx': beats.start_regular_beat_idx,
-        'ending_start_idx': beats.end_regular_beat_idx
-    }
-
-    # Save beat data
-    beats_file_path = storage.get_beats_file_path(file_id)
+    # Save beat data (timestamps etc.) to the separate beats file
     beats.save_to_file(beats_file_path)
-
-    # Add beat_file path before updating metadata
-    metadata['beat_file'] = str(beats_file_path)
-
-    # --- DEBUG PRINT --- #
-    logger.info(f"DEBUG: Metadata being saved by Celery task for {file_id}: {metadata}")
-    # --- END DEBUG PRINT --- #
+    logger.info(f"Beat timestamps saved to {beats_file_path}")
 
     # Update the central metadata store
-    storage.update_metadata(file_id, metadata)
-    logger.info(f"Metadata updated for file_id {file_id} after beat detection.")
+    storage.update_metadata(file_id, metadata_update)
+    logger.info(f"Metadata updated for file_id {file_id} after successful beat detection.")
 
-    # Return success information
-    return {
-        'status': 'success',
-        'beat_file': str(beats_file_path), # Return string path
-        'total_beats': len(beats.timestamps),
-        'beats_per_bar': beats.beats_per_bar,
-        'irregular_beats': len(beats.get_irregular_beats()),
-        'tempo_bpm': beats.overall_stats.tempo_bpm
-    }
+    # Return nothing - status is in metadata.json
+    return
 
 # Celery Task Definition
 @app.task(bind=True, name='detect_beats_task', queue='beat_detection')
 def detect_beats_task(self: Task, file_id: str, min_bpm: int = 60, max_bpm: int = 200, 
                      tolerance_percent: float = 10.0, min_measures: int = 1, 
-                     beats_per_bar: int = None) -> dict:
+                     beats_per_bar: int = None) -> None:
     """
     Celery task wrapper for beat detection.
     Handles context retrieval, progress callback creation, calling the core logic,
@@ -168,8 +153,8 @@ def detect_beats_task(self: Task, file_id: str, min_bpm: int = 60, max_bpm: int 
         
     Returns:
     --------
-    dict
-        Task result with status and file paths or error info.
+    None
+        No return needed here, status is written to metadata by _perform_beat_detection
     """
     storage: FileMetadataStorage = None # Initialize to allow use in except block
     try:
@@ -186,7 +171,7 @@ def detect_beats_task(self: Task, file_id: str, min_bpm: int = 60, max_bpm: int 
         update_progress = create_progress_updater(self, {"file_id": file_id}, 'beat_detection_progress')
         
         # Call the core processing function
-        result = _perform_beat_detection(
+        _perform_beat_detection(
             storage=storage,
             file_id=file_id,
             min_bpm=min_bpm,
@@ -196,7 +181,7 @@ def detect_beats_task(self: Task, file_id: str, min_bpm: int = 60, max_bpm: int 
             beats_per_bar=beats_per_bar,
             update_progress=update_progress
         )
-        return result
+        return
 
     except Exception as e:
         logger.error(f"Error processing {file_id} in detect_beats_task: {str(e)}", exc_info=True)
@@ -204,23 +189,27 @@ def detect_beats_task(self: Task, file_id: str, min_bpm: int = 60, max_bpm: int 
         try:
             # Storage might not have been initialized if error occurred early
             if storage:
-                 storage.update_metadata(file_id, {'beat_detection_status': 'error', 'beat_detection_error': str(e)})
+                 # Ensure error message is also stored
+                 storage.update_metadata(file_id, {
+                     'beat_detection_status': 'error',
+                     'beat_detection_error': str(e)
+                 })
             else:
                 logger.warning(f"Cannot update metadata with error for {file_id} as storage context was not available.")
         except Exception as meta_err_e:
             logger.error(f"Failed even to update metadata with error for {file_id}: {meta_err_e}")
 
-        return {
-            'status': 'error',
-            'error': str(e)
-        }
+        # Re-raise the exception so Celery marks the task as FAILED
+        # The state will be FAILURE, but the detailed reason is in metadata.json
+        self.update_state(state=states.FAILURE, meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
+        raise # Important: re-raise after updating state/metadata
 
 
 def _perform_video_generation(
     storage: FileMetadataStorage,
     file_id: str,
     update_progress: Callable[[str, float], None]
-) -> Dict[str, Any]:
+) -> None:
     """Performs the actual video generation, handling file paths, CWD changes, and metadata update."""
     old_cwd = None
     try:
@@ -284,15 +273,15 @@ def _perform_video_generation(
         logger.info(f"Video generation process finished. Output: {generated_video_file}")
 
         # --- Update Metadata ---
-        storage.update_metadata(file_id, {"video_file": video_output, "video_generation_status": "success"})
+        storage.update_metadata(file_id, {
+            "video_file": video_output, 
+            "video_generation_status": "success",
+            "video_generation_error": None
+            })
         logger.info("Metadata updated with video generation results.")
 
         update_progress("Video generation complete", 1.0)
-        return {
-            "status": "success",
-            "file_id": file_id,
-            "video_file": video_output
-        }
+        return
 
     finally:
         # Restore CWD if it was changed
@@ -305,7 +294,7 @@ def _perform_video_generation(
 
 
 @app.task(bind=True, name='generate_video_task', queue='video_generation')
-def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]:
+def generate_video_task(self: Task, file_id: str) -> None:
     """
     Celery task wrapper for generating a beat visualization video.
     Handles context retrieval, progress callback creation, calling the core logic,
@@ -318,8 +307,8 @@ def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]:
         
     Returns:
     --------
-    dict
-        Task result with status and file paths or error info.
+    None
+        No return needed here, status is written by _perform_video_generation
     """
     task_info = {'file_id': file_id}
     io_capture = IOCapture()
@@ -339,16 +328,17 @@ def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]:
             update_progress("Initializing video generation task", 0)
 
             # Call the core processing function
-            result = _perform_video_generation(
+            _perform_video_generation(
                 storage=storage,
                 file_id=file_id,
                 update_progress=update_progress
             )
 
-            # Add captured output to the success result
+            # No return needed, status is written by _perform_video_generation
+            # Add captured output to task info (transient, not for persistent state)
             final_stdout, final_stderr = io_capture.get_output()
-            result["video_generation_output"] = {"stdout": final_stdout, "stderr": final_stderr}
-            return result
+            self.update_state(state=states.SUCCESS, meta={"stdout": final_stdout, "stderr": final_stderr})
+            return
 
         except Exception as e:
             error_msg = f"Video generation task error for {file_id}: {type(e).__name__} - {e}"
@@ -361,18 +351,18 @@ def generate_video_task(self: Task, file_id: str) -> Dict[str, Any]:
             # Attempt to update metadata with error status
             try:
                 if storage:
-                    storage.update_metadata(file_id, {'video_generation_status': 'error', 'video_generation_error': str(e)})
+                    storage.update_metadata(file_id, {
+                        'video_generation_status': 'error',
+                        'video_generation_error': str(e)
+                        })
                 else:
                     logger.warning(f"Cannot update metadata with error for {file_id} as storage context was not available.")
             except Exception as meta_err_e:
                 logger.error(f"Failed even to update metadata with error for {file_id}: {meta_err_e}")
 
-            return {
-                "status": "error",
-                "file_id": file_id,
-                "error": str(e),
-                "video_generation_output": {"stdout": final_stdout, "stderr": final_stderr}
-            }
+            # Re-raise the exception so Celery marks the task as FAILED
+            self.update_state(state=states.FAILURE, meta={'exc_type': type(e).__name__, 'exc_message': str(e), "stdout": final_stdout, "stderr": final_stderr})
+            raise # Important: re-raise after updating state/metadata
         # Note: The finally block for restoring CWD is inside _perform_video_generation
 
 

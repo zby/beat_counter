@@ -129,64 +129,40 @@ class FileMetadataStorage:
             
             raise  # Re-raise the original exception
     
-    def check_ready_for_confirmation(self, file_id: str, beat_task_status: Dict[str, Any]) -> bool:
-        """Check if a file is ready for video generation confirmation.
+    def check_ready_for_confirmation(self, file_id: str) -> bool:
+        """Check if a file is ready for video generation confirmation based on metadata.
         
         Args:
             file_id: The ID of the file to check
-            beat_task_status: The status of the beat detection task
             
         Returns:
             bool: True if ready for confirmation, False otherwise
         """
         try:
-            # Check if beat detection task was successful
-            if beat_task_status.get("state") != "SUCCESS":
-                logger.info(f"Beat detection task for {file_id} not successful: {beat_task_status.get('state')}")
-                return False
-                
-            # Check if beats file exists
-            beats_file_path = self.get_beats_file_path(file_id)
-            if not beats_file_path.exists():
-                logger.info(f"Beats file for {file_id} does not exist")
-                return False
-                
             # Get current metadata
             metadata = self.get_metadata(file_id)
             if not metadata:
-                logger.info(f"No metadata found for {file_id}")
+                logger.info(f"No metadata found for {file_id} during confirmation check.")
                 return False
                 
-            # If beats_file is not in metadata but exists on disk, update metadata
-            if 'beats_file' not in metadata and beats_file_path.exists():
-                logger.info(f"Updating metadata with beats_file for {file_id}")
-                self.update_metadata(file_id, {"beats_file": str(beats_file_path)})
+            # Check if beat detection was marked successful in metadata
+            if metadata.get("beat_detection_status") != "success":
+                logger.info(f"Beat detection status in metadata is not 'success' for {file_id}: {metadata.get('beat_detection_status')}")
+                return False
                 
-            # If beat_stats_file exists but not in metadata, update metadata
-            stats_file_path = self.get_beat_stats_file_path(file_id)
-            if 'stats_file' not in metadata and stats_file_path.exists():
-                logger.info(f"Updating metadata with stats_file for {file_id}")
-                
-                try:
-                    # Try to parse the beat stats file
-                    with open(stats_file_path, 'r') as f:
-                        beat_stats = json.load(f)
-                    
-                    # Update metadata with stats and file path
-                    self.update_metadata(file_id, {
-                        "stats_file": str(stats_file_path),
-                        "beat_stats": beat_stats
-                    })
-                except Exception as e:
-                    logger.error(f"Error parsing beat stats file: {e}")
+            # Check if the beats file path is recorded in metadata
+            if 'beats_file' not in metadata or not metadata.get('beats_file'):
+                logger.info(f"Beats file path not found in metadata for {file_id}")
+                return False
+
+            # Optionally, check if the file *actually* exists at the path stored in metadata
+            beats_file_path_str = metadata.get('beats_file')
+            if not pathlib.Path(beats_file_path_str).exists():
+                 logger.warning(f"Beats file path found in metadata ({beats_file_path_str}), but file does not exist on disk for {file_id}")
+                 return False # Treat as not ready if file is missing despite metadata entry
+
+            return True # All checks passed
             
-            # Check again after potential updates
-            metadata = self.get_metadata(file_id)
-            if 'beats_file' not in metadata:
-                logger.info(f"Beats file still not in metadata for {file_id} after update attempt")
-                return False
-                
-            return True
         except Exception as e:
             logger.error(f"Error checking if file {file_id} is ready for confirmation: {e}")
             return False
@@ -228,93 +204,6 @@ class FileMetadataStorage:
             else:
                 target[key] = value
     
-    def _parse_beat_stats_file(self, stats_file_path: str) -> Dict[str, Any]:
-        """Parse beat statistics from a JSON file."""
-        if not os.path.exists(stats_file_path):
-            logger.warning(f"Beat stats file not found: {stats_file_path}")
-            return {}
-        
-        try:
-            with open(stats_file_path, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse beat stats file as JSON: {e}")
-            return {}
-        except Exception as e:
-            logger.error(f"Error reading beat stats file: {e}")
-            return {}
-    
-    # TODO: Refactor Metadata Retrieval for Status
-    # There's confusion between this function (`get_file_metadata`) and the 
-    # `/status/{file_id}` route (`get_file_status_route` in `app.py`).
-    # - `get_file_metadata` currently reads raw metadata (`get_metadata`) and then 
-    #   constructs a specific `status_data` dictionary, including building 
-    #   the `beat_stats` field from individual keys in the raw metadata.
-    # - The `/status/{file_id}` route then *re-processes* some of this data and 
-    #   determines the overall status string (ANALYZED, COMPLETED, etc.).
-    # This division of responsibility is unclear and led to bugs (e.g., initially 
-    # trying to read `beat_stats.json` here while Celery saved stats to `metadata.json`).
-    # Consider:
-    # 1. Renaming `get_file_metadata` to reflect its purpose (e.g., `_assemble_basic_file_info`).
-    # 2. Making the `/status/{file_id}` route solely responsible for reading raw 
-    #    metadata (`get_metadata`) and constructing the *entire* status response, 
-    #    including the `beat_stats` dictionary and the overall status string.
-    # This would centralize the status determination logic in the route handler.
-    def get_file_metadata(self, file_id: str) -> Dict[str, Any]:
-        """Get the file metadata and file existence information."""
-        metadata = self.get_metadata(file_id)
-        if not metadata:
-            return None
-
-        # Create response with basic file information
-        status_data = {
-            "file_id": file_id,
-            "original_filename": metadata.get("original_filename"),
-            "audio_file_path": metadata.get("audio_file_path"),
-            "user_ip": metadata.get("user_ip"),
-            "upload_timestamp": metadata.get("upload_timestamp"),
-            "uploaded_by": metadata.get("uploaded_by"),
-            "original_duration": metadata.get("original_duration"),
-            "duration_limit": metadata.get("duration_limit", 60)
-        }
-
-        # Add task IDs to the status data
-        beat_task_id = metadata.get("beat_detection")
-        video_task_id = metadata.get("video_generation")
-        
-        if beat_task_id:
-            status_data["beat_detection"] = beat_task_id
-            
-        if video_task_id:
-            status_data["video_generation"] = video_task_id
-
-        # --- REVISED LOGIC for beat_stats --- #
-        # Construct beat_stats from individual fields in metadata.json if detection was successful
-        if metadata.get("beat_detection_status") == "success":
-            status_data["beat_stats"] = {
-                "tempo_bpm": metadata.get("detected_tempo_bpm"),
-                "total_beats": metadata.get("total_beats"),
-                "beats_per_bar": metadata.get("detected_beats_per_bar"),
-                "irregularity_percent": metadata.get("irregularity_percent"),
-                "irregular_beats_count": metadata.get("irregular_beats_count"),
-                "status": metadata.get("beat_detection_status"),
-                "error": metadata.get("beat_detection_error") # Include error if present
-            }
-        elif metadata.get("beat_detection_status") == "error":
-             status_data["beat_stats"] = {
-                "status": metadata.get("beat_detection_status"),
-                "error": metadata.get("beat_detection_error")
-             }
-        else:
-             status_data["beat_stats"] = None # No stats if detection didn't run or status unknown
-        # --- END REVISED LOGIC --- #
-
-        # Add file existence flags
-        status_data["beats_file_exists"] = self.get_beats_file_path(file_id).exists()
-        status_data["video_file_exists"] = self.get_video_file_path(file_id).exists()
-
-        return status_data
-
     # Path management methods
     def get_job_directory(self, file_id: str) -> pathlib.Path:
         """Get the standardized job directory for a file ID."""
@@ -352,10 +241,6 @@ class FileMetadataStorage:
     def get_beats_file_path(self, file_id: str) -> pathlib.Path:
         """Get the standardized path for the beats file."""
         return self.get_job_directory(file_id) / "beats.txt"
-    
-    def get_beat_stats_file_path(self, file_id: str) -> pathlib.Path:
-        """Get the standardized path for the beat statistics file."""
-        return self.get_job_directory(file_id) / "beat_stats.json"
     
     def get_video_file_path(self, file_id: str) -> pathlib.Path:
         """Get the standardized path for the visualization video."""

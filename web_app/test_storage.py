@@ -126,10 +126,6 @@ def test_file_paths(storage):
     beats_path = storage.get_beats_file_path(file_id)
     assert beats_path == storage.base_upload_dir / file_id / "beats.txt"
     
-    # Test beat stats file path
-    stats_path = storage.get_beat_stats_file_path(file_id)
-    assert stats_path == storage.base_upload_dir / file_id / "beat_stats.json"
-    
     # Test video file path
     video_path = storage.get_video_file_path(file_id)
     assert video_path == storage.base_upload_dir / file_id / "visualization.mp4"

@@ -25,6 +25,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates # <-- Keep Jinja2Templates import
 from celery.result import AsyncResult
+from celery import states
 
 # Local imports
 from web_app.config import Config
@@ -275,67 +276,125 @@ async def upload_audio_route(
 @main_router.get("/status/{file_id}", name="get_file_status")
 async def get_file_status_route(
     file_id: str,
-    request: Request,
+    request: Request, # Keep request for potential future use (e.g., user checks)
     storage: FileMetadataStorage = Depends(get_storage),
-    config: Config = Depends(get_config),
+    # config: Config = Depends(get_config), # Config potentially not needed here anymore
     user: Dict[str, Any] = Depends(require_auth)
 ):
-    """Get the processing status of a specific file, including task states."""
-    # (Keep existing logic, uses injected config)
-    metadata = storage.get_file_metadata(file_id) # This now returns the structured data
+    """Get the processing status of a specific file based on metadata.json."""
+    metadata = storage.get_metadata(file_id)
+    logger.info(f"DEBUG [metadata]: {metadata}")
     if not metadata:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File metadata not found")
 
-    # Initialize response_data with the already structured metadata
-    response_data = metadata
+    # Initialize response with basic info from metadata
+    response_data = {
+        "file_id": file_id,
+        "original_filename": metadata.get("original_filename"),
+        "audio_file_path": metadata.get("audio_file_path"),
+        "user_ip": metadata.get("user_ip"),
+        "upload_timestamp": metadata.get("upload_timestamp"),
+        "uploaded_by": metadata.get("uploaded_by"),
+        "original_duration": metadata.get("original_duration"),
+        "duration_limit": metadata.get("duration_limit"),
+        "beat_detection": metadata.get("beat_detection"), # Beat Task ID
+        "video_generation": metadata.get("video_generation"), # Video Task ID
+    }
 
-    # Determine overall status based on task states and file existence from response_data
-    beat_task_id = response_data.get("beat_detection")
-    video_task_id = response_data.get("video_generation")
-    beat_state, video_state = None, None
-    beat_task_status, video_task_status = None, None
-
-    if beat_task_id:
-        beat_task_status = get_task_status_direct(beat_task_id)
-        response_data["beat_detection_task"] = beat_task_status # Add full task status
-        beat_state = beat_task_status["state"] if beat_task_status else None
+    # --- Construct beat_stats from metadata fields --- #
+    beat_status = metadata.get("beat_detection_status")
+    if beat_status == "success":
+        response_data["beat_stats"] = {
+            "tempo_bpm": metadata.get("detected_tempo_bpm"),
+            "total_beats": metadata.get("total_beats"),
+            "beats_per_bar": metadata.get("detected_beats_per_bar"),
+            "irregularity_percent": metadata.get("irregularity_percent"),
+            "irregular_beats_count": metadata.get("irregular_beats_count"),
+            "status": beat_status,
+            "error": None
+        }
+    elif beat_status == "error":
+        response_data["beat_stats"] = {
+            "status": beat_status,
+            "error": metadata.get("beat_detection_error")
+        }
     else:
-        response_data["beat_detection_task"] = None # Ensure key exists
+        response_data["beat_stats"] = None
 
-    if video_task_id:
-        video_task_status = get_task_status_direct(video_task_id)
-        response_data["video_generation_task"] = video_task_status # Add full task status
-        video_state = video_task_status["state"] if video_task_status else None
+    # --- Check File Existence --- #
+    beats_file_path_str = metadata.get("beats_file")
+    video_file_path_str = metadata.get("video_file")
+    
+    # --- Add temporary debugging for exists check --- #
+    beats_exists = False
+    if beats_file_path_str:
+        beats_path_obj = pathlib.Path(beats_file_path_str)
+        beats_exists = beats_path_obj.exists()
+        logger.info(f"DEBUG [Status Route]: Checking existence for beats_file: '{beats_file_path_str}' -> Exists? {beats_exists}")
+        # --- Add explicit exception if exists() fails unexpectedly --- #
+        if not beats_exists:
+            # This should not happen in the test case after the explicit check/creation
+            logger.error(f"CRITICAL [Status Route]: File path '{beats_file_path_str}' exists in metadata but pathlib.Path.exists() returned False!")
+            # Raise an error to make the test failure clear
+            # raise RuntimeError(f"File existence check failed within status route for path: {beats_file_path_str}")
+            # Let's just log the error for now, maybe raising hides other issues
+            pass # Continue but log the error
     else:
-        response_data["video_generation_task"] = None # Ensure key exists
+        logger.info("DEBUG [Status Route]: No beats_file path found in metadata.")
+    response_data["beats_file_exists"] = beats_exists
+    # --- End explicit check/debug block --- #
+    
+    response_data["video_file_exists"] = bool(video_file_path_str and pathlib.Path(video_file_path_str).exists())
 
-    # Determine the overall status based on file existence and task/metadata status
-    beat_metadata_status = response_data.get("beat_stats", {}).get("status") # Status from metadata.json
+    # --- Determine Overall Status based on Metadata (Primary) and Celery Task State (Secondary) --- #
+    beat_task_id = response_data["beat_detection"]
+    video_task_id = response_data["video_generation"]
+    video_metadata_status = metadata.get("video_generation_status")
 
-    if response_data.get("video_file_exists"):
-        response_data["status"] = COMPLETED
-    elif video_state and video_state not in ["SUCCESS", "FAILURE", "REVOKED"]:
-        response_data["status"] = GENERATING_VIDEO
-    elif video_state == "FAILURE":
-        response_data["status"] = VIDEO_ERROR
-    # Use metadata status for success, check beats file existence
-    elif beat_metadata_status == "success" and response_data.get("beats_file_exists"):
-        response_data["status"] = ANALYZED
-    # Use metadata status for failure
-    elif beat_metadata_status == "error":
-        response_data["status"] = ANALYZING_FAILURE
-    # Use Celery state ONLY to check if it's currently running (not succeeded/failed according to metadata yet)
-    elif beat_state and beat_state not in ["SUCCESS", "FAILURE", "REVOKED"]:
-        response_data["status"] = ANALYZING
-    # Fallback / Initial state
-    else:
-        response_data["status"] = UPLOADED
+    overall_status = UPLOADED # Default initial state
 
-    # Ensure all expected keys are present even if None initially
-    # (Most are handled by get_file_metadata, just ensure status and tasks are set)
-    response_data.setdefault("beat_stats", None)
-    response_data.setdefault("beats_file_exists", False)
-    response_data.setdefault("video_file_exists", False)
+    if video_metadata_status == "success" and response_data["video_file_exists"]:
+        overall_status = COMPLETED
+    elif video_metadata_status == "error":
+        overall_status = VIDEO_ERROR
+    elif video_task_id:
+        # If video task exists but hasn't succeeded/failed according to metadata,
+        # check its transient Celery state.
+        video_task_state = AsyncResult(video_task_id, app=celery_app).state
+        if video_task_state in [states.PENDING, states.STARTED, states.RETRY, states.RECEIVED, 'PROGRESS']:
+             overall_status = GENERATING_VIDEO
+        elif video_task_state == states.FAILURE:
+             # Should ideally be caught by video_metadata_status == "error", but as fallback:
+             overall_status = VIDEO_ERROR
+             logger.warning(f"Celery state for video task {video_task_id} is FAILURE, but metadata status is {video_metadata_status}")
+        # If Celery state is SUCCESS but metadata status isn't 'success' yet, 
+        # we rely on the next check (ANALYZED)
+
+    # If not completed or generating video, check beat detection status
+    if overall_status not in [COMPLETED, GENERATING_VIDEO, VIDEO_ERROR]:
+        if beat_status == "success" and response_data["beats_file_exists"]:
+            overall_status = ANALYZED # Ready for confirmation
+        elif beat_status == "error":
+            overall_status = ANALYZING_FAILURE
+        elif beat_task_id:
+            # If beat task exists but hasn't succeeded/failed according to metadata,
+            # check its transient Celery state.
+            beat_task_state = AsyncResult(beat_task_id, app=celery_app).state
+            if beat_task_state in [states.PENDING, states.STARTED, states.RETRY, states.RECEIVED, 'PROGRESS']:
+                 overall_status = ANALYZING
+            elif beat_task_state == states.FAILURE:
+                 # Should ideally be caught by beat_status == "error", but as fallback:
+                 overall_status = ANALYZING_FAILURE
+                 logger.warning(f"Celery state for beat task {beat_task_id} is FAILURE, but metadata status is {beat_status}")
+            # If Celery state is SUCCESS but metadata status isn't 'success' yet, 
+            # stay in UPLOADED (or potentially ANALYZING if caught above) until metadata is updated.
+
+    response_data["status"] = overall_status
+
+    # --- Optionally add raw Celery task status for debugging/info --- #
+    # (Commented out by default to keep response focused on derived status)
+    # response_data["beat_detection_task"] = get_task_status_direct(beat_task_id) if beat_task_id else None
+    # response_data["video_generation_task"] = get_task_status_direct(video_task_id) if video_task_id else None
 
     return response_data
 
@@ -359,7 +418,13 @@ async def get_processing_queue_route(
 
     for file_id in sorted_file_ids[:config.app.max_queue_files]:
         try:
-            file_status_data = await get_file_status_route(file_id, request, storage, config, user)
+            # Correctly call get_file_status_route, passing dependencies explicitly
+            file_status_data = await get_file_status_route(
+                file_id=file_id,
+                request=request, # Pass the request object
+                storage=storage,   # Pass the storage dependency
+                user=user        # Pass the user dependency
+            )
             files_with_status.append({
                 "file_id": file_id,
                 "filename": file_status_data.get("original_filename", "Unknown"),
@@ -381,18 +446,26 @@ async def confirm_analysis_route(
     file_id: str,
     request: Request,
     storage: FileMetadataStorage = Depends(get_storage),
-    config: Config = Depends(get_config),
+    # config: Config = Depends(get_config), # Config no longer needed for this check
     user: Dict[str, Any] = Depends(require_auth)
 ):
     """Confirm successful analysis and start video generation task."""
-    # (Keep existing logic)
-    try:
-        current_status = await get_file_status_route(file_id, request, storage, config, user)
-    except HTTPException as e: raise e
-
-    if current_status.get("status") != ANALYZED:
-        logger.warning(f"Confirmation attempt for file {file_id} failed. Status was {current_status.get('status')}, expected {ANALYZED}.")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File not ready for confirmation. Status: {current_status.get('status')}.")
+    # Use the dedicated storage method to check readiness based purely on metadata
+    if not storage.check_ready_for_confirmation(file_id):
+        # Attempt to get status for a more informative error message
+        try:
+            current_status_data = await get_file_status_route(file_id, request, storage, user)
+            current_status_str = current_status_data.get("status", "unknown")
+        except HTTPException:
+            current_status_str = "not found or error retrieving status"
+        except Exception:
+             current_status_str = "unexpected error retrieving status"
+             
+        logger.warning(f"Confirmation attempt for file {file_id} failed readiness check. Current derived status: {current_status_str}.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File not ready for confirmation. Metadata indicates beat detection did not succeed or beats file is missing. Current status: {current_status_str}."
+        )
 
     try:
         task = generate_video_task.delay(file_id)
@@ -414,13 +487,18 @@ async def file_page_route(
     file_id: str,
     templates: Jinja2Templates = Depends(get_templates), # <-- Inject templates
     storage: FileMetadataStorage = Depends(get_storage),
-    config: Config = Depends(get_config),
     user: Dict[str, Any] = Depends(require_auth)
 ):
     """Render the file view page, showing current status and results."""
     # (Keep existing logic)
     try:
-        file_status_data = await get_file_status_route(file_id, request, storage, config, user)
+        # Correctly call get_file_status_route, passing dependencies explicitly
+        file_status_data = await get_file_status_route(
+            file_id=file_id,
+            request=request, # Pass the request object
+            storage=storage,   # Pass the storage dependency
+            user=user        # Pass the user dependency
+        )
     except HTTPException as e:
         if e.status_code == 404:
             # Use injected templates
