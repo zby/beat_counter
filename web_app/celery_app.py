@@ -112,10 +112,12 @@ def _perform_beat_detection(
     
     # Create metadata for the beat detection result
     metadata = {
+        'beat_detection_status': 'success',
         'detected_beats_per_bar': beats.beats_per_bar,
         'total_beats': len(beats.timestamps),
-        'tempo_bpm': beats.overall_stats.tempo_bpm,
-        'irregularity_percent': beats.overall_stats.irregularity_percent
+        'detected_tempo_bpm': beats.overall_stats.tempo_bpm,
+        'irregularity_percent': beats.overall_stats.irregularity_percent,
+        'irregular_beats_count': len(beats.get_irregular_beats())
     }
     
     # Save beat data to JSON
@@ -130,6 +132,9 @@ def _perform_beat_detection(
     # Save beat data
     beats_file_path = storage.get_beats_file_path(file_id)
     beats.save_to_file(beats_file_path)
+
+    # Add beat_file path before updating metadata
+    metadata['beat_file'] = str(beats_file_path)
 
     # Update the central metadata store
     storage.update_metadata(file_id, metadata)
