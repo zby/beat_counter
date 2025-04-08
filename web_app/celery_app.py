@@ -136,6 +136,10 @@ def _perform_beat_detection(
     # Add beat_file path before updating metadata
     metadata['beat_file'] = str(beats_file_path)
 
+    # --- DEBUG PRINT --- #
+    logger.info(f"DEBUG: Metadata being saved by Celery task for {file_id}: {metadata}")
+    # --- END DEBUG PRINT --- #
+
     # Update the central metadata store
     storage.update_metadata(file_id, metadata)
     logger.info(f"Metadata updated for file_id {file_id} after beat detection.")

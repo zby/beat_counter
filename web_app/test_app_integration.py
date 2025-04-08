@@ -139,28 +139,45 @@ def generated_sample_audio() -> Dict[str, Any]:
 @pytest.fixture
 def mock_beat_detector():
     """ Mocks the BeatDetector call within the celery task """
-    mock_stats_obj = SimpleNamespace(
-        tempo_bpm=120.0, mean_interval=0.5, median_interval=0.5, std_interval=0.05,
-        min_interval=0.4, max_interval=0.6, total_beats=2, irregularity_percent=0.0
+    # Create a mock object simulating the Beats class structure
+    mock_beats_obj = MagicMock()
+
+    # --- Mimic attributes accessed in _perform_beat_detection ---
+    mock_beats_obj.beats_per_bar = 4
+    mock_beats_obj.timestamps = np.array([0.05, 0.08])
+    mock_beats_obj.overall_stats = SimpleNamespace(
+        tempo_bpm=120.0,
+        irregularity_percent=0.0
     )
-    mock_return_tuple = (
-        np.array([0.05, 0.08]),      # 1. beat_timestamps
-        mock_stats_obj,              # 2. stats object
-        [],                          # 3. irregular_beats
-        np.array([0], dtype=int),    # 4. downbeats (index 0)
-        0,                           # 5. intro_end_idx
-        2,                           # 6. ending_start_idx
-        4                           # 7. beats_per_bar
-    )
-    assert len(mock_return_tuple) == 7, "Mock return tuple does not have 7 elements!"
+    mock_beats_obj.get_irregular_beats.return_value = []
+
+    # --- Mock save_to_file to actually create the file ---
+    def _mock_save_beats(file_path: pathlib.Path):
+        """Side effect function to simulate file creation."""
+        print(f"Mock save_to_file called with path: {file_path}")
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text("mock beat data\n0.05\n0.08") # Write dummy content
+            print(f"Mock save_to_file created file: {file_path}")
+        except Exception as e:
+            print(f"ERROR in mock save_to_file: {e}")
+            # Propagate the error to potentially fail the test clearly
+            raise 
+
+    mock_beats_obj.save_to_file = MagicMock(side_effect=_mock_save_beats)
+
+    # --- Mock other necessary attributes/methods ---
+    mock_beats_obj.beat_list = [SimpleNamespace(beat_count=1), SimpleNamespace(beat_count=2)]
+    mock_beats_obj.start_regular_beat_idx = 0
+    mock_beats_obj.end_regular_beat_idx = 2
 
     patch_target = 'web_app.celery_app.BeatDetector'
     try:
         with patch(patch_target) as mock_DetectorClass:
             instance_mock = MagicMock()
-            instance_mock.detect_beats.return_value = mock_return_tuple
+            instance_mock.detect_beats.return_value = mock_beats_obj
             mock_DetectorClass.return_value = instance_mock
-            print(f"Mocking '{patch_target}' - Instance will return {len(mock_return_tuple)} elements from detect_beats.")
+            print(f"Mocking '{patch_target}' - Instance will return a mock Beats object with file-creating save_to_file.")
             yield mock_DetectorClass
     except ModuleNotFoundError:
          pytest.fail(f"Failed to patch '{patch_target}'. Is the import path correct?")
@@ -298,9 +315,14 @@ def uploaded_file_id(
     file_page_url = response.headers.get("Location")
     file_id = file_page_url.split("/")[-1]
 
-    assert test_storage.get_metadata(file_id) is not None
+    # --- Add immediate check after upload+eager task --- #
+    metadata_after_upload = test_storage.get_metadata(file_id)
+    assert metadata_after_upload is not None, "Metadata file should exist after upload."
+    assert metadata_after_upload.get("beat_detection_status") == "success", \
+        f"Metadata missing 'beat_detection_status: success' immediately after upload. Got: {metadata_after_upload.get('beat_detection_status')}"
+    # --- End immediate check --- #
+
     assert test_storage.get_beats_file_path(file_id).exists() # Check mock worked
-    assert test_storage.get_beat_stats_file_path(file_id).exists() # Check mock worked
     return file_id
 
 

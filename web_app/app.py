@@ -285,6 +285,10 @@ async def get_file_status_route(
     if not metadata:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
+    # --- DEBUG PRINT --- #
+    logger.info(f"DEBUG: Metadata loaded by /status route for {file_id}: {metadata}")
+    # --- END DEBUG PRINT --- #
+
     response_data = {
         "file_id": file_id,
         "original_filename": metadata.get("original_filename"),
@@ -293,7 +297,16 @@ async def get_file_status_route(
         "user_ip": metadata.get("user_ip"),
         "duration_limit": metadata.get("duration_limit", config.storage.max_audio_secs),
         "original_duration": metadata.get("original_duration"),
-        "beat_stats": metadata.get("beat_stats"),
+        # Construct beat_stats from individual fields if available
+        "beat_stats": {
+            "tempo_bpm": metadata.get("detected_tempo_bpm"),
+            "total_beats": metadata.get("total_beats"),
+            "beats_per_bar": metadata.get("detected_beats_per_bar"),
+            "irregularity_percent": metadata.get("irregularity_percent"),
+            "irregular_beats_count": metadata.get("irregular_beats_count"),
+            "status": metadata.get("beat_detection_status"), # Add status if available
+            "error": metadata.get("beat_detection_error")   # Add error if available
+        } if metadata.get("beat_detection_status") else None, # Only include if detection ran
         "beats_file_exists": storage.get_beats_file_path(file_id).exists(),
         "video_file_exists": storage.get_video_file_path(file_id).exists(),
         "beat_detection_task": None,
@@ -458,8 +471,11 @@ def create_app() -> FastAPI:
     current_config = _global_config
 
     # Initialize services required by dependencies and store in context
-    _app_context["storage"] = FileMetadataStorage(current_config.storage)
-    _app_context["auth_manager"] = UserManager(users={"users": [user.__dict__ for user in current_config.users]})
+    # Use existing components from context if available (e.g., patched by tests)
+    if "storage" not in _app_context:
+        _app_context["storage"] = FileMetadataStorage(current_config.storage)
+    if "auth_manager" not in _app_context:
+        _app_context["auth_manager"] = UserManager(users={"users": [user.__dict__ for user in current_config.users]})
     # Note: Templates instance (_global_templates) is already created at module level
 
     app = FastAPI(

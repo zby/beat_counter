@@ -106,6 +106,8 @@ class FileMetadataStorage:
                     # Write directly to the file since we have an exclusive lock
                     with open(metadata_file, 'w') as f:
                         json.dump(existing, f, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
                     
                 finally:
                     # Release the lock
@@ -242,6 +244,22 @@ class FileMetadataStorage:
             logger.error(f"Error reading beat stats file: {e}")
             return {}
     
+    # TODO: Refactor Metadata Retrieval for Status
+    # There's confusion between this function (`get_file_metadata`) and the 
+    # `/status/{file_id}` route (`get_file_status_route` in `app.py`).
+    # - `get_file_metadata` currently reads raw metadata (`get_metadata`) and then 
+    #   constructs a specific `status_data` dictionary, including building 
+    #   the `beat_stats` field from individual keys in the raw metadata.
+    # - The `/status/{file_id}` route then *re-processes* some of this data and 
+    #   determines the overall status string (ANALYZED, COMPLETED, etc.).
+    # This division of responsibility is unclear and led to bugs (e.g., initially 
+    # trying to read `beat_stats.json` here while Celery saved stats to `metadata.json`).
+    # Consider:
+    # 1. Renaming `get_file_metadata` to reflect its purpose (e.g., `_assemble_basic_file_info`).
+    # 2. Making the `/status/{file_id}` route solely responsible for reading raw 
+    #    metadata (`get_metadata`) and constructing the *entire* status response, 
+    #    including the `beat_stats` dictionary and the overall status string.
+    # This would centralize the status determination logic in the route handler.
     def get_file_metadata(self, file_id: str) -> Dict[str, Any]:
         """Get the file metadata and file existence information."""
         metadata = self.get_metadata(file_id)
@@ -270,17 +288,31 @@ class FileMetadataStorage:
         if video_task_id:
             status_data["video_generation"] = video_task_id
 
-        # Attempt to get beat statistics if they exist
-        beats_file = self.get_beats_file_path(file_id)
-        if beats_file.exists():
-            beat_stats_file = self.get_beat_stats_file_path(file_id)
-            if beat_stats_file.exists():
-                try:
-                    beat_stats = self._parse_beat_stats_file(str(beat_stats_file))
-                    status_data["beat_stats"] = beat_stats
-                except Exception as e:
-                    logger.error(f"Error parsing beat stats: {e}")
-        
+        # --- REVISED LOGIC for beat_stats --- #
+        # Construct beat_stats from individual fields in metadata.json if detection was successful
+        if metadata.get("beat_detection_status") == "success":
+            status_data["beat_stats"] = {
+                "tempo_bpm": metadata.get("detected_tempo_bpm"),
+                "total_beats": metadata.get("total_beats"),
+                "beats_per_bar": metadata.get("detected_beats_per_bar"),
+                "irregularity_percent": metadata.get("irregularity_percent"),
+                "irregular_beats_count": metadata.get("irregular_beats_count"),
+                "status": metadata.get("beat_detection_status"),
+                "error": metadata.get("beat_detection_error") # Include error if present
+            }
+        elif metadata.get("beat_detection_status") == "error":
+             status_data["beat_stats"] = {
+                "status": metadata.get("beat_detection_status"),
+                "error": metadata.get("beat_detection_error")
+             }
+        else:
+             status_data["beat_stats"] = None # No stats if detection didn't run or status unknown
+        # --- END REVISED LOGIC --- #
+
+        # Add file existence flags
+        status_data["beats_file_exists"] = self.get_beats_file_path(file_id).exists()
+        status_data["video_file_exists"] = self.get_video_file_path(file_id).exists()
+
         return status_data
 
     # Path management methods
