@@ -48,7 +48,6 @@ def test_save_and_load_beats(tmp_path: Path):
         original_beat = original_beats.beat_list[i]
         assert loaded_beat.index == original_beat.index
         assert np.isclose(loaded_beat.timestamp, original_beat.timestamp)
-        assert loaded_beat.is_downbeat == original_beat.is_downbeat
         assert loaded_beat.is_irregular_interval == original_beat.is_irregular_interval
         assert loaded_beat.beat_count == original_beat.beat_count
         assert loaded_beat.is_irregular == original_beat.is_irregular
@@ -121,14 +120,12 @@ def test_beat_info_to_dict():
     beat_info = BeatInfo(
         timestamp=1.23, 
         index=5, 
-        is_downbeat=True, 
         is_irregular_interval=False, 
         beat_count=0  # 0 indicates irregular/undetermined
     )
     expected_dict = {
         "timestamp": 1.23,
         "index": 5,
-        "is_downbeat": True,
         "is_irregular_interval": False,
         "beat_count": 0,
     }
@@ -164,7 +161,7 @@ def test_beats_to_dict_structure():
     if beats_dict["beat_list"]:
         # Check keys of the first beat in the list
         expected_beat_info_keys = {
-            "timestamp", "index", "is_downbeat", "is_irregular_interval",
+            "timestamp", "index", "is_irregular_interval",
             "beat_count"
         }
         assert isinstance(beats_dict["beat_list"][0], dict)
@@ -188,7 +185,7 @@ def test_beats_to_dict_values():
     beat_info_dict = beats_dict["beat_list"][4]
     assert beat_info_dict["timestamp"] == beat_info_obj.timestamp
     assert beat_info_dict["index"] == beat_info_obj.index
-    assert beat_info_dict["is_downbeat"] == beat_info_obj.is_downbeat
+    assert beat_info_dict["is_irregular_interval"] == beat_info_obj.is_irregular_interval
     assert beat_info_dict["beat_count"] == beat_info_obj.beat_count
 
 def test_json_serialization():

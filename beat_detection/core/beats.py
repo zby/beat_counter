@@ -47,7 +47,6 @@ class BeatInfo:
     index: int
     is_irregular_interval: bool = False # Irregular based on time interval from previous beat
     beat_count: int = 0                 # 1-based count within the measure, 0 for undetermined/irregular
-    is_downbeat: bool = False           # Whether this beat was marked as a downbeat in the input
     
     @property
     def is_irregular(self) -> bool:
@@ -60,7 +59,6 @@ class BeatInfo:
             "timestamp": float(self.timestamp),
             "index": int(self.index),
             # Ensure standard Python bool types for JSON serialization
-            "is_downbeat": bool(self.is_downbeat),
             "is_irregular_interval": bool(self.is_irregular_interval),
             # Exclude "is_irregular" as it's a derived property
             "beat_count": int(self.beat_count),
@@ -178,9 +176,6 @@ class Beats:
         beat_list = []
         for i, ts in enumerate(timestamps):
             is_irregular_interval = interval_irregularities[i]
-            # Determine is_downbeat directly from beat_counts
-            is_downbeat = (beat_counts[i] == 1)
-            
             # Use the provided beat count directly
             original_beat_count = beat_counts[i]
             
@@ -196,7 +191,6 @@ class Beats:
                 index=i,
                 is_irregular_interval=is_irregular_interval,
                 beat_count=display_beat_count, # Use the adjusted count
-                is_downbeat=is_downbeat
             ))
             
         # 5. Recalculate overall irregularity based on the final beat_list status
@@ -212,7 +206,7 @@ class Beats:
         # 6. Find the longest regular sequence using the static helper
         try:
             start_idx, end_idx, _ = cls._find_longest_regular_sequence_static(
-                beat_list, tolerance_percent
+                beat_list, tolerance_percent, meter
             )
             start_regular_beat_idx_calc = start_idx
             end_regular_beat_idx_calc = end_idx + 1 # Convert inclusive end index to exclusive
@@ -359,11 +353,6 @@ class Beats:
         return np.array([b.timestamp for b in self.beat_list])
 
     @property
-    def downbeat_indices(self) -> np.ndarray:
-        """Return numpy array of indices corresponding to downbeats."""
-        return np.array([b.index for b in self.beat_list if b.is_downbeat])
-        
-    @property
     def irregular_beat_indices(self) -> List[int]:
         """Return list of indices corresponding to irregular beats."""
         return [b.index for b in self.beat_list if b.is_irregular]
@@ -376,17 +365,10 @@ class Beats:
         """Get a list of irregular BeatInfo objects."""
         return [b for b in self.beat_list if b.is_irregular]
 
-    def get_regular_downbeats(self) -> List[BeatInfo]:
-        """Get a list of regular downbeat BeatInfo objects."""
-        return [b for b in self.beat_list if b.is_downbeat and not b.is_irregular]
-
-    def get_irregular_downbeats(self) -> List[BeatInfo]:
-        """Get a list of irregular downbeat BeatInfo objects."""
-        return [b for b in self.beat_list if b.is_downbeat and b.is_irregular]
-
     @staticmethod
     def _find_longest_regular_sequence_static(beat_list: List[BeatInfo],
-                                              tolerance_percent: float
+                                              tolerance_percent: float,
+                                              meter: int
                                              ) -> Tuple[int, int, float]:
         """
         Find the longest sequence of beats where intervals are regular and beat counts are determined.
@@ -396,6 +378,7 @@ class Beats:
         2. All beats within the sequence must have `beat_count > 0`.
         3. The time interval between any two consecutive beats in the sequence must be
            within `tolerance_interval` of the overall `median_interval`.
+        4. Beat counts must increment correctly (1, 2, ..., meter, 1, ...).
 
         Parameters:
         -----------
@@ -403,6 +386,8 @@ class Beats:
             The list of BeatInfo objects to analyze.
         tolerance_percent : float
             The tolerance percentage used to define interval regularity relative to the median.
+        meter : int
+            The time signature's upper numeral (e.g., 4 for 4/4 time).
 
         Returns:
         --------
@@ -419,6 +404,9 @@ class Beats:
         """
         if not beat_list:
             raise BeatCalculationError("Cannot find regular sequence in empty beat list.")
+
+        if meter <= 1:
+            raise BeatCalculationError(f"Invalid meter ({meter}) passed to sequence finder. Must be > 1.")
 
         if not (0 <= tolerance_percent <= 100):
             raise BeatCalculationError(f"Invalid tolerance percent: {tolerance_percent}. Must be between 0 and 100.")
@@ -459,8 +447,16 @@ class Beats:
             # If we're in an existing sequence, check interval regularity
             elif beat_list[i].beat_count > 0:
                 interval = beat_list[i].timestamp - beat_list[i-1].timestamp
-                if abs(interval - median_interval) > tolerance_interval:
-                    # Irregular interval - end the sequence
+                prev_count = beat_list[i-1].beat_count
+                current_count = beat_list[i].beat_count
+                expected_next_count = (prev_count % meter) + 1
+
+                # Check BOTH interval regularity AND correct count sequence
+                is_interval_regular = abs(interval - median_interval) <= tolerance_interval
+                is_count_correct = (current_count == expected_next_count)
+
+                if not (is_interval_regular and is_count_correct):
+                    # Irregular interval OR incorrect count - end the sequence
                     current_len = (i - 1) - current_start + 1
                     if current_len > max_len:
                         max_len = current_len
@@ -469,7 +465,7 @@ class Beats:
                     # Look for a new sequence only if this beat is a downbeat
                     current_start = i if beat_list[i].beat_count == 1 else -1
             else:
-                # Irregular beat_count - end the sequence
+                # Irregular beat_count (zero) - end the sequence
                 current_len = (i - 1) - current_start + 1
                 if current_len > max_len:
                     max_len = current_len
