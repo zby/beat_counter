@@ -41,6 +41,7 @@ GENERATING_VIDEO = "GENERATING_VIDEO"
 COMPLETED = "COMPLETED"
 VIDEO_ERROR = "VIDEO_ERROR"
 ERROR = "ERROR" # General error state
+UPLOADED = "UPLOADED" # Added for the new status logic
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -281,56 +282,60 @@ async def get_file_status_route(
 ):
     """Get the processing status of a specific file, including task states."""
     # (Keep existing logic, uses injected config)
-    metadata = storage.get_file_metadata(file_id)
+    metadata = storage.get_file_metadata(file_id) # This now returns the structured data
     if not metadata:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
-    # --- DEBUG PRINT --- #
-    logger.info(f"DEBUG: Metadata loaded by /status route for {file_id}: {metadata}")
-    # --- END DEBUG PRINT --- #
+    # Initialize response_data with the already structured metadata
+    response_data = metadata
 
-    response_data = {
-        "file_id": file_id,
-        "original_filename": metadata.get("original_filename"),
-        "upload_timestamp": metadata.get("upload_timestamp"),
-        "uploaded_by": metadata.get("uploaded_by"),
-        "user_ip": metadata.get("user_ip"),
-        "duration_limit": metadata.get("duration_limit", config.storage.max_audio_secs),
-        "original_duration": metadata.get("original_duration"),
-        # Construct beat_stats from individual fields if available
-        "beat_stats": {
-            "tempo_bpm": metadata.get("detected_tempo_bpm"),
-            "total_beats": metadata.get("total_beats"),
-            "beats_per_bar": metadata.get("detected_beats_per_bar"),
-            "irregularity_percent": metadata.get("irregularity_percent"),
-            "irregular_beats_count": metadata.get("irregular_beats_count"),
-            "status": metadata.get("beat_detection_status"), # Add status if available
-            "error": metadata.get("beat_detection_error")   # Add error if available
-        } if metadata.get("beat_detection_status") else None, # Only include if detection ran
-        "beats_file_exists": storage.get_beats_file_path(file_id).exists(),
-        "video_file_exists": storage.get_video_file_path(file_id).exists(),
-        "beat_detection_task": None,
-        "video_generation_task": None,
-        "status": ERROR,
-    }
-
-    beat_task_id = metadata.get("beat_detection")
-    video_task_id = metadata.get("video_generation")
+    # Determine overall status based on task states and file existence from response_data
+    beat_task_id = response_data.get("beat_detection")
+    video_task_id = response_data.get("video_generation")
     beat_state, video_state = None, None
+    beat_task_status, video_task_status = None, None
 
     if beat_task_id:
-        response_data["beat_detection_task"] = get_task_status_direct(beat_task_id)
-        beat_state = response_data["beat_detection_task"]["state"]
-    if video_task_id:
-        response_data["video_generation_task"] = get_task_status_direct(video_task_id)
-        video_state = response_data["video_generation_task"]["state"]
+        beat_task_status = get_task_status_direct(beat_task_id)
+        response_data["beat_detection_task"] = beat_task_status # Add full task status
+        beat_state = beat_task_status["state"] if beat_task_status else None
+    else:
+        response_data["beat_detection_task"] = None # Ensure key exists
 
-    if response_data["video_file_exists"]: response_data["status"] = COMPLETED
-    elif video_state and video_state not in ["SUCCESS", "FAILURE"]: response_data["status"] = GENERATING_VIDEO
-    elif video_state == "FAILURE": response_data["status"] = VIDEO_ERROR
-    elif response_data["beats_file_exists"]: response_data["status"] = ANALYZED
-    elif beat_state and beat_state not in ["SUCCESS", "FAILURE"]: response_data["status"] = ANALYZING
-    elif beat_state == "FAILURE": response_data["status"] = ANALYZING_FAILURE
+    if video_task_id:
+        video_task_status = get_task_status_direct(video_task_id)
+        response_data["video_generation_task"] = video_task_status # Add full task status
+        video_state = video_task_status["state"] if video_task_status else None
+    else:
+        response_data["video_generation_task"] = None # Ensure key exists
+
+    # Determine the overall status based on file existence and task/metadata status
+    beat_metadata_status = response_data.get("beat_stats", {}).get("status") # Status from metadata.json
+
+    if response_data.get("video_file_exists"):
+        response_data["status"] = COMPLETED
+    elif video_state and video_state not in ["SUCCESS", "FAILURE", "REVOKED"]:
+        response_data["status"] = GENERATING_VIDEO
+    elif video_state == "FAILURE":
+        response_data["status"] = VIDEO_ERROR
+    # Use metadata status for success, check beats file existence
+    elif beat_metadata_status == "success" and response_data.get("beats_file_exists"):
+        response_data["status"] = ANALYZED
+    # Use metadata status for failure
+    elif beat_metadata_status == "error":
+        response_data["status"] = ANALYZING_FAILURE
+    # Use Celery state ONLY to check if it's currently running (not succeeded/failed according to metadata yet)
+    elif beat_state and beat_state not in ["SUCCESS", "FAILURE", "REVOKED"]:
+        response_data["status"] = ANALYZING
+    # Fallback / Initial state
+    else:
+        response_data["status"] = UPLOADED
+
+    # Ensure all expected keys are present even if None initially
+    # (Most are handled by get_file_metadata, just ensure status and tasks are set)
+    response_data.setdefault("beat_stats", None)
+    response_data.setdefault("beats_file_exists", False)
+    response_data.setdefault("video_file_exists", False)
 
     return response_data
 

@@ -77,7 +77,13 @@ def test_auth_manager(test_config: Config) -> UserManager:
 @pytest.fixture(scope="module", autouse=True)
 def configure_celery_for_test(test_storage: FileMetadataStorage):
     from web_app.celery_app import app as actual_celery_app
-    actual_celery_app.conf.update(task_always_eager=True, task_eager_propagates=True, broker_url="memory://", result_backend="cache+memory://")
+    actual_celery_app.conf.update(
+        task_always_eager=True,
+        task_eager_propagates=True,
+        broker_url="memory://",
+        result_backend="cache+memory://",
+        task_store_eager_result=True # Store results even when eager
+    )
     if not hasattr(actual_celery_app, 'context') or not actual_celery_app.context:
          actual_celery_app.context = AppContext(storage=test_storage)
     else:
