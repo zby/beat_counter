@@ -4,7 +4,7 @@ Core beat data structures and utilities.
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Iterable
 import json
 from pathlib import Path
 
@@ -364,6 +364,18 @@ class Beats:
     def get_irregular_beats(self) -> List[BeatInfo]:
         """Get a list of irregular BeatInfo objects."""
         return [b for b in self.beat_list if b.is_irregular]
+
+    def iterate_beats(self) -> Iterable[Tuple[float, int]]:
+        """
+        Iterate through beats, yielding timestamp and beat count.
+
+        Yields:
+        -------
+        Tuple[float, int]
+            A tuple containing (timestamp, beat_count) for each beat.
+        """
+        for beat in self.beat_list:
+            yield beat.timestamp, beat.beat_count
 
     @staticmethod
     def _find_longest_regular_sequence_static(beat_list: List[BeatInfo],

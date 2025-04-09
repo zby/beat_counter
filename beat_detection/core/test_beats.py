@@ -71,14 +71,11 @@ def test_beat_creation_and_properties():
     
     assert isinstance(beats, Beats)
     assert beats.beats_per_bar == 4
-    assert len(beats.beat_list) == 20 # Default num_beats in helper
+    assert beats.overall_stats.total_beats == 20 # Default num_beats in helper
     assert isinstance(beats.overall_stats, BeatStatistics)
     assert isinstance(beats.regular_stats, BeatStatistics)
     assert np.isclose(beats.overall_stats.median_interval, 0.5)
     assert beats.overall_stats.total_beats == 20
-    # Regular section might not be the full 20 if min_measures affects it
-    # Default min_measures is 2, beats_per_bar 4 -> needs 8 beats. Helper ensures this.
-    # The sequence finder should find the whole sequence [0..19] as regular.
     assert beats.start_regular_beat_idx == 0
     assert beats.end_regular_beat_idx == 20
     assert beats.regular_stats.total_beats == 20
@@ -86,232 +83,165 @@ def test_beat_creation_and_properties():
     
     # Test properties
     assert len(beats.timestamps) == 20
-    # Check downbeats derived from beat_counts (indices 0, 4, 8, 12, 16)
     expected_downbeat_indices = [0, 4, 8, 12, 16]
-    actual_downbeat_indices = [b.index for b in beats.beat_list if b.beat_count == 1]
+    actual_downbeat_indices = [idx for idx, (_, count) in enumerate(beats.iterate_beats()) if count == 1]
     assert actual_downbeat_indices == expected_downbeat_indices
-    # No irregular intervals expected in default helper
     assert len(beats.irregular_beat_indices) == 0 
 
 def test_beat_counting_regular():
     """Test beat counting for a regular sequence."""
-    # Need beats_per_bar * min_measures beats = 4 * 2 = 8 beats minimum
     beats = create_test_beats(beats_per_bar=4, num_beats=8, interval=0.5, min_measures=2)
-    # Timestamps: 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5
-    # Downbeats: indices 0, 4
-    # Expected counts: 1, 2, 3, 4, 1, 2, 3, 4
     expected_counts = [1, 2, 3, 4, 1, 2, 3, 4]
-    assert len(beats.beat_list) == 8
-    for i, beat_info in enumerate(beats.beat_list):
-        assert beat_info.beat_count == expected_counts[i]
-        # Test time-based lookup as well (check time just after the beat starts)
-        count, _, _ = beats.get_info_at_time(beat_info.timestamp + 0.01)
+    assert beats.overall_stats.total_beats == 8
+    for i, (ts, beat_count) in enumerate(beats.iterate_beats()):
+        assert beat_count == expected_counts[i]
+        count, _, _ = beats.get_info_at_time(ts + 0.01)
         assert count == expected_counts[i]
-        assert (count == 1) == (expected_counts[i] == 1) # Check if count indicates downbeat correctly
+        assert (count == 1) == (expected_counts[i] == 1)
 
 def test_irregular_interval_beats():
     """Test identification of beats with irregular intervals."""
-    # Create timestamps with a jump
-    timestamps = np.array([0.5, 1.0, 1.5, 2.5, 3.0, 3.5]) # Irregular interval between index 2 and 3 (1.5 -> 2.5)
+    timestamps = np.array([0.5, 1.0, 1.5, 2.5, 3.0, 3.5])
     beats_per_bar = 3 
-    # Need 3 * 1 = 3 beats minimum. We have 6.
-    # Assume regular counting based on beats_per_bar 3: [1, 2, 3, 1, 2, 3]
     beat_counts_irr_interval = np.array([1, 2, 3, 1, 2, 3]) 
-    expected_irregular_interval = [False, False, False, True, False, False]
-    
-    # Pass args by keyword to avoid misinterpretation
     beats = Beats.from_timestamps(timestamps, beats_per_bar, beat_counts_irr_interval, tolerance_percent=10.0, min_measures=1)
     
-    # Median interval is 0.5. Tolerance interval is 0.05.
-    # Intervals: 0.5, 0.5, 1.0, 0.5, 0.5
-    # Irregularities: F, F, F, T, F, F (irregular_interval[i] corresponds to beat i)
-    # We need to provide beat_counts now
-    # Assume regular counting based on beats_per_bar 3, despite downbeats: [1, 2, 3, 1, 2, 3]
-    beat_counts_irr_interval = np.array([1, 2, 3, 1, 2, 3]) 
-    expected_irregular_interval = [False, False, False, True, False, False]
+    assert beats.overall_stats.total_beats == 6
+    assert beats.irregular_beat_indices == [3] 
     
-    assert len(beats.beat_list) == 6
-    irregular_indices = []
-    for i, beat_info in enumerate(beats.beat_list):
-        assert beat_info.is_irregular_interval == expected_irregular_interval[i]
-        if beat_info.is_irregular_interval:
-            irregular_indices.append(i)
-            
-    # Beat 3 should be irregular due to interval
-    assert irregular_indices == [3]
-    assert beats.beat_list[3].is_irregular == True
-    # Check if beat is irregular using get_info_at_time
-    count, _, _ = beats.get_info_at_time(beats.beat_list[3].timestamp + 0.01)
-    assert count == 0  # Irregular beats have count 0
-    # Check a regular one
-    assert beats.beat_list[2].is_irregular_interval == False 
-    # Check if beat is regular using get_info_at_time
-    count, _, _ = beats.get_info_at_time(beats.beat_list[2].timestamp + 0.01)
-    assert count > 0  # Regular beats have count > 0
+    count_irr, _, idx_irr = beats.get_info_at_time(2.5 + 0.01) 
+    assert count_irr == 0
+    assert idx_irr == 3
+    
+    count_reg, _, idx_reg = beats.get_info_at_time(1.5 + 0.01)
+    assert count_reg > 0
+    assert idx_reg == 2
 
-    # Check that overall irregularity reflects the FINAL count of irregular beats (1 out of 6)
     irregularity_percent = beats.overall_stats.irregularity_percent
     expected_percent = (1 / 6) * 100
     assert np.isclose(irregularity_percent, expected_percent, atol=0.01)
 
 def test_irregular_count_beats():
     """Test identification of beats with irregular counts (exceeding beats_per_bar)."""
-    # Create timestamps where downbeats are further apart than the beats_per_bar suggests
-    timestamps = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]) # 7 beats
-    beats_per_bar = 4 # But downbeats imply beats_per_bar 5
-    # Need 4 * 1 = 4 beats minimum. We have 7.
-    # Provide the beat counts that would result from the downbeats (1,2,3,4,5,1,2)
+    timestamps = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
+    beats_per_bar = 4
     beat_counts_irr = np.array([1, 2, 3, 4, 5, 1, 2])
-
-    # Pass args by keyword
     beats = Beats.from_timestamps(timestamps, beats_per_bar, beat_counts_irr, tolerance_percent=10.0, min_measures=1)
     
-    # Expected original counts: 1, 2, 3, 4, 5(irregular), 1, 2
-    # Expected display counts: 1, 2, 3, 4, 0, 1, 2 
-    # Expected irregular flag: F, F, F, F, T, F, F
-    expected_irregular = [False, False, False, False, True, False, False]
     expected_display_counts = [1, 2, 3, 4, 0, 1, 2]
-
-    assert len(beats.beat_list) == 7
-    irregular_indices = []
-    for i, beat_info in enumerate(beats.beat_list):
-        assert beat_info.is_irregular == expected_irregular[i], f"Beat {i}"
-        assert beat_info.beat_count == expected_display_counts[i], f"Beat {i}"
-        if beat_info.is_irregular:
-            irregular_indices.append(i)
-            
-    # Beat 4 should be irregular due to count
-    assert irregular_indices == [4]
-    assert beats.beat_list[4].is_irregular == True
-    # Check if beat is irregular using get_info_at_time
-    count, _, _ = beats.get_info_at_time(beats.beat_list[4].timestamp + 0.01)
-    assert count == 0  # Irregular beats have count 0
-    # Check a regular one
-    assert beats.beat_list[3].is_irregular_interval == False
-    # Check if beat is regular using get_info_at_time
-    count, _, _ = beats.get_info_at_time(beats.beat_list[3].timestamp + 0.01)
-    assert count > 0  # Regular beats have count > 0
+    assert beats.overall_stats.total_beats == 7
+    actual_display_counts = [count for _, count in beats.iterate_beats()]
+    assert actual_display_counts == expected_display_counts
+    assert beats.irregular_beat_indices == [4]
     
-    # Check that overall irregularity reflects the FINAL count of irregular beats (1 out of 7)
+    count_irr, _, idx_irr = beats.get_info_at_time(2.0 + 0.01)
+    assert count_irr == 0
+    assert idx_irr == 4
+    
+    count_reg, _, idx_reg = beats.get_info_at_time(1.5 + 0.01)
+    assert count_reg > 0
+    assert idx_reg == 3
+    
     irregularity_percent = beats.overall_stats.irregularity_percent
     expected_percent = (1 / 7) * 100
     assert np.isclose(irregularity_percent, expected_percent, atol=0.01)
 
 def test_beat_info_access():
     """Test accessing BeatInfo objects at specific times."""
-    # Need 4 * 2 = 8 beats minimum
     beats = create_test_beats(beats_per_bar=4, num_beats=8, interval=0.5, min_measures=2)
-    # Time 1.6s is between beat 3 (1.5s) and beat 4 (2.0s)
-    # Should return info for beat 3 (index 3)
-    beat_info = beats.get_beat_info_at_time(1.6)
+    beat_info = beats.get_beat_info_at_time(1.6) 
     assert beat_info is not None
     assert beat_info.index == 3
     assert beat_info.timestamp == 1.5
-    assert beat_info.beat_count == 4 # 1-based count for beat index 3
-    assert not beat_info.is_irregular_interval
+    assert beat_info.beat_count == 4
+    assert not beat_info.is_irregular
     
-    # Time before first beat
-    assert beats.get_beat_info_at_time(beats.beat_list[0].timestamp - 0.1) is None
+    assert beats.get_beat_info_at_time(beats.timestamps[0] - 0.1) is None
     
-    # Time exactly on a beat
-    beat_info_exact = beats.get_beat_info_at_time(2.0) # Beat 4 (index 4)
+    beat_info_exact = beats.get_beat_info_at_time(2.0)
     assert beat_info_exact is not None
     assert beat_info_exact.index == 4
-    assert beat_info_exact.beat_count == 1 # Check downbeat via count
+    assert beat_info_exact.beat_count == 1
 
 def test_get_info_at_time():
     """Test the get_info_at_time method returns correct count and time since beat."""
-    # Create test beats with 4/4 time signature, 8 beats at 0.5s intervals
     beats = create_test_beats(beats_per_bar=4, num_beats=8, interval=0.5, min_measures=2)
     
-    # Test at exact beat times
     for i in range(8):
-        time_point = i * 0.5  # Beat times: 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5
-        expected_count = (i % 4) + 1  # Expected counts: 1, 2, 3, 4, 1, 2, 3, 4
+        time_point = i * 0.5
+        expected_count = (i % 4) + 1
         count, time_since, beat_idx = beats.get_info_at_time(time_point)
         assert count == expected_count
-        assert time_since == 0.0  # Exactly on the beat, so time_since should be 0
-        assert beat_idx == i  # Beat index should match i
-    
-    # Test between beats
-    count, time_since, beat_idx = beats.get_info_at_time(1.25)  # Between beats at 1.0 and 1.5
-    assert count == 3  # Should be beat count 3
-    assert abs(time_since - 0.25) < 1e-6  # Should be 0.25 seconds after the beat
-    assert beat_idx == 2  # Should be beat at index 2 (timestamp 1.0)
-    
-    # Test time before first beat
-    count, time_since, beat_idx = beats.get_info_at_time(-0.1)  # Before first beat
-    assert count == 0  # No beat count before first beat
-    assert time_since == 0.0  # No prior beat
-    assert beat_idx == -1  # No valid beat index
-    
-    # Test with irregular beats
-    # Create a beat sequence with irregular beats at the beginning
-    irregular_beats = create_test_beats(beats_per_bar=4, num_beats=8, interval=0.5, min_measures=2)
-    irregular_beats.start_regular_beat_idx = 4  # Make first 4 beats irregular
-    
-    # Check irregular beats return count 0
-    for i in range(4):
-        time_point = i * 0.5  # First 4 beats: 0.0, 0.5, 1.0, 1.5
-        count, time_since, beat_idx = irregular_beats.get_info_at_time(time_point)
-        assert count == 0  # Irregular beats should have count 0
-        assert abs(time_since - 0.0) < 1e-6  # Time since should still be 0 at the exact beat time
-        assert beat_idx == i  # Beat index should still be correct
-    
-    # Check regular beats still return proper counts
-    for i in range(4, 8):
-        time_point = i * 0.5  # Last 4 beats: 2.0, 2.5, 3.0, 3.5
-        expected_count = (i % 4) + 1  # Expected counts: 1, 2, 3, 4
-        count, time_since, beat_idx = irregular_beats.get_info_at_time(time_point)
-        assert count == expected_count
-        assert abs(time_since - 0.0) < 1e-6
+        assert time_since == 0.0
         assert beat_idx == i
+    
+    count, time_since, beat_idx = beats.get_info_at_time(1.25)
+    assert count == 3
+    assert abs(time_since - 0.25) < 1e-6
+    assert beat_idx == 2
+    
+    count, time_since, beat_idx = beats.get_info_at_time(-0.1)
+    assert count == 0
+    assert time_since == 0.0
+    assert beat_idx == -1
+    
+    # Test with irregular beats (outside regular section)
+    # Create a beat sequence where regular section starts later
+    timestamps = np.array([0.0, 0.2, 0.7, 1.2, 1.7, 2.2, 2.7, 3.2, 3.7, 4.0, 4.2]) # Irregular at start/end
+    counts = np.array([0, 0, 1, 2, 3, 4, 1, 2, 3, 0, 0])
+    # Change min_measures to 1, requiring 4 beats. The found sequence (indices 2-8) has length 7.
+    beats = Beats.from_timestamps(timestamps, 4, counts, min_measures=1) 
+    # Regular section should be indices 2 to 8 (inclusive), end_idx = 9
+    assert beats.start_regular_beat_idx == 2
+    assert beats.end_regular_beat_idx == 9 
+    
+    # Check a beat before the regular section (index 1, ts 0.2)
+    count, time_since, beat_idx = beats.get_info_at_time(0.2 + 0.01)
+    assert count == 0 # Count is 0 because it's outside regular section
+    assert beat_idx == 1
+    assert abs(time_since - 0.01) < 1e-6
+    
+    # Check a beat after the regular section (index 9, ts 4.0)
+    count, time_since, beat_idx = beats.get_info_at_time(4.0 + 0.01)
+    assert count == 0 # Count is 0 because it's outside regular section
+    assert beat_idx == 9
+    assert abs(time_since - 0.01) < 1e-6
+    
+    # Check a beat within the regular section (index 5, ts 2.2)
+    count, time_since, beat_idx = beats.get_info_at_time(2.2 + 0.01)
+    assert count == 4 # Should have its correct count
+    assert beat_idx == 5
+    assert abs(time_since - 0.01) < 1e-6
 
-    # Filtering tests - Remove references to removed methods
-    regular_beats = [b for b in beats.beat_list if not b.is_irregular]
-    irregular_beats = [b for b in beats.beat_list if b.is_irregular]
+def test_filtering_regular_irregular_mixed():
+    """Test filtering regular and irregular beats correctly."""
+    # Adjusted data to ensure a valid regular section exists (indices 0-4, length 5)
+    # while still having irregularities to filter.
+    timestamps = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.5, 4.0]) # Irregular interval 2.5 -> 3.5
+    beats_per_bar = 4
+    counts = np.array([1, 2, 3, 4, 1, 5, 1, 2]) # Irregular count 5 at index 5
+    # Need 4 * 1 = 4 beats min. Longest regular sequence is indices 0-4 (length 5).
+    beats = Beats.from_timestamps(timestamps, beats_per_bar, counts, tolerance_percent=10.0, min_measures=1)
+    
+    # Expected Irregular Indices: 
+    # - Index 5 (count 5 > 4 -> display count 0)
+    # - Index 6 (follows irregular interval 1.0) 
+    expected_irregular_indices = [5, 6]
+    expected_regular_indices = [0, 1, 2, 3, 4, 7]
+    # Downbeats among regular beats: Index 0, Index 4
+    expected_regular_downbeat_indices = [0, 4]
+  
+    # Use the get_... methods
+    regular_beats = beats.get_regular_beats()
+    irregular_beats = beats.get_irregular_beats()
     regular_downbeats = [b for b in regular_beats if b.beat_count == 1]
     # Irregular beats have beat_count == 0, so cannot be downbeats by our definition
     irregular_downbeats = []
-
-    # Expect all beats to be regular in this setup
-    assert len(regular_beats) == 8
-    assert len(irregular_beats) == 0
-    # Expect downbeats at indices 0 and 4 (counts are 1, 2, 3, 4, 1, 2, 3, 4)
-    assert len(regular_downbeats) == 2
-    assert regular_downbeats[0].index == 0
-    assert regular_downbeats[1].index == 4
-    assert len(irregular_downbeats) == 0
-
-def test_filtering_regular_irregular_mixed():
-    """Test filtering beats into regular/irregular lists."""
-    # Combine interval and count irregularities
-    timestamps = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 3.5]) # Irregular interval 2.0->3.0; Irregular count at index 4
-    beats_per_bar = 4
-    # Need 4 * 1 = 4 beats minimum. We have 7.
-    # Provide plausible beat counts, e.g., reflecting the (now removed) downbeats
-    beat_counts_filter = np.array([1, 2, 3, 4, 5, 1, 2]) # Use counts that cause both types of irregularity
-    # Pass args by keyword
-    beats = Beats.from_timestamps(timestamps, beats_per_bar, beat_counts=beat_counts_filter, tolerance_percent=10.0, min_measures=1)
-    # Irregularity trace:
-    # - Interval 1.0 (after index 4) makes beat 5 irregular.
-    # - Count 5 (at index 4) makes beat 4 irregular.
-    # Only beat 4 (count) and beat 5 (interval) are irregular
-    expected_regular_indices = [0, 1, 2, 3, 6] # Corrected
-    expected_irregular_indices = [4, 5]     # Corrected
-    # Downbeats among regular beats: index 0 (count 1)
-    expected_regular_downbeat_indices = [0]     # Corrected
-
-    regular_beats = [b for b in beats.beat_list if not b.is_irregular]
-    irregular_beats = [b for b in beats.beat_list if b.is_irregular]
-    regular_downbeats = [b for b in regular_beats if b.beat_count == 1]
-    # Irregular downbeats are not possible as irregular beats have count 0
-    irregular_downbeats = [] 
-
+  
     assert [b.index for b in regular_beats] == expected_regular_indices
     assert [b.index for b in irregular_beats] == expected_irregular_indices
-    assert len(regular_downbeats) == len(expected_regular_downbeat_indices) # Check length first
-    assert [b.index for b in regular_downbeats] == expected_regular_downbeat_indices # Check indices
+    assert len(regular_downbeats) == len(expected_regular_downbeat_indices)
+    assert [b.index for b in regular_downbeats] == expected_regular_downbeat_indices
     assert len(irregular_downbeats) == 0
 
 def test_edge_cases_creation():

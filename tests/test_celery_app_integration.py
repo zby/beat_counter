@@ -151,13 +151,10 @@ def test_detect_beats_task_integration_success(sample_audio_file, temp_storage_i
     print(f"\nFunction result: {result}") # Debug print
 
     # 1. Check task status
-    assert result is not None, "Task returned None"
-    assert result.get('status') == 'success', f"Task failed with error: {result.get('error')}"
-
+    # The function returns None, the status is checked via metadata below
+    
     # 2. Check that the output beat file was created
     expected_beats_path = storage.get_beats_file_path(file_id)
-    assert 'beat_file' in result
-    assert Path(result['beat_file']) == expected_beats_path, f"Result path {result['beat_file']} doesn't match expected {expected_beats_path}"
     assert expected_beats_path.exists(), f"Expected beats file not found at {expected_beats_path}"
 
     # 3. Check if the beat file has content (basic check)
@@ -182,22 +179,27 @@ def test_detect_beats_task_integration_success(sample_audio_file, temp_storage_i
     assert job_dir.exists() and job_dir.is_dir(), f"Job directory {job_dir} not found."
     
     # 6. Verify metadata update
-    metadata = storage.get_metadata(file_id)
-    assert metadata is not None, f"Metadata not found for file_id {file_id}"
-    print(f"\nMetadata after task: {metadata}") # Debug print
+    metadata_after = storage.get_metadata(file_id)
+    assert metadata_after is not None, f"Metadata not found for file_id {file_id}"
+    print(f"\nMetadata after task: {metadata_after}") # Debug print
     
-    assert metadata.get('beat_detection_status') == 'success'
-    assert metadata.get('beat_file') == str(expected_beats_path)
+    assert metadata_after.get('beat_detection_status') == 'success'
+    assert metadata_after.get('beats_file') == str(expected_beats_path)
     # Compare total beats count with the length of the beat_list
-    assert metadata.get('total_beats') == len(beat_data_json['beat_list']) 
-    assert metadata.get('detected_beats_per_bar') == beat_data_json.get('beats_per_bar')
-    # Calculate irregular beats count from the loaded JSON for comparison
-    json_irregular_count = sum(1 for beat in beat_data_json.get('beat_list', []) if beat.get('is_irregular_interval'))
-    assert metadata.get('irregular_beats_count') == json_irregular_count
+    assert metadata_after.get('total_beats') == len(beat_data_json['beat_list']) 
+    assert metadata_after.get('detected_beats_per_bar') == beat_data_json.get('beats_per_bar')
+    # Calculate irregular beats count correctly by loading the Beats object
+    try:
+        loaded_beats = Beats.load_from_file(expected_beats_path)
+        json_irregular_count = len(loaded_beats.irregular_beat_indices)
+    except Exception as load_e:
+        pytest.fail(f"Failed to load Beats object from {expected_beats_path} to count irregularities: {load_e}")
+    
+    assert metadata_after.get('irregular_beats_count') == json_irregular_count
     # Compare BPM with a tolerance - assuming metadata uses overall_stats
     # Check which stats object is actually used by _perform_beat_detection if this fails.
-    assert 'detected_tempo_bpm' in metadata
-    assert abs(metadata['detected_tempo_bpm'] - beat_data_json['overall_stats']['tempo_bpm']) < 0.01
+    assert 'detected_tempo_bpm' in metadata_after
+    assert abs(metadata_after['detected_tempo_bpm'] - beat_data_json['overall_stats']['tempo_bpm']) < 0.01
     print(f"\nSuccessfully verified metadata update for file_id {file_id}")
 
     # Test beat data JSON structure
@@ -205,12 +207,8 @@ def test_detect_beats_task_integration_success(sample_audio_file, temp_storage_i
     assert 'beats_per_bar' in beat_data_json, "Beat data should contain beats_per_bar"
     
     # Test metadata structure
-    assert isinstance(metadata, dict), "Metadata should be a dictionary"
-    assert metadata.get('detected_beats_per_bar') == beat_data_json.get('beats_per_bar'), "Metadata beats_per_bar mismatch"
-
-    # Check the stats directly in the result dictionary
-    assert result['total_beats'] == 22 # Check result directly (Updated expected value)
-    assert result['beats_per_bar'] == 4 # Check result directly
+    assert isinstance(metadata_after, dict), "Metadata should be a dictionary"
+    assert metadata_after.get('detected_beats_per_bar') == beat_data_json.get('beats_per_bar'), "Metadata beats_per_bar mismatch"
 
 
 def test_generate_video_integration_success(sample_beats_file, temp_storage_integration):
@@ -256,15 +254,10 @@ def test_generate_video_integration_success(sample_beats_file, temp_storage_inte
     print(f"\nFunction result (Video): {result}") # Debug print
 
     # 1. Check function status
-    assert result is not None, "Function returned None"
-    assert result.get('status') == 'success', f"Function failed with error: {result.get('error')}"
+    # The function returns None, status checked via side effects below.
 
     # 2. Check that the output video file was created
     expected_video_path = storage.get_video_file_path(file_id)
-    assert 'video_file' in result
-    # Compare absolute paths to avoid relative vs absolute mismatch
-    assert Path(result['video_file']).resolve() == expected_video_path.resolve(), \
-           f"Result path {result['video_file']} doesn't match expected {expected_video_path}"
     assert expected_video_path.exists(), f"Expected video file not found at {expected_video_path}"
     # Basic check for non-empty file (adjust size threshold if needed)
     assert expected_video_path.stat().st_size > 1000, f"Video file {expected_video_path} seems too small."
@@ -277,9 +270,8 @@ def test_generate_video_integration_success(sample_beats_file, temp_storage_inte
     assert metadata_after.get('video_generation_status') == 'success', "Video generation status not updated to success in metadata."
     assert metadata_after.get('video_file') == str(expected_video_path), "Video file path not updated in metadata."
     
-    # 4. Check CWD restoration (important!)
-    # Ensure CWD is back to what it was when the test started.
-    assert Path.cwd() == workspace_root, f"Current working directory not restored! Expected {workspace_root}, but got {Path.cwd()}"
+    # 4. Check CWD restoration
+    assert Path.cwd() == workspace_root, f"CWD not restored! Expected {workspace_root}, got {Path.cwd()}"
     print(f"\nSuccessfully verified video generation and metadata update for file_id {file_id}")
 
 

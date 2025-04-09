@@ -113,9 +113,10 @@ class BeatVideoGenerator:
             self._frame_cache[beat_count] = frame
         
         # Create and cache frames for each timestamp
-        for beat_info in beats.beat_list:
+        for timestamp, beat_count in beats.iterate_beats():
             # Store the frame in our cache using timestamp as key
-            self._frame_cache[beat_info.timestamp] = self._frame_cache[beat_info.beat_count]
+            # Use the cached frame corresponding to the beat_count
+            self._frame_cache[timestamp] = self._frame_cache[beat_count]
     
     def _create_beat_frame(self, current_beat: int, beats_per_bar: int) -> np.ndarray:
         """

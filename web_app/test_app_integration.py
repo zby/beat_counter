@@ -173,7 +173,7 @@ def mock_beat_detector():
     mock_beats_obj.save_to_file = MagicMock(side_effect=_mock_save_beats)
 
     # --- Mock other necessary attributes/methods ---
-    mock_beats_obj.beat_list = [SimpleNamespace(beat_count=1), SimpleNamespace(beat_count=2)]
+    # mock_beats_obj.beat_list = [SimpleNamespace(beat_count=1), SimpleNamespace(beat_count=2)] # No longer needed externally
     mock_beats_obj.start_regular_beat_idx = 0
     mock_beats_obj.end_regular_beat_idx = 2
 
@@ -417,9 +417,6 @@ def test_confirm_analysis_not_ready(test_client: TestClient, test_storage: FileM
         irregularity_percent=0.0
     )
     mock_beats_obj.get_irregular_beats.return_value = []
-    mock_beats_obj.beat_list = [SimpleNamespace(beat_count=1), SimpleNamespace(beat_count=2)]
-    mock_beats_obj.start_regular_beat_idx = 0
-    mock_beats_obj.end_regular_beat_idx = 2
     
     # Mock save_to_file to actually create the file
     def _mock_save_beats(file_path: pathlib.Path):
@@ -614,9 +611,6 @@ def test_status_analyzing_failure_with_error(
         irregularity_percent=0.0
     )
     mock_beats_obj.get_irregular_beats.return_value = []
-    mock_beats_obj.beat_list = [SimpleNamespace(beat_count=1), SimpleNamespace(beat_count=2)]
-    mock_beats_obj.start_regular_beat_idx = 0
-    mock_beats_obj.end_regular_beat_idx = 2
     
     # Setup detector instance
     instance_mock = MagicMock()
