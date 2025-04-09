@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import numpy as np
 
-from beat_detection.core.beats import Beats, BeatCalculationError, BeatInfo, BeatStatistics
+from beat_detection.core.beats import Beats, BeatCalculationError, BeatStatistics
 # Assuming create_test_beats is accessible, either defined here or imported
 # For simplicity, let's import it from the other test file
 # (In a real scenario, you might move helpers to a common conftest.py)
@@ -42,15 +42,9 @@ def test_save_and_load_beats(tmp_path: Path):
     assert np.isclose(loaded_beats.regular_stats.tempo_bpm, original_beats.regular_stats.tempo_bpm)
     assert loaded_beats.regular_stats.total_beats == original_beats.regular_stats.total_beats
     
-    # Compare beat lists
-    assert len(loaded_beats.beat_list) == len(original_beats.beat_list)
-    for i, loaded_beat in enumerate(loaded_beats.beat_list):
-        original_beat = original_beats.beat_list[i]
-        assert loaded_beat.index == original_beat.index
-        assert np.isclose(loaded_beat.timestamp, original_beat.timestamp)
-        assert loaded_beat.is_irregular_interval == original_beat.is_irregular_interval
-        assert loaded_beat.beat_count == original_beat.beat_count
-        assert loaded_beat.is_irregular == original_beat.is_irregular
+    # Compare beat_data array
+    assert isinstance(loaded_beats.beat_data, np.ndarray)
+    np.testing.assert_allclose(loaded_beats.beat_data, original_beats.beat_data)
 
 def test_load_beats_file_not_found(tmp_path: Path):
     """Test loading from a non-existent file path."""
@@ -78,7 +72,7 @@ def test_load_beats_missing_key(tmp_path: Path):
         json.dump(data, f)
         
     # Adjust regex to match the double single quotes in the KeyError representation
-    with pytest.raises(BeatCalculationError, match="Missing expected key \'\'regular_stats\'\'"):
+    with pytest.raises(BeatCalculationError, match="Missing expected key '\'regular_stats\'\'"):
         Beats.load_from_file(file_path)
 
 def test_load_beats_incorrect_type(tmp_path: Path):
@@ -115,22 +109,6 @@ def create_sample_beats_for_serialization() -> Beats:
     )
     return beats_obj
 
-def test_beat_info_to_dict():
-    """Test the to_dict method of BeatInfo."""
-    beat_info = BeatInfo(
-        timestamp=1.23, 
-        index=5, 
-        is_irregular_interval=False, 
-        beat_count=0  # 0 indicates irregular/undetermined
-    )
-    expected_dict = {
-        "timestamp": 1.23,
-        "index": 5,
-        "is_irregular_interval": False,
-        "beat_count": 0,
-    }
-    assert beat_info.to_dict() == expected_dict
-
 def test_beats_to_dict_structure():
     """Test the overall structure and keys of the dictionary produced by Beats.to_dict()."""
     beats_obj = create_sample_beats_for_serialization()
@@ -157,15 +135,14 @@ def test_beats_to_dict_structure():
     
     # Check beat_list structure
     assert isinstance(beats_dict["beat_list"], list)
-    assert len(beats_dict["beat_list"]) == len(beats_obj.beat_list)
+    assert len(beats_dict["beat_list"]) == beats_obj.beat_data.shape[0]
     if beats_dict["beat_list"]:
-        # Check keys of the first beat in the list
-        expected_beat_info_keys = {
-            "timestamp", "index", "is_irregular_interval",
-            "beat_count"
+        # Check keys of the first beat entry in the list
+        expected_beat_entry_keys = {
+            "timestamp", "count"
         }
         assert isinstance(beats_dict["beat_list"][0], dict)
-        assert set(beats_dict["beat_list"][0].keys()) == expected_beat_info_keys
+        assert set(beats_dict["beat_list"][0].keys()) == expected_beat_entry_keys
 
 def test_beats_to_dict_values():
     """Test specific values converted by Beats.to_dict()."""
@@ -179,14 +156,13 @@ def test_beats_to_dict_values():
     assert beats_dict["start_regular_beat_idx"] == beats_obj.start_regular_beat_idx
     assert beats_dict["end_regular_beat_idx"] == beats_obj.end_regular_beat_idx
     
-    # Check a specific beat
-    # Example: Check the 5th beat (index 4), which is the second downbeat
-    beat_info_obj = beats_obj.beat_list[4] 
-    beat_info_dict = beats_dict["beat_list"][4]
-    assert beat_info_dict["timestamp"] == beat_info_obj.timestamp
-    assert beat_info_dict["index"] == beat_info_obj.index
-    assert beat_info_dict["is_irregular_interval"] == beat_info_obj.is_irregular_interval
-    assert beat_info_dict["beat_count"] == beat_info_obj.beat_count
+    # Check a specific beat entry in the serialized list
+    # Example: Check the 5th beat entry (index 4), which corresponds to the 5th row in beat_data
+    original_timestamp = beats_obj.beat_data[4, 0]
+    original_count = beats_obj.beat_data[4, 1]
+    beat_entry_dict = beats_dict["beat_list"][4]
+    assert np.isclose(beat_entry_dict["timestamp"], original_timestamp)
+    assert beat_entry_dict["count"] == int(original_count)
 
 def test_json_serialization():
     """Test that the dictionary from to_dict can be serialized by the json library."""
@@ -194,6 +170,7 @@ def test_json_serialization():
     beats_dict = beats_obj.to_dict()
     
     try:
+        # Using np.encoder.JSONEncoder for robustness, although to_dict should convert types
         json_string = json.dumps(beats_dict, indent=4)
         # Optionally, try loading it back to ensure it's valid JSON
         loaded_dict = json.loads(json_string)

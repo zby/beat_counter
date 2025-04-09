@@ -38,7 +38,7 @@ def test_generate_video_from_beats():
         beats = detector.detect_beats(str(TEST_AUDIO_FILE))
         assert beats is not None, "Beats object was not created."
         assert beats.beats_per_bar is not None, "Beats per bar was not determined."
-        assert len(beats.beat_list) > 0, "No beats were detected."
+        assert beats.beat_data.shape[0] > 0, "No beats were detected."
 
         # --- Save Beats to File ---
         try:

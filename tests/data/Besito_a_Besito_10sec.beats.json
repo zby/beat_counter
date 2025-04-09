@@ -28,135 +28,91 @@
     "beat_list": [
         {
             "timestamp": 0.31,
-            "index": 0,
-            "is_irregular_interval": false,
-            "beat_count": 4
+            "count": 4
         },
         {
             "timestamp": 0.75,
-            "index": 1,
-            "is_irregular_interval": false,
-            "beat_count": 1
+            "count": 1
         },
         {
             "timestamp": 1.23,
-            "index": 2,
-            "is_irregular_interval": false,
-            "beat_count": 2
+            "count": 2
         },
         {
             "timestamp": 1.69,
-            "index": 3,
-            "is_irregular_interval": false,
-            "beat_count": 3
+            "count": 3
         },
         {
             "timestamp": 2.14,
-            "index": 4,
-            "is_irregular_interval": false,
-            "beat_count": 4
+            "count": 4
         },
         {
             "timestamp": 2.58,
-            "index": 5,
-            "is_irregular_interval": false,
-            "beat_count": 1
+            "count": 1
         },
         {
             "timestamp": 3.04,
-            "index": 6,
-            "is_irregular_interval": false,
-            "beat_count": 2
+            "count": 2
         },
         {
             "timestamp": 3.49,
-            "index": 7,
-            "is_irregular_interval": false,
-            "beat_count": 3
+            "count": 3
         },
         {
             "timestamp": 3.94,
-            "index": 8,
-            "is_irregular_interval": false,
-            "beat_count": 4
+            "count": 4
         },
         {
             "timestamp": 4.38,
-            "index": 9,
-            "is_irregular_interval": false,
-            "beat_count": 1
+            "count": 1
         },
         {
             "timestamp": 4.83,
-            "index": 10,
-            "is_irregular_interval": false,
-            "beat_count": 2
+            "count": 2
         },
         {
             "timestamp": 5.29,
-            "index": 11,
-            "is_irregular_interval": false,
-            "beat_count": 3
+            "count": 3
         },
         {
             "timestamp": 5.75,
-            "index": 12,
-            "is_irregular_interval": false,
-            "beat_count": 4
+            "count": 4
         },
         {
             "timestamp": 6.19,
-            "index": 13,
-            "is_irregular_interval": false,
-            "beat_count": 1
+            "count": 1
         },
         {
             "timestamp": 6.64,
-            "index": 14,
-            "is_irregular_interval": false,
-            "beat_count": 2
+            "count": 2
         },
         {
             "timestamp": 7.1,
-            "index": 15,
-            "is_irregular_interval": false,
-            "beat_count": 3
+            "count": 3
         },
         {
             "timestamp": 7.54,
-            "index": 16,
-            "is_irregular_interval": false,
-            "beat_count": 4
+            "count": 4
         },
         {
             "timestamp": 8.0,
-            "index": 17,
-            "is_irregular_interval": false,
-            "beat_count": 1
+            "count": 1
         },
         {
             "timestamp": 8.44,
-            "index": 18,
-            "is_irregular_interval": false,
-            "beat_count": 2
+            "count": 2
         },
         {
             "timestamp": 8.9,
-            "index": 19,
-            "is_irregular_interval": false,
-            "beat_count": 3
+            "count": 3
         },
         {
             "timestamp": 9.36,
-            "index": 20,
-            "is_irregular_interval": false,
-            "beat_count": 4
+            "count": 4
         },
         {
             "timestamp": 9.8,
-            "index": 21,
-            "is_irregular_interval": false,
-            "beat_count": 1
+            "count": 1
         }
     ]
 }

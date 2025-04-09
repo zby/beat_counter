@@ -124,7 +124,7 @@ def _perform_beat_detection(
         'total_beats': len(beats.timestamps),
         'detected_tempo_bpm': beats.overall_stats.tempo_bpm,
         'irregularity_percent': beats.overall_stats.irregularity_percent,
-        'irregular_beats_count': len(beats.get_irregular_beats()),
+        'irregular_beats_count': len(beats.irregular_beat_indices),
         'beats_file': str(beats_file_path)
     }
     
