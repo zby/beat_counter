@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 
 # Mocking imports
 import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 from types import SimpleNamespace
 
 # Third-party imports
@@ -352,6 +352,8 @@ def test_status_analyzed(test_client: TestClient, test_storage: FileMetadataStor
     assert data["status"] == ANALYZED
     assert data["beat_stats"]["tempo_bpm"] == 120.0 # From mock
     assert data["beats_file_exists"] is True
+    # Ensure beat_error is not present in ANALYZED state
+    assert "beat_error" not in data or data["beat_error"] is None
 
 @patch('web_app.celery_app.generate_video_task.delay')
 def test_confirm_analysis_success(
@@ -395,7 +397,6 @@ def test_confirm_analysis_success(
     # Assert it's now in a video generating state, NOT completed
     assert status_data["status"] == GENERATING_VIDEO
     assert status_data["video_generation"] == mock_async_result.id
-
 
 def test_confirm_analysis_not_ready(test_client: TestClient, test_storage: FileMetadataStorage, generated_sample_audio: Dict[str, Any]):
     """Test confirming analysis when beat detection hasn't 'run' (no beats file)."""
@@ -450,6 +451,283 @@ def test_confirm_analysis_not_ready(test_client: TestClient, test_storage: FileM
     assert response.status_code == 400
     assert "not ready for confirmation" in response.text
 
+# New test for the enhanced status endpoint with progress information
+@patch('web_app.app.AsyncResult')
+def test_status_analyzing_with_progress(
+    mock_AsyncResult,
+    test_client: TestClient, 
+    test_storage: FileMetadataStorage, 
+    uploaded_file_id: str
+):
+    """Test status endpoint includes task progress when ANALYZING."""
+    file_id = uploaded_file_id  # Fixture ensures file exists
+    
+    # Configure mock for beat detection in progress that will be
+    # properly recognized by get_task_status_direct
+    progress_info = {'progress': {'percent': 30, 'status': 'Analyzing waveforms...'}}
+    mock_task = MagicMock()
+    mock_task.state = 'PROGRESS'
+    mock_task.status = 'PROGRESS'  # Make sure status is set too
+    # Set info directly with a structure that matches exactly what the code expects
+    mock_task.info = progress_info
+    mock_task.result = None  # Not completed
+    mock_task.ready.return_value = False
+    mock_task.successful.return_value = False
+    mock_task.traceback = None
+    
+    # Configure AsyncResult to return our mock task
+    mock_AsyncResult.return_value = mock_task
+    
+    # Ensure the file is in UPLOADED state with analysis started but not complete
+    mock_beat_task_id = "mock_beat_task_" + file_id
+    test_storage.update_metadata(file_id, {
+        "beat_detection": mock_beat_task_id,  # Task ID exists
+        "beat_detection_status": None,        # Not completed
+        "beats_file": None,                   # No beats file yet
+        "beats_file_exists": False,
+        "video_generation": None,
+        "video_generation_status": None,
+        "video_file": None
+    })
+    
+    # Make sure beats file doesn't exist
+    beats_file = test_storage.get_beats_file_path(file_id)
+    if beats_file.exists():
+        beats_file.unlink()
+    
+    # Print the actual mock task to make sure it's configured correctly
+    print(f"Mock AsyncResult configured with state: {mock_task.state}, info: {mock_task.info}")
+    
+    # Manually test the get_task_status_direct function to verify it extracts the progress correctly
+    from web_app.app import get_task_status_direct
+    task_status = get_task_status_direct(mock_beat_task_id)
+    print(f"Task status direct result: {task_status}")
+    
+    # Get the status which should show ANALYZING with progress
+    response = test_client.get(f"/status/{file_id}")
+    assert response.status_code == 200
+    data = response.json()
+    print("Status ANALYZING data with progress:", data)
+    print(f"Beat task progress: {data.get('beat_task_progress')}")
+    
+    # Extra debugging for tests - don't check specific call params since the test may 
+    # call AsyncResult multiple times with various task IDs during status processing
+    assert mock_AsyncResult.called, "AsyncResult mock was never called"
+    # Verify the mock was used at least once, we don't care about exact parameters
+    
+    # Verify expected data in the response
+    assert data["status"] == ANALYZING, f"Expected status '{ANALYZING}' but got '{data['status']}'"
+    assert "task_progress" in data, "task_progress missing from response"
+    assert data["task_progress"]["percent"] == 30, f"Expected percent 30 but got {data.get('task_progress', {}).get('percent')}"
+    assert data["task_progress"]["status"] == "Analyzing waveforms..."
+
+@patch('web_app.app.AsyncResult')
+def test_status_generating_video_with_progress(
+    mock_AsyncResult,
+    test_client: TestClient, 
+    test_storage: FileMetadataStorage, 
+    uploaded_file_id: str
+):
+    """Test status endpoint includes video task progress when GENERATING_VIDEO."""
+    file_id = uploaded_file_id # Fixture ensures file exists and is analyzed
+    
+    # Configure mock for video generation in progress that will be
+    # properly recognized by get_task_status_direct
+    progress_info = {'progress': {'percent': 60, 'status': 'Rendering frames...'}}
+    mock_task = MagicMock()
+    mock_task.state = 'PROGRESS'
+    mock_task.status = 'PROGRESS'  # Make sure status is set too
+    mock_task.info = progress_info
+    mock_task.result = None  # Not completed
+    mock_task.ready.return_value = False
+    mock_task.successful.return_value = False
+    mock_task.traceback = None
+    
+    # Configure AsyncResult to return our mock task for all calls
+    mock_AsyncResult.return_value = mock_task
+    
+    # Simulate starting video generation but not completed
+    # We need to ensure the following:
+    # 1. video_generation task ID is set
+    # 2. video_generation_status is NOT 'success' or 'error'
+    # 3. No video_file exists
+    beats_file = test_storage.get_beats_file_path(file_id)
+    if not beats_file.exists():
+        beats_file.parent.mkdir(parents=True, exist_ok=True)
+        beats_file.write_text("0.05\n0.08")
+    
+    mock_video_task_id = "mock_video_task_" + file_id
+    test_storage.update_metadata(file_id, {
+        "beat_detection_status": "success",  # Analysis completed successfully
+        "beats_file": str(beats_file),       # Beats file exists
+        "beats_file_exists": True,
+        "video_generation": mock_video_task_id,
+        "video_generation_status": None,     # Not completed
+        "video_file": None                   # No video file
+    })
+    
+    # Delete any existing video file
+    video_file = test_storage.get_video_file_path(file_id)
+    if video_file.exists():
+        video_file.unlink()
+    
+    # Print the actual mock task to make sure it's configured correctly
+    print(f"Mock AsyncResult configured with state: {mock_task.state}, info: {mock_task.info}")
+    
+    # Get the status which should show GENERATING_VIDEO with progress
+    response = test_client.get(f"/status/{file_id}")
+    assert response.status_code == 200
+    data = response.json()
+    print("Status GENERATING_VIDEO data with progress:", data)
+    
+    # Verify expected data in the response
+    assert data["status"] == GENERATING_VIDEO, f"Expected status 'GENERATING_VIDEO' but got '{data['status']}'"
+    assert "task_progress" in data, "task_progress missing from response"
+    assert data["task_progress"]["percent"] == 60, f"Expected percent 60 but got {data.get('task_progress', {}).get('percent')}"
+    assert data["task_progress"]["status"] == "Rendering frames..."
+    assert "video_task_progress" in data
+    assert data["video_task_progress"] == data["task_progress"]
+
+@patch('web_app.app.AsyncResult')
+@patch('web_app.celery_app.BeatDetector')
+def test_status_analyzing_failure_with_error(
+    mock_detector_class,
+    mock_AsyncResult,
+    test_client: TestClient, 
+    test_storage: FileMetadataStorage, 
+    generated_sample_audio: Dict[str, Any]
+):
+    """Test status endpoint includes error information when ANALYZING_FAILURE."""
+    # Setup a file in ANALYZING state first
+    filename = "analyzing_failure_" + generated_sample_audio["filename"]
+    file_obj = generated_sample_audio["file_obj"]
+    mime_type = generated_sample_audio["mime_type"]
+    file_obj.seek(0)
+    files = {"file": (filename, file_obj, mime_type)}
+    
+    # Setup detector mock to prevent real detection during upload
+    mock_beats_obj = MagicMock()
+    mock_beats_obj.beats_per_bar = 4
+    mock_beats_obj.timestamps = np.array([0.05, 0.08])
+    mock_beats_obj.overall_stats = SimpleNamespace(
+        tempo_bpm=120.0,
+        irregularity_percent=0.0
+    )
+    mock_beats_obj.get_irregular_beats.return_value = []
+    mock_beats_obj.beat_list = [SimpleNamespace(beat_count=1), SimpleNamespace(beat_count=2)]
+    mock_beats_obj.start_regular_beat_idx = 0
+    mock_beats_obj.end_regular_beat_idx = 2
+    
+    # Setup detector instance
+    instance_mock = MagicMock()
+    instance_mock.detect_beats.return_value = mock_beats_obj
+    mock_detector_class.return_value = instance_mock
+    
+    # Upload the file which will create a beat detection task
+    response = test_client.post("/upload", files=files, follow_redirects=False)
+    assert response.status_code == 303
+    file_id = response.headers.get("Location").split("/")[-1]
+    
+    # Configure mock for failure state
+    failure_mock_task = MagicMock()
+    failure_mock_task.state = 'FAILURE'
+    failure_mock_task.ready.return_value = True
+    failure_mock_task.successful.return_value = False
+    failure_mock_task.traceback = "Traceback: Audio processing error in /path/to/file.py line 123"
+    failure_mock_task.result = "Audio processing error"
+    
+    # Configure AsyncResult for the status check call
+    mock_AsyncResult.return_value = failure_mock_task
+    
+    # Update metadata to force the ANALYZING_FAILURE state:
+    # 1. Set beat_detection_status explicitly to "error"
+    # 2. Add beat_detection_error message
+    # 3. Ensure beat_detection task ID exists
+    beat_task_id = test_storage.get_metadata(file_id).get("beat_detection")
+    
+    # Delete any existing beats file
+    beats_file = test_storage.get_beats_file_path(file_id)
+    if beats_file.exists():
+        beats_file.unlink()
+        
+    test_storage.update_metadata(file_id, {
+        "beat_detection_status": "error",  # Explicitly mark as error
+        "beat_detection_error": "Audio processing error",
+        "beat_detection": beat_task_id or "mock_error_task_id",
+        "beats_file": None  # No beats file exists
+    })
+    
+    # Get the status which should show ANALYZING_FAILURE with error information
+    response = test_client.get(f"/status/{file_id}")
+    assert response.status_code == 200
+    data = response.json()
+    print("Status ANALYZING_FAILURE data with error:", data)
+    
+    # Verify expected data in the response
+    assert data["status"] == ANALYZING_FAILURE
+    assert "beat_error" in data
+    assert "Audio processing error" in data["beat_error"]
+    assert "task_progress" not in data  # Progress shouldn't be included in failure state
+
+@patch('web_app.app.AsyncResult')
+def test_status_video_error_with_error(
+    mock_AsyncResult,
+    test_client: TestClient, 
+    test_storage: FileMetadataStorage, 
+    uploaded_file_id: str
+):
+    """Test status endpoint includes error information when VIDEO_ERROR."""
+    file_id = uploaded_file_id # Fixture ensures file exists and is analyzed
+    
+    # Configure mocks for video generation error
+    mock_task = MagicMock()
+    mock_task.state = 'FAILURE'
+    mock_task.ready.return_value = True
+    mock_task.successful.return_value = False
+    mock_task.traceback = "Traceback: Video rendering error in /path/to/video.py line 456"
+    mock_task.result = "Video rendering failed: Out of memory"
+    
+    # Configure AsyncResult to return our mock task
+    mock_AsyncResult.return_value = mock_task
+    
+    # Ensure beats file exists (for successful analysis state)
+    beats_file = test_storage.get_beats_file_path(file_id)
+    if not beats_file.exists():
+        beats_file.parent.mkdir(parents=True, exist_ok=True)
+        beats_file.write_text("0.05\n0.08")
+    
+    # Update metadata to force the VIDEO_ERROR state
+    # 1. Set video_generation_status explicitly to "error"
+    # 2. Add video_generation_error message
+    # 3. Ensure video_generation task ID exists
+    # 4. Make sure beats_file exists and beat_detection_status is success
+    mock_video_task_id = "mock_video_task_" + file_id
+    
+    test_storage.update_metadata(file_id, {
+        "beat_detection_status": "success",  # Analysis completed successfully
+        "beats_file": str(beats_file),       # Beats file exists
+        "video_generation": mock_video_task_id,
+        "video_generation_status": "error",  # Explicitly mark as error
+        "video_generation_error": "Video rendering failed: Out of memory",
+        "video_file": None                   # No video file exists
+    })
+    
+    # Delete any existing video file
+    video_file = test_storage.get_video_file_path(file_id)
+    if video_file.exists():
+        video_file.unlink()
+    
+    # Get the status which should show VIDEO_ERROR with error information
+    response = test_client.get(f"/status/{file_id}")
+    assert response.status_code == 200
+    data = response.json()
+    print("Status VIDEO_ERROR data with error:", data)
+    
+    # Verify expected data in the response
+    assert data["status"] == VIDEO_ERROR
+    assert "video_error" in data
+    assert "Video rendering failed" in data["video_error"]
+    assert "task_progress" not in data  # Progress shouldn't be included in error state
 
 def test_status_completed(test_client: TestClient, test_storage: FileMetadataStorage, uploaded_file_id: str):
     """Test status endpoint after simulating video generation success."""
@@ -471,6 +749,7 @@ def test_status_completed(test_client: TestClient, test_storage: FileMetadataSto
     assert data["status"] == COMPLETED
     assert data["beats_file_exists"] is True
     assert data["video_file_exists"] is True
+    assert "task_progress" not in data  # Progress shouldn't be included in completed state
 
 
 def test_download_video_success(test_client: TestClient, test_storage: FileMetadataStorage, uploaded_file_id: str):

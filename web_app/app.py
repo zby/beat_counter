@@ -118,9 +118,18 @@ async def require_auth(
 
 def get_task_status_direct(task_id: str) -> Dict[str, Any]:
     """Helper: Gets Celery task status directly."""
-    # (Keep existing implementation)
+    # Get the async result object
     async_result = AsyncResult(task_id, app=celery_app)
     response = {"id": task_id, "state": async_result.state}
+    
+    # Debug logging to help with test troubleshooting
+    logger.info(f"DEBUG [get_task_status_direct]: Task {task_id} state: {async_result.state}")
+    if hasattr(async_result, 'status'):
+        logger.info(f"DEBUG [get_task_status_direct]: Task {task_id} status attr: {async_result.status}")
+    if hasattr(async_result, 'info'):
+        logger.info(f"DEBUG [get_task_status_direct]: Task {task_id} info: {async_result.info}")
+    
+    # Handle completed tasks
     if async_result.ready():
         if async_result.successful():
             if async_result.result is not None:
@@ -130,9 +139,22 @@ def get_task_status_direct(task_id: str) -> Dict[str, Any]:
                  response["error"] = str(async_result.traceback)
              except Exception:
                  response["error"] = str(async_result.result)
-    elif async_result.state == 'PROGRESS' or async_result.state == 'STARTED':
+    # Handle in-progress tasks
+    elif async_result.state == 'PROGRESS' or getattr(async_result, 'status', None) == 'PROGRESS' or async_result.state == 'STARTED':
+         # Check if we have progress info in the task
          if isinstance(async_result.info, dict):
-              response['progress'] = async_result.info.get('progress')
+             # Look for a nested 'progress' key first
+             progress = async_result.info.get('progress')
+             if progress and isinstance(progress, dict):
+                 logger.info(f"DEBUG [get_task_status_direct]: Found nested progress: {progress}")
+                 response['progress'] = progress
+             # If no nested progress, check if info itself is a progress dict
+             elif 'percent' in async_result.info or 'status' in async_result.info:
+                 logger.info(f"DEBUG [get_task_status_direct]: Using info directly as progress: {async_result.info}")
+                 response['progress'] = async_result.info
+                 
+    # Log the final response being returned
+    logger.info(f"DEBUG [get_task_status_direct]: Returning response: {response}")
     return response
 
 # --- Routers ---
@@ -319,6 +341,7 @@ async def get_file_status_route(
             "status": beat_status,
             "error": metadata.get("beat_detection_error")
         }
+        response_data["beat_error"] = metadata.get("beat_detection_error")
     else:
         response_data["beat_stats"] = None
 
@@ -354,22 +377,36 @@ async def get_file_status_route(
 
     overall_status = UPLOADED # Default initial state
 
+    # --- Determine if we need to fetch active task progress information ---
+    beat_task_progress = None
+    video_task_progress = None
+
     if video_metadata_status == "success" and response_data["video_file_exists"]:
         overall_status = COMPLETED
     elif video_metadata_status == "error":
         overall_status = VIDEO_ERROR
+        response_data["video_error"] = metadata.get("video_generation_error")
     elif video_task_id:
         # If video task exists but hasn't succeeded/failed according to metadata,
         # check its transient Celery state.
-        video_task_state = AsyncResult(video_task_id, app=celery_app).state
-        if video_task_state in [states.PENDING, states.STARTED, states.RETRY, states.RECEIVED, 'PROGRESS']:
-             overall_status = GENERATING_VIDEO
-        elif video_task_state == states.FAILURE:
-             # Should ideally be caught by video_metadata_status == "error", but as fallback:
-             overall_status = VIDEO_ERROR
-             logger.warning(f"Celery state for video task {video_task_id} is FAILURE, but metadata status is {video_metadata_status}")
-        # If Celery state is SUCCESS but metadata status isn't 'success' yet, 
-        # we rely on the next check (ANALYZED)
+        try:
+            video_task = AsyncResult(video_task_id, app=celery_app)
+            video_task_state = video_task.state
+            
+            # Add task progress information to response
+            task_info = get_task_status_direct(video_task_id) 
+            logger.info(f"DEBUG [get_file_status_route]: Video task info: {task_info}")
+            video_task_progress = task_info.get('progress')
+            
+            if video_task_state in [states.PENDING, states.STARTED, states.RETRY, states.RECEIVED, 'PROGRESS']:
+                 overall_status = GENERATING_VIDEO
+            elif video_task_state == states.FAILURE:
+                 # Should ideally be caught by video_metadata_status == "error", but as fallback:
+                 overall_status = VIDEO_ERROR
+                 response_data["video_error"] = str(video_task.traceback or "Video generation failed")
+                 logger.warning(f"Celery state for video task {video_task_id} is FAILURE, but metadata status is {video_metadata_status}")
+        except Exception as e:
+            logger.error(f"Error checking video task status: {e}")
 
     # If not completed or generating video, check beat detection status
     if overall_status not in [COMPLETED, GENERATING_VIDEO, VIDEO_ERROR]:
@@ -380,22 +417,38 @@ async def get_file_status_route(
         elif beat_task_id:
             # If beat task exists but hasn't succeeded/failed according to metadata,
             # check its transient Celery state.
-            beat_task_state = AsyncResult(beat_task_id, app=celery_app).state
-            if beat_task_state in [states.PENDING, states.STARTED, states.RETRY, states.RECEIVED, 'PROGRESS']:
-                 overall_status = ANALYZING
-            elif beat_task_state == states.FAILURE:
-                 # Should ideally be caught by beat_status == "error", but as fallback:
-                 overall_status = ANALYZING_FAILURE
-                 logger.warning(f"Celery state for beat task {beat_task_id} is FAILURE, but metadata status is {beat_status}")
-            # If Celery state is SUCCESS but metadata status isn't 'success' yet, 
-            # stay in UPLOADED (or potentially ANALYZING if caught above) until metadata is updated.
+            try:
+                beat_task = AsyncResult(beat_task_id, app=celery_app) 
+                beat_task_state = beat_task.state
+                
+                # Add task progress information to response
+                task_info = get_task_status_direct(beat_task_id)
+                logger.info(f"DEBUG [get_file_status_route]: Beat task info: {task_info}")
+                beat_task_progress = task_info.get('progress')
+                
+                if beat_task_state in [states.PENDING, states.STARTED, states.RETRY, states.RECEIVED, 'PROGRESS']:
+                     overall_status = ANALYZING
+                elif beat_task_state == states.FAILURE:
+                     # Should ideally be caught by beat_status == "error", but as fallback:
+                     overall_status = ANALYZING_FAILURE
+                     response_data["beat_error"] = str(beat_task.traceback or "Beat analysis failed")
+                     logger.warning(f"Celery state for beat task {beat_task_id} is FAILURE, but metadata status is {beat_status}")
+            except Exception as e:
+                logger.error(f"Error checking beat task status: {e}")
 
     response_data["status"] = overall_status
-
-    # --- Optionally add raw Celery task status for debugging/info --- #
-    # (Commented out by default to keep response focused on derived status)
-    # response_data["beat_detection_task"] = get_task_status_direct(beat_task_id) if beat_task_id else None
-    # response_data["video_generation_task"] = get_task_status_direct(video_task_id) if video_task_id else None
+    
+    # Add current task progress information if available
+    if overall_status == ANALYZING and beat_task_progress:
+        logger.info(f"DEBUG [get_file_status_route]: Adding beat task progress to task_progress: {beat_task_progress}")
+        response_data["task_progress"] = beat_task_progress
+    elif overall_status == GENERATING_VIDEO and video_task_progress:
+        logger.info(f"DEBUG [get_file_status_route]: Adding video task progress to task_progress: {video_task_progress}")
+        response_data["task_progress"] = video_task_progress
+        
+    # Also include raw task progress data for completeness
+    response_data["beat_task_progress"] = beat_task_progress
+    response_data["video_task_progress"] = video_task_progress
 
     return response_data
 
@@ -533,20 +586,6 @@ async def download_video_route(
     download_name = f"{base_name}_with_beats.mp4"
 
     return FileResponse(path=str(video_path), filename=download_name, media_type="video/mp4")
-
-@main_router.get("/task/{task_id}", name="get_task_status_endpoint")
-async def get_task_status_endpoint_route(
-    task_id: str,
-    user: Dict[str, Any] = Depends(require_auth)
-):
-    """API endpoint to get the raw status of a Celery task."""
-    # (Keep existing logic)
-    try:
-        task_status = get_task_status_direct(task_id)
-        return task_status
-    except Exception as e:
-        logger.error(f"Error getting direct status for task {task_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error retrieving status for task {task_id}")
 
 # --- FastAPI App Creation Function ---
 

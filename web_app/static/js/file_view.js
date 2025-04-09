@@ -23,8 +23,6 @@ let currentFileId = null;
 let statusCheckInterval = null;
 // Set debugMode to false by default, can be overridden in browser console if needed
 let debugMode = document.getElementById('debug-panel') ? true : false;
-let currentTaskId = null;  // Track the currently active task ID
-let currentTaskType = null;  // Track the task type (beat_detection or video_generation)
 
 // --- Helper function to safely add/remove 'hidden' class ---
 const setVisibility = (element, shouldBeVisible) => {
@@ -139,24 +137,17 @@ function setupEventListeners() {
             })
             .then(data => {
                  console.log('Confirmation successful:', data);
-                 // Instead of reloading, update UI and start polling for the new task
-                 // Assuming the response contains the new task ID
-                 if (data.task_id) {
-                     // Manually update the state to GENERATING_VIDEO
-                     const generatingStatusData = {
-                         ...window.initialFileData, // Keep existing data
-                         status: 'GENERATING_VIDEO', // Update status
-                         videoGenerationTaskId: data.task_id // Add new task ID
-                     };
-                     // Update global data (optional, but good practice)
-                     window.initialFileData = generatingStatusData;
-                     // Update the UI to show video progress
-                     handleStatus(generatingStatusData);
-                 } else {
-                     // Fallback to reload if task_id is missing, though it shouldn't be
-                     console.warn("Confirmation response missing task_id, reloading page.");
-                     window.location.reload();
-                 }
+                 
+                 // Instead of manually updating the state, start polling the file status
+                 // The next poll will return GENERATING_VIDEO status
+                 startStatusPolling();
+                 
+                 // Update UI to show we're starting video generation
+                 const inProgressUI = {
+                     ...window.initialFileData,
+                     status: 'GENERATING_VIDEO'
+                 };
+                 handleStatus(inProgressUI);
             })
             .catch(error => {
                 console.error('Error confirming analysis:', error);
@@ -240,14 +231,12 @@ function handleStatus(statusData) {
             setVisibility(analysisButtons, false);
             setVisibility(videoSection, false); // Hide entire video section
 
-            // Start polling for the beat detection task
-            if (statusData.beatDetectionTaskId) {
-                currentTaskId = statusData.beatDetectionTaskId;
-                currentTaskType = 'beat_detection';
-                startStatusPolling();
-            } else {
-                 console.warn("ANALYZING state but no beatDetectionTaskId found.");
-                 stopPolling(); // Should not poll without a task ID
+            // Start polling for status updates
+            startStatusPolling();
+
+            // Update the progress bar if we have progress data
+            if (statusData.task_progress) {
+                updateProgressBar('analysis', statusData.task_progress);
             }
             break;
 
@@ -262,8 +251,6 @@ function handleStatus(statusData) {
 
             // Stop polling as analysis is done
             stopPolling();
-            currentTaskId = null;
-            currentTaskType = null;
             break;
 
         case 'ANALYZING_FAILURE':
@@ -274,8 +261,8 @@ function handleStatus(statusData) {
 
             // Display specific error message in the analysis section
             if (analysisErrorMsgContainer) {
-                 analysisErrorMsgContainer.textContent = statusData.beatDetectionTask?.error
-                      ? `Error during beat analysis: ${statusData.beatDetectionTask.error}`
+                 analysisErrorMsgContainer.textContent = statusData.beat_error
+                      ? `Error during beat analysis: ${statusData.beat_error}`
                       : 'Error: Beat analysis failed.';
                  setVisibility(analysisErrorMsgContainer, true);
             } else {
@@ -287,8 +274,6 @@ function handleStatus(statusData) {
 
             // Stop polling as task has failed
             stopPolling();
-            currentTaskId = null;
-            currentTaskType = null;
             break;
 
         case 'GENERATING_VIDEO':
@@ -302,14 +287,12 @@ function handleStatus(statusData) {
 
             displayAnalysisResults(statusData); // Populate results grid
 
-            // Start polling for the video generation task
-            if (statusData.videoGenerationTaskId) {
-                currentTaskId = statusData.videoGenerationTaskId;
-                currentTaskType = 'video_generation';
-                startStatusPolling();
-            } else {
-                 console.warn("GENERATING_VIDEO state but no videoGenerationTaskId found.");
-                 stopPolling(); // Should not poll without a task ID
+            // Start polling for status updates
+            startStatusPolling();
+
+            // Update the progress bar if we have progress data
+            if (statusData.task_progress) {
+                updateProgressBar('video', statusData.task_progress);
             }
             break;
 
@@ -327,8 +310,6 @@ function handleStatus(statusData) {
 
             // Stop polling as process is complete
             stopPolling();
-            currentTaskId = null;
-            currentTaskType = null;
             break;
 
         case 'VIDEO_ERROR':
@@ -346,8 +327,8 @@ function handleStatus(statusData) {
 
             // Display specific error message in the video section
              if (videoErrorMsgContainer) {
-                 videoErrorMsgContainer.textContent = statusData.videoGenerationTask?.error
-                     ? `Error during video generation: ${statusData.videoGenerationTask.error}`
+                 videoErrorMsgContainer.textContent = statusData.video_error
+                     ? `Error during video generation: ${statusData.video_error}`
                      : 'Error: Video generation failed.';
                  setVisibility(videoErrorMsgContainer, true);
 
@@ -367,8 +348,6 @@ function handleStatus(statusData) {
 
             // Stop polling as task has failed
             stopPolling();
-            currentTaskId = null;
-            currentTaskType = null;
             break;
 
         case 'ERROR':
@@ -384,8 +363,6 @@ function handleStatus(statusData) {
 
             // Stop polling
             stopPolling();
-            currentTaskId = null;
-            currentTaskType = null;
             break;
     }
 }
@@ -419,19 +396,18 @@ function displayAnalysisResults(data) {
         }
     };
 
-    setText('result-total-beats', formatNumber(data.totalBeats));
-    setText('result-beats-per-bar', data.detectedBeatsPerBar); // Assuming beatsPerBar is not a number needing formatting
-    setText('result-bpm', formatNumber(data.bpm, 1) + ' BPM');
-    setText('result-duration', formatNumber(data.duration, 0) + 's');
-    setText('result-irregularity', formatNumber(data.irregularityPercent, 1) + '%');
+    // Get beat stats values, checking if they exist
+    const beatStats = data.beat_stats || {};
+    const totalBeats = beatStats.total_beats || data.totalBeats;
+    const bpm = beatStats.tempo_bpm || data.bpm;
+    const beatsPerBar = beatStats.detected_beats_per_bar || data.detectedBeatsPerBar;
+    const irregularityPercent = beatStats.irregularity_percent || data.irregularityPercent;
 
-    // Update the summary text
-    const summaryText = `
-        Total Beats:  ${formatNumber(data.totalBeats)}
-        Beats/Bar:    ${data.detectedBeatsPerBar || 'N/A'}
-        Tempo:        ${formatNumber(data.tempoBpm, 1)} BPM
-        Irregularity: ${formatNumber(data.irregularityPercent, 1)}%
-    `;
+    setText('result-total-beats', formatNumber(totalBeats));
+    setText('result-beats-per-bar', beatsPerBar); // Assuming beatsPerBar is not a number needing formatting
+    setText('result-bpm', formatNumber(bpm, 1) + ' BPM');
+    setText('result-duration', formatNumber(data.duration, 1) + 's');
+    setText('result-irregularity', formatNumber(irregularityPercent, 1) + '%');
 }
 
 
@@ -542,89 +518,80 @@ function startStatusPolling() {
     // Clear any existing interval first
     stopPolling();
 
-    if (!currentTaskId) {
-        console.warn('startStatusPolling called without a currentTaskId.');
+    if (!currentFileId) {
+        console.warn('startStatusPolling called without a currentFileId.');
         return;
     }
 
-    console.log(`Polling started for task: ${currentTaskId} (Type: ${currentTaskType})`);
-    // Set up new polling interval (e.g., every 3 seconds)
-    statusCheckInterval = setInterval(checkTaskStatus, 3000);
+    console.log(`Polling started for file: ${currentFileId}`);
+    // Set up new polling interval (every 3 seconds)
+    statusCheckInterval = setInterval(checkFileStatus, 3000);
 
-    // Optional: Do an immediate check first? Might cause rapid UI flashes.
-    // checkTaskStatus();
+    // Do an immediate check first
+    checkFileStatus();
 }
 
-// Check the current status of the active Celery task
-function checkTaskStatus() {
-    if (!currentTaskId) {
-        console.log('No task ID available for status check, stopping polling.');
+// Check the current status of the file
+function checkFileStatus() {
+    if (!currentFileId) {
+        console.log('No file ID available for status check, stopping polling.');
         stopPolling();
         return;
     }
 
-    console.log(`Checking task status for task: ${currentTaskId}`);
+    console.log(`Checking status for file: ${currentFileId}`);
 
-    // Fetch the current task status from the dedicated endpoint
-    fetch(`/task/${currentTaskId}`)
+    // Fetch the current file status from the centralized status endpoint
+    fetch(`/status/${currentFileId}`)
         .then(response => {
             if (!response.ok) {
-                 // If task not found (404), stop polling gracefully
+                // If file not found (404), stop polling gracefully
                 if (response.status === 404) {
-                    console.warn(`Task ${currentTaskId} not found, stopping polling.`);
+                    console.warn(`File ${currentFileId} not found, stopping polling.`);
                     stopPolling();
-                    // Optionally update UI to an error state?
+                    // Update UI to an error state
                     handleStatus({ ...window.initialFileData, status: 'ERROR' });
                     return null; // Indicate no data to process
                 }
-                 // For other errors, throw to be caught below
-                throw new Error(`Failed to fetch task status: ${response.statusText}`);
+                // For other errors, throw to be caught below
+                throw new Error(`Failed to fetch file status: ${response.statusText}`);
             }
             return response.json();
         })
-        .then(taskData => {
-            if (taskData === null) return; // Stop processing if task wasn't found
+        .then(statusData => {
+            if (statusData === null) return; // Stop processing if file wasn't found
 
-            console.log('Received task status:', taskData);
+            console.log('Received file status:', statusData);
 
-            // Update global data with latest task info (carefully merge)
-            if (currentTaskType === 'beat_detection') {
-                 window.initialFileData.beatDetectionTask = taskData;
-            } else if (currentTaskType === 'video_generation') {
-                 window.initialFileData.videoGenerationTask = taskData;
-            }
+            // Update global data with latest status info
+            window.initialFileData = {
+                ...window.initialFileData,
+                ...statusData
+            };
 
-            // Update progress bar based on taskData.progress or taskData.result.progress
-            updateProgressBar(taskData);
+            // Update UI based on the new status data
+            handleStatus(statusData);
 
-
-            // --- Check if task is terminally completed (SUCCESS/FAILURE) ---
-            const terminalStates = ['SUCCESS', 'FAILURE'];
-            if (terminalStates.includes(taskData.state)) {
-                console.log(`Task ${currentTaskId} reached terminal state: ${taskData.state}. Stopping polling and reloading.`);
+            // Determine if we should stop polling
+            const terminalStates = ['ANALYZED', 'COMPLETED', 'ERROR', 'ANALYZING_FAILURE', 'VIDEO_ERROR'];
+            if (terminalStates.includes(statusData.status)) {
+                console.log(`File ${currentFileId} reached terminal state: ${statusData.status}. Stopping polling.`);
                 stopPolling();
-                 // Reload the entire page to get the final status from the backend status endpoint
-                 // This simplifies frontend state management significantly
-                 window.location.reload();
-                return; // Stop further processing in this cycle
+            } else {
+                console.log(`File ${currentFileId} still processing (Status: ${statusData.status}). Polling continues.`);
             }
-
-            // If task is still running (STARTED/PROGRESS/PENDING), polling continues automatically
-            console.log(`Task ${currentTaskId} still running (State: ${taskData.state}). Polling continues.`);
-
         })
         .catch(error => {
-            console.error('Error during task status check:', error);
-            // Consider stopping polling on error, or implement retry logic
-            // stopPolling();
-            // Optionally update UI to show a polling error
+            console.error('Error during file status check:', error);
+            // Consider stopping polling on persistent errors
+            // For now, just log the error and continue polling
         });
 }
 
-// Update progress bar based on task data (progress info might be in meta/info)
-function updateProgressBar(taskData) {
-    // Determine which progress bar to update based on currentTaskType
-    const progressBarId = currentTaskType === 'video_generation' ? 'video-progress' : 'analysis-progress';
+// Update progress bar based on task progress data
+function updateProgressBar(type, progressData) {
+    // Determine which progress bar to update based on type
+    const progressBarId = type === 'video' ? 'video-progress' : 'analysis-progress';
     const progressContainer = document.getElementById(progressBarId);
     if (!progressContainer) return; // Exit if the container isn't visible or found
 
@@ -632,22 +599,21 @@ function updateProgressBar(taskData) {
     const progressText = progressContainer.querySelector('p');
     if (!progressFill) return; // Exit if inner elements are missing
 
-    // Extract progress value and status message from taskData.progress (set via update_state meta)
+    // Extract progress value and status message from progressData
     let progressPercent = 0;
     let progressMessage = '';
 
-    if (taskData && taskData.progress && typeof taskData.progress === 'object') {
-        progressPercent = taskData.progress.percent || 0;
-        progressMessage = taskData.progress.status || ''; // Get status message
-    } else if (taskData && taskData.state === 'STARTED') {
-         // Provide a default message if progress details aren't available yet
-         progressPercent = 5; // Small progress indication
-         progressMessage = 'Starting...';
-    } else if (taskData && taskData.state === 'PENDING') {
-         progressPercent = 0;
-         progressMessage = 'Waiting in queue...';
+    if (progressData && typeof progressData === 'object') {
+        progressPercent = progressData.percent || 0;
+        progressMessage = progressData.status || ''; // Get status message
+    } else if (progressData === 'STARTED') {
+        // Provide a default message if only state is available
+        progressPercent = 5; // Small progress indication
+        progressMessage = 'Starting...';
+    } else if (progressData === 'PENDING') {
+        progressPercent = 0;
+        progressMessage = 'Waiting in queue...';
     }
-
 
     // Clamp percentage between 0 and 100
     progressPercent = Math.max(0, Math.min(100, progressPercent));
@@ -661,7 +627,7 @@ function updateProgressBar(taskData) {
             progressText.textContent = progressMessage; // Display the status message
         } else {
             // Fallback message if no detailed status is available
-            progressText.textContent = `<span class="math-inline">\{currentTaskType \=\=\= 'video\_generation' ? 'Generating video' \: 'Analyzing beats'\}\.\.\. \(</span>{progressPercent.toFixed(0)}%)`;
+            progressText.textContent = `${type === 'video' ? 'Generating video' : 'Analyzing beats'}... (${progressPercent.toFixed(0)}%)`;
         }
     }
 }
@@ -702,9 +668,6 @@ function updateDebugPanel() {
 
     // Use the potentially updated global data
     const data = window.initialFileData || {};
-    const beatTask = data.beatDetectionTask || { id: data.beatDetectionTaskId, state: 'N/A' };
-    const videoTask = data.videoGenerationTask || { id: data.videoGenerationTaskId, state: 'N/A' };
-
 
     // Build debug content using template literals for readability
     const debugContent = `
@@ -713,31 +676,26 @@ function updateDebugPanel() {
 File ID:       ${currentFileId || 'N/A'}
 Overall Status: ${data.status || 'N/A'}
 Polling Active: ${statusCheckInterval ? 'YES' : 'NO'}
-Polling Task:   ${currentTaskId || 'None'} (${currentTaskType || 'N/A'})
 
 --- Config ---
-Duration Limit: ${data.durationLimit || 'N/A'}s
-Original Dur:   ${data.originalDuration?.toFixed(2) || 'N/A'}s
-App Dir:        ${data.appDir || 'N/A'}
+Duration Limit: ${data.duration_limit || data.durationLimit || 'N/A'}s
+Original Dur:   ${data.original_duration?.toFixed(2) || data.originalDuration?.toFixed(2) || 'N/A'}s
+App Dir:        ${data.app_dir || data.appDir || 'N/A'}
 
 --- Analysis ---
-BPM:         ${data.bpm?.toFixed(1) || 'N/A'}
-Total Beats: ${data.totalBeats || 'N/A'}
-Audio Dur:   ${data.duration?.toFixed(2) || 'N/A'}s
-Beats per bar:       ${data.detectedMeter || 'N/A'}
+BPM:            ${data.beat_stats?.tempo_bpm?.toFixed(1) || data.bpm?.toFixed(1) || 'N/A'}
+Total Beats:    ${data.beat_stats?.total_beats || data.totalBeats || 'N/A'}
+Audio Dur:      ${data.duration?.toFixed(2) || 'N/A'}s
+Beats per bar:  ${data.beat_stats?.detected_beats_per_bar || data.detectedBeatsPerBar || 'N/A'}
 
 --- Tasks ---
-Beat Task ID:    ${beatTask.id || 'N/A'}
-Beat Task State: ${beatTask.state || 'N/A'}
-Beat Progress:   ${JSON.stringify(beatTask.progress)}
-Beat Error:      ${beatTask.error || 'None'}
+Beat Task Progress: ${JSON.stringify(data.beat_task_progress || {})}
+Beat Error:         ${data.beat_error || 'None'}
 
-Video Task ID:   ${videoTask.id || 'N/A'}
-Video Task State:${videoTask.state || 'N/A'}
-Video Progress:  ${JSON.stringify(videoTask.progress)}
-Video Error:     ${videoTask.error || 'None'}
+Video Task Progress: ${JSON.stringify(data.video_task_progress || {})}
+Video Error:         ${data.video_error || 'None'}
 
---- Raw Initial Data ---
+--- Raw Data ---
 ${JSON.stringify(data, null, 2)}
     `;
 

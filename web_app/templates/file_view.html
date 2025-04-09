@@ -132,38 +132,20 @@
 
     <div id="debug-panel" class="debug-panel"></div>
     
-    <!-- Pass data to JavaScript via hidden element -->
+    <!-- Pass minimal data to JavaScript via hidden element -->
     <div id="file-data" 
          data-file-id="{{ file_id }}"
          data-status="{{ file_status.status }}"
-         data-beat-detection-task-id="{{ file_status.beat_detection if file_status.beat_detection else '' }}"
-         data-video-generation-task-id="{{ file_status.video_generation if file_status.video_generation else '' }}"
-         data-bpm="{{ file_status.beat_stats.tempo_bpm if file_status.beat_stats and file_status.beat_stats.tempo_bpm else 0 }}"
-         data-total-beats="{{ file_status.beat_stats.total_beats if file_status.beat_stats and file_status.beat_stats.total_beats else 0 }}"
-         data-duration="{{ file_status.duration if file_status.duration else 0 }}"
-         data-detected-beats-per-bar="{{ file_status.beat_stats.detected_beats_per_bar if file_status.beat_stats and file_status.beat_stats.detected_beats_per_bar else 0 }}"
-         data-original-duration="{{ file_status.original_duration if file_status.original_duration else 0 }}"
-         data-duration-limit="{{ file_status.duration_limit if file_status.duration_limit else 60 }}"
-         data-app-dir="{{ app_dir }}"
          style="display:none;">
     </div>
     
     <!-- Initialize data in JavaScript -->
     <script>
-        // Parse data from HTML attributes
+        // Parse initial file data from HTML attributes
         const dataElement = document.getElementById('file-data');
         window.initialFileData = {
             fileId: dataElement.getAttribute('data-file-id'),
-            status: dataElement.getAttribute('data-status'),
-            beatDetectionTaskId: dataElement.getAttribute('data-beat-detection-task-id'),
-            videoGenerationTaskId: dataElement.getAttribute('data-video-generation-task-id'),
-            bpm: Number(dataElement.getAttribute('data-bpm') || 0),
-            totalBeats: Number(dataElement.getAttribute('data-total-beats') || 0),
-            duration: Number(dataElement.getAttribute('data-duration') || 0),
-            detectedBeatsPerBar: Number(dataElement.getAttribute('data-detected-beats-per-bar') || 0),
-            originalDuration: Number(dataElement.getAttribute('data-original-duration') || 0),
-            durationLimit: Number(dataElement.getAttribute('data-duration-limit') || 60),
-            appDir: dataElement.getAttribute('data-app-dir')
+            status: dataElement.getAttribute('data-status')
         };
     </script>
     
