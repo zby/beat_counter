@@ -33,7 +33,8 @@ from beat_detection.utils import file_utils
 # CLI helpers
 # ---------------------------------------------------------------------------
 
-def _parse_resolution(res_str: str) -> Tuple[int, int]:
+def parse_resolution(res_str: str) -> Tuple[int, int]:
+    """Parse resolution string WIDTHxHEIGHT."""
     try:
         w, h = map(int, res_str.lower().split("x"))
         return (w, h)
@@ -66,7 +67,7 @@ def parse_args():
     # Video options
     parser.add_argument(
         "--resolution",
-        type=_parse_resolution,
+        type=parse_resolution,
         default=f"{DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT}",
         help=f"Video resolution in format WIDTHxHEIGHT (default: {DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT})",
     )
@@ -91,59 +92,6 @@ def parse_args():
 
 
 def generate_counter_video(
-    audio_file: Union[str, pathlib.Path],
-    output_file: Union[str, pathlib.Path],
-    beats_file: Optional[Union[str, pathlib.Path]] = None,
-    resolution: Tuple[int, int] = DEFAULT_VIDEO_RESOLUTION,
-    fps: int = 30,
-    beats_per_bar: int = 4,
-    sample_beats: Optional[int] = None,
-    verbose: bool = True,
-) -> str:
-    """
-    Generate a beat counter video.
-
-    Parameters:
-    -----------
-    audio_file : Union[str, Path]
-        Path to the input audio file
-    output_file : Union[str, Path]
-        Path to save the output video
-    beats_file : Optional[Union[str, Path]]
-        Path to a pre-computed beats file (optional)
-    resolution : Tuple[int, int]
-        Video resolution (width, height)
-    fps : int
-        Frames per second
-    beats_per_bar : int
-        Number of beats per bar (time signature numerator)
-    sample_beats : Optional[int]
-        Number of beats to process (for testing)
-    verbose : bool
-        Whether to print progress information
-
-    Returns:
-    --------
-    str
-        Path to the generated video file
-    """
-    # Create video generator with beats_per_bar settings
-    video_gen = BeatVideoGenerator(
-        resolution=resolution, fps=fps, beats_per_bar=beats_per_bar
-    )
-
-    if verbose:
-        print(
-            f"Generating counter video with {beats_per_bar}/4 time and downbeat detection..."
-        )
-
-    # Generate the video
-    return video_gen.generate_video(
-        audio_file, beats_file, output_file, sample_beats=sample_beats, verbose=verbose
-    )
-
-
-def process_audio_file(
     audio_file: pathlib.Path,
     output_file: pathlib.Path | None = None,
     resolution=DEFAULT_VIDEO_RESOLUTION,
@@ -231,7 +179,7 @@ def main():
     # Process the single audio file
     # ------------------------------------------------------------------
     try:
-        process_audio_file(
+        generate_counter_video(
             audio_file=pathlib.Path(args.audio_file),
             output_file=pathlib.Path(args.output_file) if args.output_file else None,
             resolution=resolution,

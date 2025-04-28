@@ -26,13 +26,12 @@ from beat_detection.core.video import (
     DEFAULT_FPS,
 )
 from beat_detection.utils.file_utils import find_audio_files
-from beat_detection.utils.beat_file import load_beats
 
 # Re-use the parsing function from single-file script for resolution
-from beat_detection.cli.generate_video import _parse_resolution as parse_resolution_helper
+from beat_detection.cli.generate_video import parse_resolution
 
 # Reuse the single-file processing logic
-from beat_detection.cli.generate_video import process_audio_file as generate_single_video
+from beat_detection.cli.generate_video import generate_counter_video
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resolution",
         default=f"{DEFAULT_VIDEO_WIDTH}x{DEFAULT_VIDEO_HEIGHT}",
-        type=parse_resolution_helper,
+        type=parse_resolution,
         help="Video resolution WIDTHxHEIGHT (default: %(default)s)",
     )
 
@@ -123,11 +122,11 @@ def main() -> None:
                 output_dir.mkdir(parents=True, exist_ok=True)
                 single_output_file = output_dir / f"{audio_file.stem}_counter.mp4"
             else:
-                # If no output dir specified, let generate_single_video use its default logic
+                # If no output dir specified, let process_audio_file use its default logic
                 single_output_file = None
 
             # Call the single-file processing function with the specific file path
-            success = generate_single_video(
+            success = generate_counter_video(
                 audio_file=audio_file,
                 output_file=single_output_file, # Pass the constructed path or None
                 resolution=args.resolution,
