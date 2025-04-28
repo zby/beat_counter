@@ -3,7 +3,7 @@ Constants used across the beat detection package.
 """
 
 # Audio file formats supported by the library
-AUDIO_EXTENSIONS = ['.mp3', '.wav', '.flac', '.m4a', '.ogg']
+AUDIO_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a", ".ogg"]
 # Alias for AUDIO_EXTENSIONS to use in file validation
 SUPPORTED_AUDIO_EXTENSIONS = AUDIO_EXTENSIONS
 

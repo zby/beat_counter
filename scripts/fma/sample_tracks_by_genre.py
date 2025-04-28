@@ -137,7 +137,9 @@ def diverse_sample(df: pd.DataFrame, limit: int) -> pd.DataFrame:
 
     # build per-artist queues --------------------------------------------------
     artist_to_tracks: Dict[str, deque[int]] = defaultdict(deque)
-    for idx, row in df.sample(frac=1, random_state=random.randint(0, 1 << 30)).iterrows():
+    for idx, row in df.sample(
+        frac=1, random_state=random.randint(0, 1 << 30)
+    ).iterrows():
         artist_to_tracks[row["artist_name"]].append(idx)
 
     sample_ids: List[int] = []
@@ -190,7 +192,6 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-
 def main() -> None:  # noqa: C901  complex but fine for a script
     args = parse_args()
 
@@ -225,9 +226,11 @@ def main() -> None:  # noqa: C901  complex but fine for a script
         descendants = collect_descendants(gid, parent_map)
 
         # filter tracks belonging to any of the descendant genres -------------
-        relevant = tracks_df[tracks_df["track_genres_all"].apply(
-            lambda genres: bool(set(map(int, genres)).intersection(descendants))
-        )]
+        relevant = tracks_df[
+            tracks_df["track_genres_all"].apply(
+                lambda genres: bool(set(map(int, genres)).intersection(descendants))
+            )
+        ]
 
         if relevant.empty:
             print(f"NOTE: no tracks found for genre {gid} – skipping.")
@@ -272,4 +275,4 @@ if __name__ == "__main__":
     except Exception as exc:
         # fail fast – propagate error after a descriptive message
         print(f"ERROR: {exc}")
-        sys.exit(1) 
+        sys.exit(1)

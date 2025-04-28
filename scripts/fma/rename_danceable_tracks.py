@@ -36,6 +36,7 @@ DEFAULT_DEST_DIR = Path("data/fma/fma_tracks")
 # Helper utilities
 # ---------------------------------------------------------------------------
 
+
 def slugify(s: str, *, allow_unicode: bool = False, max_length: int = 60) -> str:
     """Create a safe slug for filenames."""
 
@@ -43,9 +44,7 @@ def slugify(s: str, *, allow_unicode: bool = False, max_length: int = 60) -> str
         value = unicodedata.normalize("NFKC", s)
     else:
         value = (
-            unicodedata.normalize("NFKD", s)
-            .encode("ascii", "ignore")
-            .decode("ascii")
+            unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
         )
     value = value.lower()
     value = re.sub(r"[^\w\-]+", "_", value)
@@ -56,6 +55,7 @@ def slugify(s: str, *, allow_unicode: bool = False, max_length: int = 60) -> str
 # ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
+
 
 def main(samples_csv: Path, dest_dir: Path) -> None:
     if not samples_csv.is_file():
@@ -118,4 +118,4 @@ if __name__ == "__main__":
         main(samples_arg, dest_arg)
     except KeyboardInterrupt:
         print("\nInterrupted by user.", file=sys.stderr)
-        sys.exit(1) 
+        sys.exit(1)

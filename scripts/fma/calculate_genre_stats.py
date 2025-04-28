@@ -2,7 +2,7 @@ import pandas as pd
 import sys
 import os
 import ast  # For safely evaluating string representations of lists
-from fma import utils # Import the fma utils
+from fma import utils  # Import the fma utils
 
 # Define file paths relative to the script's location or a base data directory
 # Assuming script is run from the root of the project or paths are adjusted accordingly
@@ -21,9 +21,15 @@ def parse_genre_list(genres_str):
     """Safely parse the string representation of a genre list."""
     # fma.utils might return actual lists, not strings, handle this
     if isinstance(genres_str, list):
-        return [g for g in genres_str if isinstance(g, int)] # Return list if it's already parsed
+        return [
+            g for g in genres_str if isinstance(g, int)
+        ]  # Return list if it's already parsed
 
-    if pd.isna(genres_str) or not isinstance(genres_str, str) or genres_str.strip() == '[]':
+    if (
+        pd.isna(genres_str)
+        or not isinstance(genres_str, str)
+        or genres_str.strip() == "[]"
+    ):
         return []
     try:
         # Use ast.literal_eval for safe evaluation of Python literals
@@ -34,12 +40,19 @@ def parse_genre_list(genres_str):
         else:
             # Handle cases like a single int being parsed, or non-int elements
             if isinstance(genres, int):
-                 return [genres] # Convert single int to list
-            print(f"Warning: Unexpected format in genre list '{genres_str}'. Returning empty list.", file=sys.stderr)
+                return [genres]  # Convert single int to list
+            print(
+                f"Warning: Unexpected format in genre list '{genres_str}'. Returning empty list.",
+                file=sys.stderr,
+            )
             return []
     except (ValueError, SyntaxError, TypeError) as e:
-        print(f"Warning: Could not parse genre list '{genres_str}': {e}. Returning empty list.", file=sys.stderr)
+        print(
+            f"Warning: Could not parse genre list '{genres_str}': {e}. Returning empty list.",
+            file=sys.stderr,
+        )
         return []
+
 
 def main():
     """Loads data using fma.utils, counts tracks for danceable genres, saves stats."""
@@ -54,7 +67,7 @@ def main():
         print("Tracks file loaded.")
         # Set index name explicitly if it's not already set (utils.load might do this)
         if tracks_df.index.name is None:
-            tracks_df.index.name = "track_id" # Assuming the index is the track ID
+            tracks_df.index.name = "track_id"  # Assuming the index is the track ID
 
         # --- Validate Columns from fma.utils output (MultiIndex) ---
         # Removed check for TRACK_ID_COLUMN
@@ -62,7 +75,10 @@ def main():
         #     print(f"Error: Track ID column tuple {TRACK_ID_COLUMN} not found in loaded tracks data. Found columns: {tracks_df.columns.tolist()}", file=sys.stderr)
         #     sys.exit(1)
         if TRACK_GENRES_COLUMN not in tracks_df.columns:
-            print(f"Error: Track genres column tuple {TRACK_GENRES_COLUMN} not found in loaded tracks data. Found columns: {tracks_df.columns.tolist()}", file=sys.stderr)
+            print(
+                f"Error: Track genres column tuple {TRACK_GENRES_COLUMN} not found in loaded tracks data. Found columns: {tracks_df.columns.tolist()}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         # Select only the necessary column and flatten its name
@@ -76,18 +92,27 @@ def main():
         print(f"Error loading CSV file: {e}", file=sys.stderr)
         sys.exit(1)
     except ImportError:
-         print(f"Error: Failed to import fma.utils. Make sure fma/utils.py exists and is importable.", file=sys.stderr)
-         sys.exit(1)
+        print(
+            f"Error: Failed to import fma.utils. Make sure fma/utils.py exists and is importable.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     except Exception as e:
         # Catch potential errors from utils.load() itself
-        print(f"Error loading or processing {TRACKS_FILE} using fma.utils: {e}", file=sys.stderr)
+        print(
+            f"Error loading or processing {TRACKS_FILE} using fma.utils: {e}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # --- Validate Columns in danceable_df ---
     required_danceable_cols = {"genre_id", "title"}
     if not required_danceable_cols.issubset(danceable_df.columns):
         missing = required_danceable_cols - set(danceable_df.columns)
-        print(f"Error: Missing columns in {ALL_DANCEABLE_FILE}: {missing}", file=sys.stderr)
+        print(
+            f"Error: Missing columns in {ALL_DANCEABLE_FILE}: {missing}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # --- Data Preparation ---
@@ -101,7 +126,10 @@ def main():
         print(f"Error converting column to integer: {e}", file=sys.stderr)
         sys.exit(1)
     except KeyError as e:
-        print(f"Error: Missing expected column during type conversion: {e}", file=sys.stderr)
+        print(
+            f"Error: Missing expected column during type conversion: {e}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Get the set of target genre IDs
@@ -134,16 +162,24 @@ def main():
 
     # --- Calculate Track Counts ---
     # Filter for target genres
-    filtered_genres = exploded_genres[exploded_genres["genre_id"].isin(target_genre_ids)]
+    filtered_genres = exploded_genres[
+        exploded_genres["genre_id"].isin(target_genre_ids)
+    ]
 
     # Count unique tracks per genre (using the 'track_id' column)
     # Use nunique() on track_id to count distinct tracks per genre
-    genre_counts = filtered_genres.groupby("genre_id")["track_id"].nunique().reset_index(name="track_count")
+    genre_counts = (
+        filtered_genres.groupby("genre_id")["track_id"]
+        .nunique()
+        .reset_index(name="track_count")
+    )
 
     # --- Create Output DataFrame ---
     # Merge counts with the original danceable genre titles
     # Use left merge to keep all genres from all_danceable_genres.csv, filling missing counts with 0
-    stats_df = pd.merge(danceable_df[["genre_id", "title"]], genre_counts, on="genre_id", how="left")
+    stats_df = pd.merge(
+        danceable_df[["genre_id", "title"]], genre_counts, on="genre_id", how="left"
+    )
 
     # Fill NaN counts with 0 (for genres that had no tracks assigned)
     stats_df["track_count"] = stats_df["track_count"].fillna(0).astype(int)
@@ -154,11 +190,13 @@ def main():
     # --- Save Results ---
     try:
         stats_df.to_csv(OUTPUT_FILE, index=False)
-        print(f"Successfully created {OUTPUT_FILE} with direct track counts for {len(stats_df)} genres.")
+        print(
+            f"Successfully created {OUTPUT_FILE} with direct track counts for {len(stats_df)} genres."
+        )
     except Exception as e:
         print(f"Error writing output file {OUTPUT_FILE}: {e}", file=sys.stderr)
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    main() 
+    main()

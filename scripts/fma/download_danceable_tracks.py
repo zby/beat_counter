@@ -48,6 +48,7 @@ _COMPLETED_FILE = ".downloaded_ids"
 # Helper utilities
 # ---------------------------------------------------------------------------
 
+
 def slugify(s: str, *, allow_unicode: bool = False) -> str:  # copied from Django
     """Return a filesystem-safe slug for *s*.
 
@@ -59,7 +60,9 @@ def slugify(s: str, *, allow_unicode: bool = False) -> str:  # copied from Djang
     if allow_unicode:
         value = unicodedata.normalize("NFKC", s)
     else:
-        value = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+        value = (
+            unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+        )
     value = value.lower()
     # Replace unwanted characters with underscore, keep alnum and dash
     import re
@@ -72,6 +75,7 @@ def slugify(s: str, *, allow_unicode: bool = False) -> str:  # copied from Djang
 # ---------------------------------------------------------------------------
 # Main logic
 # ---------------------------------------------------------------------------
+
 
 def main(samples_csv: Path, dest_dir: Path) -> None:
     # --- Validation ---------------------------------------------------------
@@ -181,4 +185,4 @@ if __name__ == "__main__":
         main(csv_arg, dest_arg)
     except KeyboardInterrupt:
         print("\nInterrupted by user.", file=sys.stderr)
-        sys.exit(1) 
+        sys.exit(1)

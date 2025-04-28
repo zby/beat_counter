@@ -63,6 +63,7 @@ _COMPLETED_FILE = ".downloaded_ids"
 # Helper utilities
 # ---------------------------------------------------------------------------
 
+
 def slugify(s: str, *, allow_unicode: bool = False) -> str:
     """Return a slug suitable for directory names."""
 
@@ -70,9 +71,7 @@ def slugify(s: str, *, allow_unicode: bool = False) -> str:
         value = unicodedata.normalize("NFKC", s)
     else:
         value = (
-            unicodedata.normalize("NFKD", s)
-            .encode("ascii", "ignore")
-            .decode("ascii")
+            unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
         )
     value = value.lower()
     value = re.sub(r"[^\w\-]+", "_", value)
@@ -90,6 +89,7 @@ def track_path_in_zip(track_id: int, root: str = "fma_full") -> str:
 # ---------------------------------------------------------------------------
 # Restartability helpers
 # ---------------------------------------------------------------------------
+
 
 def load_completed(dest_dir: Path) -> Set[int]:
     """Load already-downloaded track IDs from the marker file *or* scan once."""
@@ -128,6 +128,7 @@ def load_completed(dest_dir: Path) -> Set[int]:
 # ---------------------------------------------------------------------------
 # Main extraction routine
 # ---------------------------------------------------------------------------
+
 
 def main(samples_csv: Path, dest_dir: Path, zip_url: str) -> None:
     # --- Validate inputs ----------------------------------------------------
@@ -175,7 +176,9 @@ def main(samples_csv: Path, dest_dir: Path, zip_url: str) -> None:
                 member = track_path_in_zip(tid)
 
                 # Build human-readable filename
-                track_slug = slugify(str(row["track_title"]))[:60] if has_title_col else "track"
+                track_slug = (
+                    slugify(str(row["track_title"]))[:60] if has_title_col else "track"
+                )
                 out_path = genre_dir / f"{tid:06d}_{track_slug}.mp3"
 
                 # Additional fast path: if file somehow exists but ID not in set
@@ -193,7 +196,9 @@ def main(samples_csv: Path, dest_dir: Path, zip_url: str) -> None:
 
                         shutil.copyfileobj(src, dst)
                 except KeyError:
-                    raise RuntimeError(f"Track {tid} not found in ZIP archive ({member}).")
+                    raise RuntimeError(
+                        f"Track {tid} not found in ZIP archive ({member})."
+                    )
                 except Exception as exc:
                     raise RuntimeError(f"Failed to extract {tid}: {exc}") from exc
 
@@ -218,4 +223,4 @@ if __name__ == "__main__":
         main(samples_arg, dest_arg, url_arg)
     except KeyboardInterrupt:
         print("\nInterrupted by user.", file=sys.stderr)
-        sys.exit(1) 
+        sys.exit(1)

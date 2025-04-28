@@ -21,11 +21,9 @@ def build_genre_tree(genres_df: pd.DataFrame) -> dict[int, list[int]]:
     return tree
 
 
-def get_all_descendants(
-    genre_id: int, tree: dict[int, list[int]]
-) -> set[int]:
+def get_all_descendants(genre_id: int, tree: dict[int, list[int]]) -> set[int]:
     """Recursively finds all descendant genres (including the starting one) of a given genre ID."""
-    descendants = {genre_id} # Include the current node
+    descendants = {genre_id}  # Include the current node
     if genre_id in tree:
         for child_id in tree[genre_id]:
             descendants.update(get_all_descendants(child_id, tree))
@@ -103,7 +101,7 @@ def main():
     # Find all descendant genres for the initial danceable genres
     all_danceable_ids = set()
     initial_danceable_ids = set(danceable_genres_df["genre_id"])
-    all_valid_genre_ids = set(genres_df["genre_id"]) # For checking existence
+    all_valid_genre_ids = set(genres_df["genre_id"])  # For checking existence
 
     for genre_id in initial_danceable_ids:
         if genre_id not in all_valid_genre_ids:
@@ -121,7 +119,9 @@ def main():
     ].copy()  # Select only relevant columns
 
     # Sort by genre_id for consistent output
-    all_descendant_genres_df = all_descendant_genres_df.sort_values(by="genre_id").reset_index(drop=True)
+    all_descendant_genres_df = all_descendant_genres_df.sort_values(
+        by="genre_id"
+    ).reset_index(drop=True)
 
     # Reorder columns for clarity (optional, but good practice)
     all_descendant_genres_df = all_descendant_genres_df[["genre_id", "title"]]

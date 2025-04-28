@@ -14,12 +14,10 @@ import logging
 from celery import Celery, states, Task
 from web_app.config import Config
 from web_app.storage import FileMetadataStorage
-from web_app.utils.task_utils import (
-    IOCapture, create_progress_updater, safe_error
-)
+from web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
 from beat_detection.core.detector import BeatDetector
 from beat_detection.core.video import BeatVideoGenerator
-from beat_detection.core.beats import Beats # Import the Beats class
+from beat_detection.core.beats import Beats  # Import the Beats class
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -37,22 +35,22 @@ except Exception as e:
 
 class AppContext:
     """Application context for storing shared services and dependencies."""
-    
+
     def __init__(self, storage: FileMetadataStorage):
         """Initialize the application context.
-        
+
         Args:
             storage: The file metadata storage service
         """
-        self.storage = storage 
+        self.storage = storage
 
 
 # Create the Celery app instance
 app = Celery(
-    config.app.name or 'beat_detection_app',
+    config.app.name or "beat_detection_app",
     broker=config.celery.broker_url,
     backend=config.celery.result_backend,
-    include=['web_app.celery_app']
+    include=["web_app.celery_app"],
 )
 
 # Apply other Celery settings from the Config object
@@ -66,24 +64,23 @@ app.conf.update(
 )
 
 # Configure Celery logging
-log_file_path = config.storage.upload_dir / 'celery.log'
+log_file_path = config.storage.upload_dir / "celery.log"
 log_file_path.parent.mkdir(parents=True, exist_ok=True)
 app.conf.update(
     worker_log_format="%(asctime)s - %(levelname)s - %(message)s",
     worker_task_log_format="%(asctime)s - %(levelname)s - Task:%(task_name)s[%(task_id)s] - %(message)s",
     worker_log_file=str(log_file_path),
-    worker_redirect_stdouts=False
+    worker_redirect_stdouts=False,
 )
 logger.info(f"Celery worker log file configured at: {log_file_path}")
 
 # Initialize application context with storage
-app.context = AppContext(
-    storage=FileMetadataStorage(config.storage)
-)
+app.context = AppContext(storage=FileMetadataStorage(config.storage))
 
 # --- Celery Tasks (Base class removed) ---
 
 # Core beat detection logic (separated for testability)
+
 
 def _perform_beat_detection(
     storage: FileMetadataStorage,
@@ -93,7 +90,7 @@ def _perform_beat_detection(
     tolerance_percent: float,
     min_measures: int,
     beats_per_bar: Optional[int],
-    update_progress: Callable[[str, float], None]
+    update_progress: Callable[[str, float], None],
 ) -> None:
     """Performs the actual beat detection, saving, and metadata update."""
     # Configure detector
@@ -103,60 +100,71 @@ def _perform_beat_detection(
         tolerance_percent=tolerance_percent,
         min_measures=min_measures,
         beats_per_bar=beats_per_bar,
-        progress_callback=update_progress
+        progress_callback=update_progress,
     )
-    
+
     # Detect beats, ensuring the path is a string
     audio_path_str = str(storage.get_audio_file_path(file_id))
     beats = detector.detect_beats(audio_path_str)
-    
-    # --- Add temporary debugging --- 
+
+    # --- Add temporary debugging ---
     logger.info(f"DEBUG: Type of 'beats' variable after call: {type(beats)}")
-    logger.info(f"DEBUG: Value of 'beats' variable: {beats!r}") # Use !r for detailed repr
-    # --- End temporary debugging --- 
-    
+    logger.info(
+        f"DEBUG: Value of 'beats' variable: {beats!r}"
+    )  # Use !r for detailed repr
+    # --- End temporary debugging ---
+
     # Create metadata for the beat detection result
     beats_file_path = storage.get_beats_file_path(file_id)
     metadata_update = {
-        'beat_detection_status': 'success',
-        'beat_detection_error': None,
-        'detected_beats_per_bar': beats.beats_per_bar,
-        'total_beats': len(beats.timestamps),
-        'detected_tempo_bpm': beats.overall_stats.tempo_bpm,
-        'irregularity_percent': beats.overall_stats.irregularity_percent,
-        'irregular_beats_count': len(beats.irregular_beat_indices),
-        'beats_file': str(beats_file_path)
+        "beat_detection_status": "success",
+        "beat_detection_error": None,
+        "detected_beats_per_bar": beats.beats_per_bar,
+        "total_beats": len(beats.timestamps),
+        "detected_tempo_bpm": beats.overall_stats.tempo_bpm,
+        "irregularity_percent": beats.overall_stats.irregularity_percent,
+        "irregular_beats_count": len(beats.irregular_beat_indices),
+        "beats_file": str(beats_file_path),
     }
-    
+
     # Save beat data (timestamps etc.) to the separate beats file
     beats.save_to_file(beats_file_path)
     logger.info(f"Beat timestamps saved to {beats_file_path}")
 
     # Update the central metadata store
     storage.update_metadata(file_id, metadata_update)
-    logger.info(f"Metadata updated for file_id {file_id} after successful beat detection.")
+    logger.info(
+        f"Metadata updated for file_id {file_id} after successful beat detection."
+    )
 
     # Return nothing - status is in metadata.json
     return
 
+
 # Celery Task Definition
-@app.task(bind=True, name='detect_beats_task', queue='beat_detection')
-def detect_beats_task(self: Task, file_id: str, min_bpm: int = 60, max_bpm: int = 200, 
-                     tolerance_percent: float = 10.0, min_measures: int = 1, 
-                     beats_per_bar: int = None) -> None:
+@app.task(bind=True, name="detect_beats_task", queue="beat_detection")
+def detect_beats_task(
+    self: Task,
+    file_id: str,
+    min_bpm: int = 60,
+    max_bpm: int = 200,
+    tolerance_percent: float = 10.0,
+    min_measures: int = 1,
+    beats_per_bar: int = None,
+) -> None:
     """
     Celery task wrapper for beat detection.
     Handles context retrieval, progress callback creation, calling the core logic,
     and error handling.
-    
+
     Parameters are passed to the core beat detection function.
-        
+
     Returns:
     --------
     None
         No return needed here, status is written to metadata by _perform_beat_detection
     """
-    storage: FileMetadataStorage = None # Initialize to allow use in except block
+    storage: FileMetadataStorage = None  # Initialize to allow use in except block
     try:
         # Access storage directly via app context
         storage = self.app.context.storage
@@ -166,10 +174,12 @@ def detect_beats_task(self: Task, file_id: str, min_bpm: int = 60, max_bpm: int 
 
         # Create output directory if it doesn't exist
         storage.ensure_job_directory(file_id)
-        
+
         # Create progress updater callback
-        update_progress = create_progress_updater(self, {"file_id": file_id}, 'beat_detection_progress')
-        
+        update_progress = create_progress_updater(
+            self, {"file_id": file_id}, "beat_detection_progress"
+        )
+
         # Call the core processing function
         _perform_beat_detection(
             storage=storage,
@@ -179,36 +189,45 @@ def detect_beats_task(self: Task, file_id: str, min_bpm: int = 60, max_bpm: int 
             tolerance_percent=tolerance_percent,
             min_measures=min_measures,
             beats_per_bar=beats_per_bar,
-            update_progress=update_progress
+            update_progress=update_progress,
         )
         return
 
     except Exception as e:
-        logger.error(f"Error processing {file_id} in detect_beats_task: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error processing {file_id} in detect_beats_task: {str(e)}", exc_info=True
+        )
         # Attempt to update metadata with error status
         try:
             # Storage might not have been initialized if error occurred early
             if storage:
-                 # Ensure error message is also stored
-                 storage.update_metadata(file_id, {
-                     'beat_detection_status': 'error',
-                     'beat_detection_error': str(e)
-                 })
+                # Ensure error message is also stored
+                storage.update_metadata(
+                    file_id,
+                    {"beat_detection_status": "error", "beat_detection_error": str(e)},
+                )
             else:
-                logger.warning(f"Cannot update metadata with error for {file_id} as storage context was not available.")
+                logger.warning(
+                    f"Cannot update metadata with error for {file_id} as storage context was not available."
+                )
         except Exception as meta_err_e:
-            logger.error(f"Failed even to update metadata with error for {file_id}: {meta_err_e}")
+            logger.error(
+                f"Failed even to update metadata with error for {file_id}: {meta_err_e}"
+            )
 
         # Re-raise the exception so Celery marks the task as FAILED
         # The state will be FAILURE, but the detailed reason is in metadata.json
-        self.update_state(state=states.FAILURE, meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
-        raise # Important: re-raise after updating state/metadata
+        self.update_state(
+            state=states.FAILURE,
+            meta={"exc_type": type(e).__name__, "exc_message": str(e)},
+        )
+        raise  # Important: re-raise after updating state/metadata
 
 
 def _perform_video_generation(
     storage: FileMetadataStorage,
     file_id: str,
-    update_progress: Callable[[str, float], None]
+    update_progress: Callable[[str, float], None],
 ) -> None:
     """Performs the actual video generation, handling file paths, CWD changes, and metadata update."""
     old_cwd = None
@@ -224,9 +243,13 @@ def _perform_video_generation(
         video_output_path = storage.get_video_file_path(file_id)
 
         if not audio_file_path or not audio_file_path.exists():
-            raise FileNotFoundError(f"No audio file found for file_id: {file_id} at path: {audio_file_path}")
+            raise FileNotFoundError(
+                f"No audio file found for file_id: {file_id} at path: {audio_file_path}"
+            )
         if not beats_file_path or not beats_file_path.exists():
-            raise FileNotFoundError(f"No beats file found for file_id: {file_id} at path: {beats_file_path}")
+            raise FileNotFoundError(
+                f"No beats file found for file_id: {file_id} at path: {beats_file_path}"
+            )
 
         audio_path = str(audio_file_path.resolve())
         beats_path = str(beats_file_path.resolve())
@@ -249,28 +272,30 @@ def _perform_video_generation(
             beats = Beats.load_from_file(beats_path)
             logger.info(f"Loaded Beats object from {beats_path}")
             if not beats.timestamps.size > 0:
-                 raise ValueError("Loaded Beats object contains no timestamps.")
+                raise ValueError("Loaded Beats object contains no timestamps.")
         except FileNotFoundError:
             logger.error(f"Beats file not found for loading: {beats_path}")
-            raise # Re-raise the specific error
+            raise  # Re-raise the specific error
         except Exception as load_e:
-             logger.error(f"Failed to load Beats object from {beats_path}: {load_e}")
-             raise ValueError(f"Failed to load Beats object: {load_e}") from load_e
+            logger.error(f"Failed to load Beats object from {beats_path}: {load_e}")
+            raise ValueError(f"Failed to load Beats object: {load_e}") from load_e
 
         # --- Generate Video ---
         # Instantiate generator (progress callback not passed via constructor anymore based on test example)
         video_generator = BeatVideoGenerator()
-        
+
         update_progress("Starting video rendering", 0.05)
         logger.info("Starting actual video generation process using Beats object...")
 
         # Call generate_video with audio path, Beats object, and output path
         generated_video_file = video_generator.generate_video(
             audio_path=audio_path,
-            beats=beats, # Pass the loaded Beats object
-            output_path=video_output
+            beats=beats,  # Pass the loaded Beats object
+            output_path=video_output,
         )
-        logger.info(f"Video generation process finished. Output: {generated_video_file}")
+        logger.info(
+            f"Video generation process finished. Output: {generated_video_file}"
+        )
 
         update_progress("Video generation complete", 1.0)
         return
@@ -282,36 +307,43 @@ def _perform_video_generation(
                 os.chdir(str(old_cwd))
                 logger.info(f"Restored original working directory: {old_cwd}")
                 # --- Update Metadata ---
-                storage.update_metadata(file_id, {
-                    "video_file": str(video_output),  # Ensure path is stored as string
-                    "video_generation_status": "success",
-                    "video_generation_error": None
-                    })
+                storage.update_metadata(
+                    file_id,
+                    {
+                        "video_file": str(
+                            video_output
+                        ),  # Ensure path is stored as string
+                        "video_generation_status": "success",
+                        "video_generation_error": None,
+                    },
+                )
                 logger.info("Metadata updated with video generation results.")
             except Exception as chdir_e:
-                logger.error(f"Error restoring original working directory ({old_cwd}): {chdir_e}")
+                logger.error(
+                    f"Error restoring original working directory ({old_cwd}): {chdir_e}"
+                )
 
 
-@app.task(bind=True, name='generate_video_task', queue='video_generation')
+@app.task(bind=True, name="generate_video_task", queue="video_generation")
 def generate_video_task(self: Task, file_id: str) -> None:
     """
     Celery task wrapper for generating a beat visualization video.
     Handles context retrieval, progress callback creation, calling the core logic,
     and error handling.
-    
+
     Parameters:
     -----------
     file_id : str
         Identifier for the file to process
-        
+
     Returns:
     --------
     None
         No return needed here, status is written by _perform_video_generation
     """
-    task_info = {'file_id': file_id}
+    task_info = {"file_id": file_id}
     io_capture = IOCapture()
-    storage: FileMetadataStorage = None # Allow use in except block
+    storage: FileMetadataStorage = None  # Allow use in except block
 
     with io_capture:
         try:
@@ -319,67 +351,87 @@ def generate_video_task(self: Task, file_id: str) -> None:
             # Access storage directly via app context
             storage = self.app.context.storage
             if not storage:
-                 logger.error("Storage context not found on Celery app!")
-                 raise RuntimeError("Storage context unavailable.")
+                logger.error("Storage context not found on Celery app!")
+                raise RuntimeError("Storage context unavailable.")
 
             # Create progress updater callback (captures stdout/stderr)
-            update_progress = create_progress_updater(self, task_info, 'video_generation_output')
+            update_progress = create_progress_updater(
+                self, task_info, "video_generation_output"
+            )
             update_progress("Initializing video generation task", 0)
 
             # Call the core processing function
             _perform_video_generation(
-                storage=storage,
-                file_id=file_id,
-                update_progress=update_progress
+                storage=storage, file_id=file_id, update_progress=update_progress
             )
 
             # No return needed, status is written by _perform_video_generation
             # Add captured output to task info (transient, not for persistent state)
             final_stdout, final_stderr = io_capture.get_output()
-            self.update_state(state=states.SUCCESS, meta={"stdout": final_stdout, "stderr": final_stderr})
+            self.update_state(
+                state=states.SUCCESS,
+                meta={"stdout": final_stdout, "stderr": final_stderr},
+            )
             return
 
         except Exception as e:
-            error_msg = f"Video generation task error for {file_id}: {type(e).__name__} - {e}"
+            error_msg = (
+                f"Video generation task error for {file_id}: {type(e).__name__} - {e}"
+            )
             logger.error(error_msg, exc_info=True)
-            safe_error(error_msg) # Log safely
+            safe_error(error_msg)  # Log safely
             # Attempt to capture error output
-            io_capture.write_stderr(error_msg + "\n") 
+            io_capture.write_stderr(error_msg + "\n")
             final_stdout, final_stderr = io_capture.get_output()
 
             # Attempt to update metadata with error status
             try:
                 if storage:
-                    storage.update_metadata(file_id, {
-                        'video_generation_status': 'error',
-                        'video_generation_error': str(e)
-                        })
+                    storage.update_metadata(
+                        file_id,
+                        {
+                            "video_generation_status": "error",
+                            "video_generation_error": str(e),
+                        },
+                    )
                 else:
-                    logger.warning(f"Cannot update metadata with error for {file_id} as storage context was not available.")
+                    logger.warning(
+                        f"Cannot update metadata with error for {file_id} as storage context was not available."
+                    )
             except Exception as meta_err_e:
-                logger.error(f"Failed even to update metadata with error for {file_id}: {meta_err_e}")
+                logger.error(
+                    f"Failed even to update metadata with error for {file_id}: {meta_err_e}"
+                )
 
             # Re-raise the exception so Celery marks the task as FAILED
-            self.update_state(state=states.FAILURE, meta={'exc_type': type(e).__name__, 'exc_message': str(e), "stdout": final_stdout, "stderr": final_stderr})
-            raise # Important: re-raise after updating state/metadata
+            self.update_state(
+                state=states.FAILURE,
+                meta={
+                    "exc_type": type(e).__name__,
+                    "exc_message": str(e),
+                    "stdout": final_stdout,
+                    "stderr": final_stderr,
+                },
+            )
+            raise  # Important: re-raise after updating state/metadata
         # Note: The finally block for restoring CWD is inside _perform_video_generation
 
 
-@app.task(bind=True, name='debug_task')
+@app.task(bind=True, name="debug_task")
 def debug_task(self: Task):
     """
     Simple task for debugging worker setup.
-    
+
     Returns:
     --------
     dict
         Debug information about the task execution
     """
     task_id = self.request.id if self.request else "unknown"
-    logger.info(f'Debug task executed. Request: {self.request!r}')
-    
+    logger.info(f"Debug task executed. Request: {self.request!r}")
+
     return {
-        "status": "ok", 
+        "status": "ok",
         "request_id": task_id,
-        "worker_hostname": self.request.hostname if self.request else "unknown"
+        "worker_hostname": self.request.hostname if self.request else "unknown",
     }

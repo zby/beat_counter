@@ -9,6 +9,7 @@ import os
 import logging
 from typing import Dict, Any, Optional, List
 import time
+
 # FIX: Ensure datetime and timedelta are imported
 from datetime import datetime, timedelta, timezone
 
@@ -20,7 +21,7 @@ from fastapi import Request, HTTPException, status
 # Local imports
 # Avoid circular dependency if auth is needed by config; get_users is okay if config loads first.
 # Consider passing users directly instead of relying on get_users() inside UserManager.
-from web_app.config import get_users # Keep for now, but consider alternatives
+from web_app.config import get_users  # Keep for now, but consider alternatives
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "a_very_secret_key_for_development_only")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours (Default)
+
 
 class UserManager:
     """User manager for the application."""
@@ -68,22 +70,41 @@ class UserManager:
             if user_dict.get("username") == username:
                 # For TEST_USERS in the test (plain password check - less secure)
                 if "password" in user_dict and user_dict["password"] == password:
-                    logger.info(f"User '{username}' authenticated via plain password (testing only?).")
+                    logger.info(
+                        f"User '{username}' authenticated via plain password (testing only?)."
+                    )
                     # Return a copy without sensitive info if possible
-                    return {k: v for k, v in user_dict.items() if k != 'password' and k != 'password_hash'}
+                    return {
+                        k: v
+                        for k, v in user_dict.items()
+                        if k != "password" and k != "password_hash"
+                    }
 
                 # Check hashed password using bcrypt if present
-                if "password_hash" in user_dict and self._verify_password(password, user_dict["password_hash"]):
+                if "password_hash" in user_dict and self._verify_password(
+                    password, user_dict["password_hash"]
+                ):
                     logger.info(f"User '{username}' authenticated via hashed password.")
                     # Return a copy without sensitive info
-                    return {k: v for k, v in user_dict.items() if k != 'password' and k != 'password_hash'}
+                    return {
+                        k: v
+                        for k, v in user_dict.items()
+                        if k != "password" and k != "password_hash"
+                    }
 
                 # Check legacy md5 hash if present and bcrypt failed/missing (less secure)
-                if "password_md5" in user_dict and self._verify_md5(password, user_dict["password_md5"]):
-                     logger.warning(f"User '{username}' authenticated via legacy MD5 hash.")
-                     # Return a copy without sensitive info
-                     return {k: v for k, v in user_dict.items() if k != 'password' and k != 'password_md5'}
-
+                if "password_md5" in user_dict and self._verify_md5(
+                    password, user_dict["password_md5"]
+                ):
+                    logger.warning(
+                        f"User '{username}' authenticated via legacy MD5 hash."
+                    )
+                    # Return a copy without sensitive info
+                    return {
+                        k: v
+                        for k, v in user_dict.items()
+                        if k != "password" and k != "password_md5"
+                    }
 
         logger.warning(f"Authentication failed for username: '{username}'")
         return None
@@ -112,7 +133,9 @@ class UserManager:
             # Return essential, non-sensitive user info
             return {
                 "username": username,
-                "is_admin": payload.get("is_admin", False) # Include admin status from token
+                "is_admin": payload.get(
+                    "is_admin", False
+                ),  # Include admin status from token
             }
         except jwt.ExpiredSignatureError:
             logger.info("JWT token has expired.")
@@ -125,7 +148,9 @@ class UserManager:
             logger.error(f"Unexpected error processing authentication token: {e}")
             return None
 
-    def create_access_token(self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    def create_access_token(
+        self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None
+    ) -> str:
         """Create a JWT access token.
 
         Args:
@@ -142,9 +167,13 @@ class UserManager:
             expire = datetime.now(timezone.utc) + expires_delta
         else:
             # Use the instance attribute for default expiration
-            expire = datetime.now(timezone.utc) + timedelta(minutes=self.ACCESS_TOKEN_EXPIRE_MINUTES)
+            expire = datetime.now(timezone.utc) + timedelta(
+                minutes=self.ACCESS_TOKEN_EXPIRE_MINUTES
+            )
 
-        to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc)}) # Add issued-at time
+        to_encode.update(
+            {"exp": expire, "iat": datetime.now(timezone.utc)}
+        )  # Add issued-at time
 
         # Create JWT token
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -153,27 +182,31 @@ class UserManager:
     def _verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify a plain password against a hashed password (primarily bcrypt)."""
         if not plain_password or not hashed_password:
-             return False
+            return False
         try:
             # Check if hash is likely bcrypt
             if hashed_password.startswith("$2b$"):
-                return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+                return bcrypt.checkpw(
+                    plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+                )
             else:
-                 # If not bcrypt, assume it's not supported by this method
-                 logger.warning("Password hash verification attempted on non-bcrypt hash.")
-                 return False
+                # If not bcrypt, assume it's not supported by this method
+                logger.warning(
+                    "Password hash verification attempted on non-bcrypt hash."
+                )
+                return False
         except ValueError:
-             # Handle potential errors if hash is malformed
-             logger.error("Error verifying password: Malformed hash?")
-             return False
+            # Handle potential errors if hash is malformed
+            logger.error("Error verifying password: Malformed hash?")
+            return False
         except Exception as e:
-             logger.error(f"Unexpected error during password verification: {e}")
-             return False
+            logger.error(f"Unexpected error during password verification: {e}")
+            return False
 
     def _verify_md5(self, plain_password: str, md5_hash: str) -> bool:
-         """Verify a plain password against a legacy MD5 hash."""
-         if not plain_password or not md5_hash:
-              return False
-         # Compare calculated MD5 hash with the stored one
-         calculated_hash = hashlib.md5(plain_password.encode('utf-8')).hexdigest()
-         return calculated_hash == md5_hash
+        """Verify a plain password against a legacy MD5 hash."""
+        if not plain_password or not md5_hash:
+            return False
+        # Compare calculated MD5 hash with the stored one
+        calculated_hash = hashlib.md5(plain_password.encode("utf-8")).hexdigest()
+        return calculated_hash == md5_hash

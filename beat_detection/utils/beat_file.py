@@ -11,7 +11,7 @@ from beat_detection.core.beats import Beats  # Updated import
 def save_beats(file_path: str, beats: Beats) -> None:
     """
     Save beat data to a file using the Beats object's method.
-    
+
     Parameters:
     -----------
     file_path : str
@@ -26,12 +26,12 @@ def save_beats(file_path: str, beats: Beats) -> None:
 def load_beats(file_path: str) -> Beats:
     """
     Load beat data from a file using the Beats object's class method.
-    
+
     Parameters:
     -----------
     file_path : str
         Path to input JSON file
-        
+
     Returns:
     --------
     Beats
