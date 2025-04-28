@@ -29,7 +29,10 @@ dependencies = [
     "bcrypt>=4.0.1",
     "python-jose>=3.3.0",
     "numpy>=1.21.0",
-    "pydub>=0.25.1"
+    "pydub>=0.25.1",
+    "fsspec>=2025.3.2",
+    "aiohttp>=3.11.18",
+    "requests>=2.32.3",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +64,11 @@ line_length = 88
 testpaths = ["web_app", "beat_detection"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pydot>=3.0.4",
+]
 # Logging configuration
 # log_cli = true
 # log_cli_level = "INFO"
