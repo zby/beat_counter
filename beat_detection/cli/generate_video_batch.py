@@ -118,11 +118,11 @@ def main() -> None:
         try:
             # Determine the specific output file path for this audio file
             if output_dir:
-                # Ensure output dir exists (process_audio_file also does this, but belt-and-suspenders)
+                # Ensure output dir exists (generate_counter_video also does this, but belt-and-suspenders)
                 output_dir.mkdir(parents=True, exist_ok=True)
                 single_output_file = output_dir / f"{audio_file.stem}_counter.mp4"
             else:
-                # If no output dir specified, let process_audio_file use its default logic
+                # If no output dir specified, let generate_counter_video use its default logic
                 single_output_file = None
 
             # Call the single-file processing function with the specific file path
