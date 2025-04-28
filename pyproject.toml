@@ -46,7 +46,9 @@ dev = [
 
 [project.scripts]
 detect-beats = "beat_detection.cli.detect_beats:main"
-generate-videos = "beat_detection.cli.generate_videos:main"
+detect-beats-batch = "beat_detection.cli.detect_beats_batch:main"
+generate-video = "beat_detection.cli.generate_video:main"
+generate-video-batch = "beat_detection.cli.generate_video_batch:main"
 
 [tool.setuptools]
 packages = ["web_app", "beat_detection", "beat_detection.core", "beat_detection.utils", "beat_detection.cli"]

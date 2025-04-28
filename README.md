@@ -116,48 +116,57 @@ python tools/manage_users.py password username new_password
 
 ### Command-line Tools
 
-The application provides command-line tools for processing files directly:
+The project provides command-line scripts for direct file processing, installed via `uv pip install .` (or `uv pip install ".[dev]"`). These scripts operate independently of the web application and are useful for batch processing or integration into other workflows.
 
-#### Beat Detection
+#### Beat Detection (Single File)
+
+Detects beats in a single audio file and saves the results to a `.beats` file.
 
 ```bash
-# Run beat detection on a file by ID
-python tools/run_beat_detection.py [file_id] --wait
+# Detect beats in an audio file and save output next to it (e.g., audio.beats)
+detect-beats path/to/your/audio.mp3
 
-# Run beat detection on a file by path
-python tools/run_beat_detection.py /path/to/file.mp3 --wait
+# Specify an output file path
+detect-beats path/to/your/audio.mp3 -o path/to/output/beats_data.beats
 
-# Specify a custom upload directory
-python tools/run_beat_detection.py [file_id] --upload-dir /custom/path/to/uploads
+# Adjust detection parameters
+detect-beats path/to/your/audio.mp3 --min-bpm 70 --max-bpm 160
 ```
 
-#### Video Generation
+#### Beat Detection (Batch)
+
+Detects beats for multiple audio files within a directory.
 
 ```bash
-# Generate video for a file by ID
-python tools/run_video_generation.py [file_id] --wait
-
-# Generate video for a file by path
-python tools/run_video_generation.py /path/to/file.mp3 --wait
-
-# Run immediately after beat detection (waits for beat file to be created)
-python tools/run_video_generation.py [file_id] --after-beat-detection --wait
+# Detect beats for all audio files in a directory (outputs .beats files alongside originals)
+detect-beats-batch path/to/audio/directory/
 ```
 
-#### Batch Processing
+#### Video Generation (Single File)
+
+Generates a beat visualization video for a single audio file, using its corresponding `.beats` file.
 
 ```bash
-# Process all files in the uploads directory (both beat detection and video generation)
-python tools/process_batch.py --wait-beats --wait-video
+# Generate video for an audio file (requires audio.beats to exist)
+generate-video path/to/your/audio.mp3
 
-# Skip files that already have beat or video files
-python tools/process_batch.py --skip-existing
+# Specify an output video path
+generate-video path/to/your/audio.mp3 -o path/to/output/video.mp4
 
-# Process only a limited number of files
-python tools/process_batch.py --limit 5
+# Specify a different location for the beats file
+generate-video path/to/your/audio.mp3 --beats-file path/to/custom/beats_data.beats
 
-# Specify a custom upload directory
-python tools/process_batch.py --upload-dir /custom/path/to/uploads
+# Change video resolution and FPS
+generate-video path/to/your/audio.mp3 --resolution 1920x1080 --fps 60
+```
+
+#### Video Generation (Batch)
+
+Generates beat visualization videos for multiple audio files in a directory, using their corresponding `.beats` files.
+
+```bash
+# Generate videos for all audio files in a directory (requires corresponding .beats files)
+generate-video-batch path/to/audio/directory/
 ```
 
 ### Production Deployment

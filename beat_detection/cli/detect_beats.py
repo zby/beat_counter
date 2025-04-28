@@ -1,218 +1,113 @@
 #!/usr/bin/env python3
 """
-Beat detection tool.
+Detect beats in a single audio file.
 
-This script detects beats in audio files and generates beat timestamp files.
-These files can be used to create visualization videos.
+This CLI takes one required positional argument – the path to an audio file –
+and runs the beat-detection pipeline.  By default it prints the resulting beat
+structure as JSON on stdout.  An optional ``-o/--output`` flag allows writing
+those results into a ``.beats`` file instead.
 
-Usage:
-    detect-beats [options] [input_file_or_directory]
-
-If input is not specified, processes all audio files in data/original/.
+Why a dedicated script?
+-----------------------
+Splitting the single-file and batch use-cases keeps each interface minimal and
+eliminates several flags that only make sense in batch mode (e.g. progress bar
+or output-directory layouts).  This aligns with the project's *fail-fast* rule:
+less configurability means fewer silent mis-configurations.
 """
+from __future__ import annotations
 
-import os
-import sys
-import pathlib
 import argparse
-import numpy as np
-from tqdm import tqdm
+import json
 import logging
+import sys
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional
 
 from beat_detection.core.detector import BeatDetector
-from beat_detection.utils import file_utils, reporting
-from beat_detection.utils.constants import AUDIO_EXTENSIONS
-from beat_detection.utils.file_utils import find_audio_files
 from beat_detection.utils.beat_file import save_beats
 
 
-def setup_logging(verbose: bool = False) -> None:
-    """Set up logging configuration."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-
-
-def parse_args():
-    """Parse command line arguments."""
+def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Detect beats in music files and generate beat timestamp files."
+        prog="detect-beats-file",
+        description=(
+            "Detect beats in a single audio file and save them to a .beats JSON file. "
+            "By default, the output is saved next to the audio file with a .beats extension."
+        ),
     )
 
-    # Input arguments
-    parser.add_argument(
-        "input",
-        nargs="?",
-        help="Input audio file or directory. If not provided, all files in data/input will be processed.",
-    )
+    # Required audio file path
+    parser.add_argument("audio_file", help="Path to the audio file to analyse.")
 
-    # Output directory
+    # Optional output path
     parser.add_argument(
         "-o",
-        "--output-dir",
-        default="data/output",
-        help="Output directory for beat files (default: data/output)",
+        "--output",
+        metavar="PATH",
+        help="Path to save the output .beats file. Defaults to <audio_file>.beats",
     )
 
-    # Beat detection options
-    parser.add_argument(
-        "--min-bpm", type=int, default=60, help="Minimum BPM to detect (default: 60)"
-    )
-    parser.add_argument(
-        "--max-bpm", type=int, default=240, help="Maximum BPM to detect (default: 240)"
-    )
+    # Detection parameters
+    parser.add_argument("--min-bpm", type=int, default=60, help="Minimum BPM.")
+    parser.add_argument("--max-bpm", type=int, default=240, help="Maximum BPM.")
     parser.add_argument(
         "--tolerance",
         type=float,
         default=10.0,
-        help="Percentage tolerance for beat intervals (default: 10.0)",
+        help="Interval tolerance percentage.",
     )
     parser.add_argument(
         "--beats-per-bar",
         type=int,
         default=None,
-        help="Number of beats per bar for downbeat detection (default: None, will try all supported values)",
-    )
-
-    # Output options
-    parser.add_argument("--quiet", action="store_true", help="Reduce output verbosity")
-    parser.add_argument(
-        "--no-progress", action="store_true", help="Don't show progress bar"
-    )
-    parser.add_argument(
-        "--min-measures",
-        type=int,
-        default=1,
-        help="Minimum number of consistent measures for stable section analysis (default: 5)",
+        help="Fix the time-signature numerator.  When omitted the detector tries to infer it.",
     )
 
     return parser.parse_args()
 
 
-def process_file(
-    audio_file: str, output_dir: str, detector: BeatDetector, verbose: bool = False
-) -> bool:
-    """
-    Process a single audio file.
-    Raises exceptions if processing fails.
-
-    Parameters:
-    -----------
-    audio_file : str
-        Path to input audio file
-    output_dir : str
-        Path to output directory
-    detector : BeatDetector
-        Beat detector instance
-    verbose : bool
-        Whether to print verbose output
-
-    Returns:
-    --------
-    bool
-        True if processing was successful (exception indicates failure)
-    """
-    # Create output directory if it doesn't exist
-    pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    # Get base filename without extension
-    base_name = Path(audio_file).stem
-
-    # Detect beats
-    beats = detector.detect_beats(audio_file)
-
-    # Save beat data
-    beat_file = os.path.join(output_dir, f"{base_name}.beats")
-    save_beats(beat_file, beats)
-
-    if verbose:
-        logging.info(f"Saved beat data to {beat_file}")
-
-    return True
+def setup_logging() -> None:
+    """Configure logging to STDERR at INFO level."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
 
-def main():
-    """Main entry point for the CLI."""
+def main() -> None:  # noqa: D401 – simple imperative main
     args = parse_args()
+    setup_logging()
 
-    # Setup progress bar if not quiet and not disabled
-    pbar = None
-    progress_callback = None
-    if not args.quiet and not args.no_progress:
-        pbar = tqdm(total=100, desc="Processing", unit="%", ncols=80)
+    audio_path = Path(args.audio_file)
+    if not audio_path.is_file():
+        logging.error("Audio file not found: %s", audio_path)
+        sys.exit(1)
 
-        def update_progress(progress_value: float):
-            if pbar:
-                pbar.n = int(
-                    progress_value * 100
-                )  # Update progress based on 0.0-1.0 value
-                pbar.refresh()
-
-        progress_callback = update_progress
-
-    # Configure detector based on args
+    # Configure detector – uses project defaults unless user overrides
     detector = BeatDetector(
         min_bpm=args.min_bpm,
         max_bpm=args.max_bpm,
         tolerance_percent=args.tolerance,
-        min_measures=args.min_measures,
         beats_per_bar=args.beats_per_bar,
-        progress_callback=progress_callback,
     )
 
-    # Determine base input and output directories
-    input_base_dir = "data/input"
-    output_base_dir = pathlib.Path(args.output_dir)
+    try:
+        beats = detector.detect_beats(str(audio_path))
+    except Exception as exc:  # fail fast but print cause
+        logging.exception("Beat detection failed for %s: %s", audio_path, exc)
+        sys.exit(1)
 
-    # Get input paths to process
-    input_path = args.input if args.input else input_base_dir
+    # Output handling
+    if args.output:
+        out_path = Path(args.output)
+    else:
+        out_path = audio_path.with_suffix(".beats")
 
-    # Find audio files to process
-    audio_files = find_audio_files(input_path)
-
-    if not audio_files:
-        print(f"No audio files found in {input_path}")
-        return
-
-    if not args.quiet:
-        print(f"Found {len(audio_files)} audio files to process")
-
-    # Process all audio files
-    results = []
-
-    for audio_file in audio_files:
-        if pbar:
-            pbar.set_description(f"Processing {audio_file.name}")
-            pbar.reset()  # Reset progress for new file
-        elif not args.quiet:
-            print(f"\nProcessing: {audio_file}")
-            print("=" * 80)
-
-        try:
-            success = process_file(
-                str(audio_file), str(output_base_dir), detector, not args.quiet
-            )
-            if success:
-                results.append((audio_file.name, success))
-        except Exception as e:
-            # Log the full exception traceback
-            logging.exception(f"Error processing {audio_file}: {e}")
-            results.append((audio_file.name, False))
-
-    if pbar:
-        pbar.close()
-
-    # Generate summary if multiple files were processed
-    if len(results) > 1 and not args.quiet:
-        summary_file = output_base_dir / "batch_summary.txt"
-        reporting.save_batch_summary(results, summary_file)
-        reporting.print_batch_summary(results)
-        print(f"Summary statistics saved to: {summary_file}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    save_beats(str(out_path), beats)
+    logging.info("Saved beats to %s", out_path)
 
 
 if __name__ == "__main__":
-    setup_logging()
-    exit(main())
+    main() 
