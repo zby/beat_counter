@@ -120,17 +120,18 @@ The project provides command-line scripts for direct file processing, installed 
 
 #### Beat Detection (Single File)
 
-Detects beats in a single audio file and saves the results to a `.beats` file.
+Detects beats in a single audio file and saves the raw beat timestamps, counts, and detected beats-per-bar to a `.beats.json` file in `RawBeats` format. Note that statistical analysis (like tempo or irregularity) is *not* saved in this file.
 
 ```bash
-# Detect beats in an audio file and save output next to it (e.g., audio.beats)
+# Detect beats and save output next to the audio file (e.g., audio.beats.json)
 detect-beats path/to/your/audio.mp3
 
 # Specify an output file path
-detect-beats path/to/your/audio.mp3 -o path/to/output/beats_data.beats
+detect-beats path/to/your/audio.mp3 -o path/to/output/beats_data.beats.json
 
-# Adjust detection parameters
-detect-beats path/to/your/audio.mp3 --min-bpm 70 --max-bpm 160
+# Adjust detection parameters (BPM range, tolerance for interval analysis)
+# Note: min_measures is not currently configurable via this tool.
+detect-beats path/to/your/audio.mp3 --min-bpm 70 --max-bpm 160 --tolerance 15.0 --beats-per-bar 4
 ```
 
 #### Beat Detection (Batch)
@@ -144,17 +145,18 @@ detect-beats-batch path/to/audio/directory/
 
 #### Video Generation (Single File)
 
-Generates a beat visualization video for a single audio file, using its corresponding `.beats` file.
+Generates a beat visualization video for a single audio file. It requires a corresponding `.beats.json` file (containing `RawBeats` data) located next to the audio file. It reconstructs the full beat analysis using parameters provided on the command line.
 
 ```bash
-# Generate video for an audio file (requires audio.beats to exist)
+# Generate video for an audio file (requires audio.beats.json to exist)
+# Uses default reconstruction parameters (tolerance=10.0, min_measures=5)
 generate-video path/to/your/audio.mp3
 
 # Specify an output video path
 generate-video path/to/your/audio.mp3 -o path/to/output/video.mp4
 
-# Specify a different location for the beats file
-generate-video path/to/your/audio.mp3 --beats-file path/to/custom/beats_data.beats
+# Specify reconstruction parameters (needed if non-defaults were used or desired)
+generate-video path/to/your/audio.mp3 --tolerance-percent 15.0 --min-measures 2
 
 # Change video resolution and FPS
 generate-video path/to/your/audio.mp3 --resolution 1920x1080 --fps 60
