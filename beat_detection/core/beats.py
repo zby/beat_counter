@@ -8,6 +8,7 @@ from typing import List, Dict, Tuple, Optional, Iterable
 import json
 from pathlib import Path
 
+MAX_START_TIME = 30.0
 
 class BeatCalculationError(Exception):
     """Custom exception for errors during Beats object creation."""
@@ -68,6 +69,7 @@ class Beats:
         beat_counts: np.ndarray,  # Use pre-calculated counts
         tolerance_percent: float = 10.0,
         min_measures: int = 5,  # Minimum consistent measures required
+        max_start_time: float = MAX_START_TIME,
     ) -> "Beats":
         """
         Factory method to create a Beats object from raw timestamp data and counts.
@@ -223,12 +225,14 @@ class Beats:
         # 4. Find the longest regular sequence using the static helper
         try:
             # Pass the beat_data array directly
+            # Specify max_start_time=30.0
             start_idx, end_idx, _ = cls._find_longest_regular_sequence_static(
                 beat_data,
                 tolerance_percent,
                 beats_per_bar,
                 median_interval,
                 tolerance_interval_calculated,
+                max_start_time=MAX_START_TIME,
             )
             start_regular_beat_idx_calc = start_idx
             end_regular_beat_idx_calc = (
@@ -425,15 +429,18 @@ class Beats:
         # Pass median and tolerance to avoid recalculation
         median_interval: float,
         tolerance_interval: float,
+        max_start_time: float, # New parameter: maximum allowed start time for the sequence
     ) -> Tuple[int, int, float]:
         """
-        Find the longest sequence of beats where intervals are regular and beat counts are valid and sequential.
+        Find the longest sequence of beats starting no later than `max_start_time` where
+        intervals are regular and beat counts are valid and sequential.
 
         Regularity Conditions:
         1. The sequence must start with a downbeat (beat_count == 1).
-        2. All beats within the sequence must have `beat_count > 0`.
-        3. The time interval between consecutive beats must be within `tolerance_interval` of the overall `median_interval`.
-        4. Beat counts must increment correctly (1, 2, ..., beats_per_bar, 1, ...).
+        2. The timestamp of the first beat (`beat_data[start_idx, 0]`) must be `<= max_start_time`.
+        3. All beats within the sequence must have `beat_count > 0`.
+        4. The time interval between consecutive beats must be within `tolerance_interval` of the overall `median_interval`.
+        5. Beat counts must increment correctly (1, 2, ..., beats_per_bar, 1, ...).
 
         Parameters:
         -----------
@@ -447,18 +454,21 @@ class Beats:
             Pre-calculated median interval for the whole dataset.
         tolerance_interval : float
              Pre-calculated absolute tolerance in seconds.
+        max_start_time : float
+            The latest allowed timestamp for the *first beat* of the sequence.
 
         Returns:
         --------
         Tuple[int, int, float]
-            start_idx: Index of first beat in the longest sequence
-            end_idx: Index of last beat in the longest sequence (inclusive)
+            start_idx: Index of first beat in the longest valid sequence
+            end_idx: Index of last beat in the longest valid sequence (inclusive)
             irregularity_percent: Interval irregularity percentage within the sequence (unused externally now)
 
         Raises:
         -------
         BeatCalculationError
-            If no regular sequence is found, or if basic validation fails.
+            If no regular sequence starting within `max_start_time` is found,
+            or if basic validation fails.
         """
         num_beats = beat_data.shape[0]
         if num_beats < 2:  # Cannot have a sequence or interval with fewer than 2 beats
@@ -466,18 +476,21 @@ class Beats:
                 f"Cannot find regular sequence: Needs at least 2 beats, found {num_beats}."
             )
 
-        # No need for validation already done in from_timestamps (beats_per_bar, tolerance_percent, median_interval > 0)
-
         # --- Single Pass Logic ---
         best_start = -1
         best_end = -1
         max_len = 0
 
         current_start = -1
+        current_start_time = -1.0
 
-        # Check if the very first beat can start a sequence
-        if int(beat_data[0, 1]) == 1:
+        # Check if the very first beat can start a sequence *within the time limit*
+        first_beat_time = beat_data[0, 0]
+        first_beat_count = int(beat_data[0, 1])
+        if first_beat_count == 1 and first_beat_time <= max_start_time:
             current_start = 0
+            current_start_time = first_beat_time
+
 
         for i in range(1, num_beats):
             current_timestamp = beat_data[i, 0]
@@ -495,41 +508,51 @@ class Beats:
                 is_count_correct = current_count == expected_next_count
                 is_current_count_valid = current_count > 0
 
-                if is_interval_regular and is_count_correct and is_current_count_valid:
-                    # Still regular, continue the sequence
-                    pass
-                else:
-                    # Irregularity found (interval, count sequence, or count=0) - End the current sequence
-                    current_len = (
-                        i - current_start
-                    )  # Length is number of beats = index_end - index_start + 1 => (i-1) - current_start + 1 = i - current_start
+                sequence_ended = not (is_interval_regular and is_count_correct and is_current_count_valid)
+
+                if sequence_ended:
+                    # Irregularity found - End the current sequence
+                    current_len = i - current_start # Length = (i-1) - current_start + 1
+
+                    # Check if this completed sequence is the best *valid* one found so far
+                    # (It must have started within the time limit, checked when current_start was set)
                     if current_len > max_len:
-                        max_len = current_len
-                        best_start = current_start
-                        best_end = i - 1  # Sequence ended at the previous beat
+                         max_len = current_len
+                         best_start = current_start
+                         best_end = i - 1 # Sequence ended at the previous beat
 
-                    # Reset: Start a new potential sequence *only* if the current beat is a '1'
-                    current_start = i if current_count == 1 else -1
+                    # Reset: Start a new potential sequence *only* if the current beat is '1' AND within time limit
+                    current_start = -1 # Assume reset
+                    current_start_time = -1.0
+                    if current_count == 1 and current_timestamp <= max_start_time:
+                        current_start = i
+                        current_start_time = current_timestamp
+                # else: Sequence continues, do nothing until it ends or file ends
 
-            elif current_count == 1:
+            elif current_count == 1 and current_timestamp <= max_start_time:
                 # --- Not currently in a sequence, check if this beat can start one ---
-                # No interval check needed for the first beat of a sequence
+                # Needs to be count '1' and within time limit
                 current_start = i
+                current_start_time = current_timestamp
 
-            # else: Not in a sequence and current beat is not '1', so just continue searching
+            # else: Not in a sequence, or current beat cannot start a valid one. Continue searching.
+
 
         # --- Check the last sequence after the loop finishes ---
         if current_start != -1:
-            # Sequence potentially ran to the end of the file
+            # Sequence potentially ran to the end of the file. Check if it's the best valid one.
             current_len = num_beats - current_start
+            # (Start time was already checked when current_start was set)
             if current_len > max_len:
                 max_len = current_len
                 best_start = current_start
                 best_end = num_beats - 1
 
+
         if best_start == -1:
             raise BeatCalculationError(
-                f"No regular sequence starting with beat count '1' found with the given tolerance ({tolerance_percent}%)."
+                f"No regular sequence starting with beat count '1' within the first {max_start_time:.1f} seconds was found "
+                f"with the given tolerance ({tolerance_percent}%)."
             )
 
         # Calculate irregularity percentage *within* the found best sequence (based on intervals)

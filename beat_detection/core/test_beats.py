@@ -478,10 +478,11 @@ def test_regular_sequence_starts_from_downbeat():
     intervals = np.diff(beat_data[:, 0])
     median_interval = np.median(intervals)  # Should be 0.5
     tolerance = median_interval * 0.1  # 10% tolerance
+    max_start_time = np.inf
 
     # Sequence finding should start at index 3 (the first '1')
     start, end, _ = Beats._find_longest_regular_sequence_static(
-        beat_data, 10.0, beats_per_bar, median_interval, tolerance
+        beat_data, 10.0, beats_per_bar, median_interval, tolerance, max_start_time
     )
 
     assert start == 3
@@ -494,10 +495,11 @@ def test_regular_sequence_starts_from_downbeat():
 
     with pytest.raises(
         BeatCalculationError,
-        match="No regular sequence starting with beat count '1' found",
+        # Updated match pattern to include the new parts of the error message
+        match="No regular sequence starting with beat count '1' within the first .* seconds was found",
     ):
         Beats._find_longest_regular_sequence_static(
-            beat_data_no_downbeat, 10.0, beats_per_bar, median_interval, tolerance
+            beat_data_no_downbeat, 10.0, beats_per_bar, median_interval, tolerance, max_start_time
         )
 
 
@@ -519,139 +521,165 @@ def create_beat_data(timestamps: list[float], counts: list[int]) -> np.ndarray:
 def default_static_params():
     # Provides common median and tolerance for static tests
     median_interval = 0.5
-    tolerance_interval = 0.05  # 10% of 0.5
     tolerance_percent = 10.0
-    beats_per_bar = 4
-    return beats_per_bar, median_interval, tolerance_interval, tolerance_percent
+    tolerance_interval = median_interval * (tolerance_percent / 100.0)
+    return {
+        "median_interval": median_interval,
+        "tolerance_interval": tolerance_interval,
+        "beats_per_bar": 4,
+        "tolerance_percent": tolerance_percent,
+        "max_start_time": np.inf,  # Default to no start time limit for existing tests
+    }
 
 
 def test_find_longest_regular_sequence_correct_counts(default_static_params):
-    """Test basic correct sequence detection."""
-    beats_per_bar, median, tolerance, tol_pct = default_static_params
-    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
-    counts = [1, 2, 3, 4, 1, 2, 3, 4]
-    beat_data = create_beat_data(timestamps, counts)
-
+    ts = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+    cts = [1, 2, 3, 4, 1, 2]
+    data = create_beat_data(ts, cts)
     start, end, _ = Beats._find_longest_regular_sequence_static(
-        beat_data, tol_pct, beats_per_bar, median, tolerance
+        data, **default_static_params
     )
     assert start == 0
-    assert end == 7
+    assert end == 5
 
 
 def test_find_longest_regular_sequence_incorrect_count_breaks(default_static_params):
-    """Test that an incorrect count breaks the sequence."""
-    beats_per_bar, median, tolerance, tol_pct = default_static_params
-    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
-    counts = [1, 2, 3, 5, 1, 2, 3, 4]  # Incorrect count 5 at index 3
-    beat_data = create_beat_data(timestamps, counts)
-
-    # Sequence 0-2 breaks (len 3). Sequence 4-7 starts later (len 4).
-    # Should find the longest: 4-7
+    ts = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5] # Time intervals are regular
+    cts = [1, 2, 5, 4, 1, 2]  # Incorrect count 5 breaks sequence at index 2
+    data = create_beat_data(ts, cts)
     start, end, _ = Beats._find_longest_regular_sequence_static(
-        beat_data, tol_pct, beats_per_bar, median, tolerance
+        data, **default_static_params
     )
-    assert start == 4  # Corrected from 0
-    assert end == 7  # Corrected from 2
+    assert start == 0  # Longest valid is just index 0-1
+    assert end == 1
 
 
 def test_find_longest_regular_sequence_incorrect_wrap_breaks(default_static_params):
-    """Test that incorrect wrap (e.g., 4 -> 2) breaks the sequence."""
-    beats_per_bar, median, tolerance, tol_pct = default_static_params
-    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
-    counts = [1, 2, 3, 4, 2, 3, 4, 1]  # Incorrect count 2 after 4 at index 4
-    beat_data = create_beat_data(timestamps, counts)
-
-    # Sequence should be 0-3
+    ts = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5] # Regular time
+    cts = [1, 2, 3, 4, 2, 3]  # Incorrect wrap (expected 1, got 2) breaks sequence at index 4
+    data = create_beat_data(ts, cts)
     start, end, _ = Beats._find_longest_regular_sequence_static(
-        beat_data, tol_pct, beats_per_bar, median, tolerance
+        data, **default_static_params
     )
-    assert start == 0
+    assert start == 0 # Longest valid is index 0-3
     assert end == 3
 
 
 def test_find_longest_regular_sequence_zero_count_breaks(default_static_params):
-    """Test that a zero count breaks the sequence."""
-    beats_per_bar, median, tolerance, tol_pct = default_static_params
-    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
-    counts = [1, 2, 3, 0, 1, 2, 3, 4]  # Zero count at index 3
-    beat_data = create_beat_data(timestamps, counts)
-
-    # Sequence 0-2 is broken by count 0.
-    # Sequence 4-7 starts later. Sequence 0-2 has length 3. Sequence 4-7 has length 4.
-    # Should find 4-7.
+    ts = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5] # Regular time
+    cts = [1, 2, 0, 4, 1, 2] # Zero count breaks sequence at index 2
+    data = create_beat_data(ts, cts)
     start, end, _ = Beats._find_longest_regular_sequence_static(
-        beat_data, tol_pct, beats_per_bar, median, tolerance
+        data, **default_static_params
     )
-    assert start == 4
-    assert end == 7
+    assert start == 0 # Longest valid is index 0-1
+    assert end == 1
 
 
 def test_find_longest_regular_sequence_non_downbeat_start_ignored(
     default_static_params,
 ):
-    """Test that sequences must start with count 1."""
-    beats_per_bar, median, tolerance, tol_pct = default_static_params
-    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
-    counts = [2, 3, 4, 1, 2, 3, 4, 1]  # Starts with 2
-    beat_data = create_beat_data(timestamps, counts)
-
-    # First valid start is index 3. Sequence 3-7. Length 5.
-    # Should find 3-7.
+    ts = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+    cts = [2, 3, 4, 1, 2, 3] # Starts with 2, sequence 1,2,3 starts at index 3
+    data = create_beat_data(ts, cts)
     start, end, _ = Beats._find_longest_regular_sequence_static(
-        beat_data, tol_pct, beats_per_bar, median, tolerance
+        data, **default_static_params
     )
     assert start == 3
-    assert end == 7  # Inclusive index (Corrected from 6)
+    assert end == 5
 
 
 def test_find_longest_regular_sequence_multiple_candidates(default_static_params):
-    """Test selection when multiple sequences of the same max length exist."""
-    beats_per_bar, median, tolerance, tol_pct = default_static_params
-    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5]
-    counts = [1, 2, 3, 4, 0, 0, 1, 2, 3, 4, 0, 0]
-    # Sequence 1: 0-3 (len 4)
-    # Sequence 2: 6-9 (len 4)
-    beat_data = create_beat_data(timestamps, counts)
-
-    # Implementation should return the *first* longest sequence found
+    # Two sequences: 0-1 (len 2) and 3-6 (len 4). Should pick the longer one.
+    ts = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
+    cts = [1, 2, 0, 1, 2, 3, 4, 1] # Break at index 2
+    data = create_beat_data(ts, cts)
     start, end, _ = Beats._find_longest_regular_sequence_static(
-        beat_data, tol_pct, beats_per_bar, median, tolerance
+        data, **default_static_params
     )
-    assert start == 0
-    assert end == 3
+    assert start == 3
+    assert end == 7 # Indices 3, 4, 5, 6, 7 are valid. End index is inclusive.
 
 
 def test_find_longest_regular_sequence_no_valid_sequence(default_static_params):
-    """Test case where no regular sequence can be found."""
-    beats_per_bar, median, tolerance, tol_pct = default_static_params
-    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0]
-    counts = [2, 3, 0, 2, 3]  # No count 1
-    beat_data = create_beat_data(timestamps, counts)
-
-    with pytest.raises(
-        BeatCalculationError,
-        match="No regular sequence starting with beat count '1' found",
-    ):
-        Beats._find_longest_regular_sequence_static(
-            beat_data, tol_pct, beats_per_bar, median, tolerance
-        )
+    ts = [0.0, 0.5, 1.0, 1.5]
+    cts = [2, 3, 4, 2] # No sequence starts with 1
+    data = create_beat_data(ts, cts)
+    with pytest.raises(BeatCalculationError):
+        Beats._find_longest_regular_sequence_static(data, **default_static_params)
 
 
 def test_find_longest_regular_sequence_only_downbeats(default_static_params):
-    """Test sequence of only downbeats (should be length 1)."""
-    beats_per_bar, median, tolerance, tol_pct = default_static_params
-    timestamps = [0.0, 0.5, 1.0, 1.5]
-    counts = [1, 1, 1, 1]
-    beat_data = create_beat_data(timestamps, counts)
-
-    # First sequence starts at 0, but breaks at index 1 (expected 2, got 1). Length 1.
-    # Second sequence starts at 1, breaks at index 2. Length 1.
-    # Third sequence starts at 2, breaks at index 3. Length 1.
-    # Fourth sequence starts at 3. Length 1.
-    # First longest is 0-0.
+    ts = [0.0, 0.5, 1.0, 1.5]
+    cts = [1, 1, 1, 1] # Only downbeats. Should only find single-beat sequences.
+                       # Longest is length 1, starting at index 0.
+    data = create_beat_data(ts, cts)
     start, end, _ = Beats._find_longest_regular_sequence_static(
-        beat_data, tol_pct, beats_per_bar, median, tolerance
+        data, **default_static_params
     )
     assert start == 0
     assert end == 0
+
+
+def test_find_longest_regular_sequence_max_start_time(default_static_params):
+    """Test that the max_start_time constraint is correctly applied."""
+    # Sequence 1: 0.0s to 1.5s (indices 0-3, len 4)
+    # Sequence 2: 30.0s to 32.5s (indices 4-9, len 6)
+    ts = [ 0.0,  0.5,  1.0,  1.5,  30.0, 30.5, 31.0, 31.5, 32.0, 32.5]
+    cts = [1,   2,    3,    4,    1,    2,    3,    4,    1,    2]
+    data = create_beat_data(ts, cts)
+
+    # Case 1: max_start_time allows both sequences. Should pick the longer one (seq 2)
+    params_allow_both = default_static_params.copy()
+    params_allow_both["max_start_time"] = 35.0
+    start, end, _ = Beats._find_longest_regular_sequence_static(data, **params_allow_both)
+    assert start == 4
+    assert end == 9
+
+    # Case 2: max_start_time restricts to only the first sequence.
+    params_restrict = default_static_params.copy()
+    params_restrict["max_start_time"] = 20.0
+    start, end, _ = Beats._find_longest_regular_sequence_static(data, **params_restrict)
+    assert start == 0
+    assert end == 3
+
+    # Case 3: max_start_time is too early, no sequence possible.
+    params_too_early = default_static_params.copy()
+    params_too_early["max_start_time"] = -1.0
+    with pytest.raises(BeatCalculationError, match="within the first -1.0 seconds"):
+        Beats._find_longest_regular_sequence_static(data, **params_too_early)
+
+
+# --- Tests for Beats.from_timestamps using the 30s max_start_time --- #
+
+def test_from_timestamps_prefers_shorter_sequence_within_30s():
+    """Test that from_timestamps picks a shorter seq starting < 30s over a longer one starting > 30s."""
+    # Sequence 1: 0.0s to 1.5s (indices 0-3, len 4, starts < 30s)
+    # Sequence 2: 35.0s to 37.5s (indices 4-9, len 6, starts > 30s)
+    ts = np.array([ 0.0,  0.5,  1.0,  1.5,  35.0, 35.5, 36.0, 36.5, 37.0, 37.5])
+    cts = np.array([1,   2,    3,    4,    1,    2,    3,    4,    1,    2])
+    beats_per_bar = 4
+    min_measures = 1 # Requires length 4
+
+    beats = Beats.from_timestamps(
+        ts, beats_per_bar, cts, min_measures=min_measures
+    )
+
+    # from_timestamps implicitly uses max_start_time=30.0
+    # It should find Sequence 1 as the longest *valid* sequence
+    assert beats.start_regular_beat_idx == 0
+    assert beats.end_regular_beat_idx == 4
+    assert beats.regular_stats.total_beats == 4
+
+def test_from_timestamps_raises_error_if_no_sequence_within_30s():
+    """Test that from_timestamps raises error if the only regular sequence starts > 30s."""
+    # Only sequence: 35.0s to 37.5s (indices 0-5, len 6)
+    ts = np.array([35.0, 35.5, 36.0, 36.5, 37.0, 37.5])
+    cts = np.array([1,    2,    3,    4,    1,    2])
+    beats_per_bar = 4
+    min_measures = 1 # Requires length 4
+
+    with pytest.raises(BeatCalculationError, match="within the first 30.0 seconds"):
+        Beats.from_timestamps(
+            ts, beats_per_bar, cts, min_measures=min_measures
+        )
