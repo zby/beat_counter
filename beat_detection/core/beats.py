@@ -4,9 +4,10 @@ Core beat data structures and utilities.
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Optional, Iterable
+from typing import List, Dict, Tuple, Optional, Iterable, Type, TypeVar
 import json
 from pathlib import Path
+import dataclasses
 
 MAX_START_TIME = 30.0
 
@@ -572,98 +573,96 @@ class Beats:
 
         return best_start, best_end, best_irregularity
 
-    # --- Serialization Methods ---
 
-    def save_to_file(self, file_path: Path):
-        """Serialize the Beats object to a JSON file."""
-        file_path = Path(file_path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        data_dict = self.to_dict()  # Uses the updated to_dict with beat_list format
-        try:
-            with file_path.open("w", encoding="utf-8") as f:
-                # Use numpy's ability to handle potential numpy types within stats if direct conversion fails, though to_dict should prevent this
-                json.dump(data_dict, f, indent=4)
-        except IOError as e:
-            raise BeatCalculationError(
-                f"Error writing Beats object to {file_path}: {e}"
-            ) from e
-        except TypeError as e:
-            raise BeatCalculationError(
-                f"Error serializing Beats object data to JSON: {e}"
-            ) from e
+T = TypeVar("T", bound="RawBeats")
+
+@dataclasses.dataclass(frozen=True)
+class RawBeats:
+    """Stores the raw timestamp/count data and the beats_per_bar used for detection."""
+
+    timestamps: np.ndarray
+    beat_counts: np.ndarray
+    beats_per_bar: int
+    # tolerance_percent: float # Removed
+    # min_measures: int      # Removed
+
+    def __post_init__(self):
+        if self.timestamps.shape != self.beat_counts.shape:
+            raise ValueError(
+                "Timestamps and beat_counts must have the same shape. "
+                f"Got {self.timestamps.shape} and {self.beat_counts.shape}"
+            )
+        if self.timestamps.ndim != 1:
+            raise ValueError(
+                "Timestamps must be a 1D array. "
+                f"Got shape {self.timestamps.shape}"
+            )
+        if not isinstance(self.beats_per_bar, int) or self.beats_per_bar <= 0:
+            raise ValueError(f"beats_per_bar must be a positive integer, got {self.beats_per_bar}")
+        # Removed validation for tolerance_percent and min_measures
+
+    def save_to_file(self, path: Path | str) -> None:
+        """Saves the raw beat data and beats_per_bar to a JSON file."""
+        save_path = Path(path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        data_to_save = {
+            "beats_per_bar": self.beats_per_bar,
+            # Removed tolerance_percent, min_measures
+            "timestamps": self.timestamps.tolist(),
+            "beat_counts": self.beat_counts.tolist(),
+        }
+        with save_path.open("w") as f:
+            json.dump(data_to_save, f, indent=2)
 
     @classmethod
-    def load_from_file(cls, file_path: Path) -> "Beats":
-        """Deserialize a Beats object from a JSON file."""
-        file_path = Path(file_path)
-        if not file_path.is_file():
-            raise FileNotFoundError(f"Beats file not found: {file_path}")
+    def load_from_file(cls: Type[T], path: Path | str) -> T:
+        """Loads raw beat data and beats_per_bar from a JSON file."""
+        load_path = Path(path)
+        if not load_path.is_file():
+            raise FileNotFoundError(f"Beat file not found: {load_path}")
 
-        try:
-            with file_path.open("r", encoding="utf-8") as f:
+        with load_path.open("r") as f:
+            try:
                 data = json.load(f)
-        except IOError as e:
-            raise BeatCalculationError(
-                f"Error reading Beats file {file_path}: {e}"
-            ) from e
-        except json.JSONDecodeError as e:
-            raise BeatCalculationError(
-                f"Error decoding JSON from Beats file {file_path}: {e}"
-            ) from e
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Error decoding JSON from {load_path}: {e}") from e
+
+        # Check for required keys
+        required_keys = {
+            "beats_per_bar",
+            # Removed tolerance_percent, min_measures
+            "timestamps",
+            "beat_counts",
+        }
+        missing_keys = required_keys - set(data.keys())
+        if missing_keys:
+            raise ValueError(
+                f"File {load_path} is missing required keys: {sorted(list(missing_keys))}."
+            )
+
+        timestamps_list = data["timestamps"]
+        beat_counts_list = data["beat_counts"]
+
+        if len(timestamps_list) != len(beat_counts_list):
+            raise ValueError(
+                f"Mismatched lengths in {load_path}: "
+                f"{len(timestamps_list)} timestamps vs {len(beat_counts_list)} counts."
+            )
+
+        timestamps = np.array(timestamps_list, dtype=float)
+        beat_counts = np.array(beat_counts_list, dtype=int)
 
         try:
-            # Reconstruct beat_data NumPy array from the list of dictionaries
-            beat_list_dict = data["beat_list"]
-            if not isinstance(beat_list_dict, list):
-                raise BeatCalculationError(
-                    f"Invalid format: 'beat_list' should be a list in {file_path}."
-                )
-
-            timestamps = [item["timestamp"] for item in beat_list_dict]
-            counts = [item["count"] for item in beat_list_dict]
-            # Important: Specify dtype for the numpy array
-            beat_data = np.array(
-                [timestamps, counts], dtype=float
-            ).T  # Create (N, 2) array, ensure float for timestamps
-            # Ensure counts are integer-like if possible, although stored as float in array for homogeneity
-            # beat_data[:, 1] = beat_data[:, 1].astype(int) # Can do this after if needed, keep float for now
-
-            # Reconstruct BeatStatistics
-            overall_stats = BeatStatistics(**data["overall_stats"])
-            regular_stats = BeatStatistics(**data["regular_stats"])
-
-            # Extract other parameters
-            beats_per_bar_val = int(data["beats_per_bar"])
-            tolerance_percent_val = float(data["tolerance_percent"])
-            tolerance_interval_val = float(data["tolerance_interval"])
-            min_measures_val = int(data["min_measures"])
-            start_regular_beat_idx_val = int(data["start_regular_beat_idx"])
-            end_regular_beat_idx_val = int(data["end_regular_beat_idx"])
-
-            # Create the Beats object instance directly using the __init__
-            # We don't call from_timestamps here, as we are loading pre-calculated data
-            instance = cls(
-                beat_data=beat_data,
-                overall_stats=overall_stats,
-                regular_stats=regular_stats,
-                beats_per_bar=beats_per_bar_val,
-                tolerance_percent=tolerance_percent_val,
-                tolerance_interval=tolerance_interval_val,
-                min_measures=min_measures_val,
-                start_regular_beat_idx=start_regular_beat_idx_val,
-                end_regular_beat_idx=end_regular_beat_idx_val,
-            )
-            # Optional: Perform basic validation on loaded data if necessary
-            # e.g., check consistency between stats and beat_data
-
-            return instance
-        except KeyError as e:
-            raise BeatCalculationError(
-                f"Missing expected key '{e}' in Beats file {file_path}. File may be corrupt or incompatible."
-            ) from e
+             beats_per_bar = int(data["beats_per_bar"])
+             # Removed tolerance_percent, min_measures
         except (TypeError, ValueError) as e:
-            raise BeatCalculationError(
-                f"Type or value error reconstructing Beats object from {file_path}: {e}"
-            ) from e
+             raise ValueError(f"Invalid type for beats_per_bar in {load_path}: {e}") from e
 
-    # --- End Serialization Methods ---
+        # Rely on __post_init__ for final validation
+        return cls(
+            timestamps=timestamps,
+            beat_counts=beat_counts,
+            beats_per_bar=beats_per_bar,
+            # Removed tolerance_percent, min_measures
+        )
+

@@ -47,6 +47,9 @@ from web_app.config import Config, StorageConfig, AppConfig, CeleryConfig, User
 from web_app.storage import FileMetadataStorage  # Import the class for type hinting
 from web_app.auth import UserManager
 
+# Import RawBeats
+from beat_detection.core.beats import RawBeats
+
 # --- Test Fixtures ---
 
 
@@ -200,45 +203,36 @@ def generated_sample_audio() -> Dict[str, Any]:
 @pytest.fixture
 def mock_beat_detector():
     """Mocks the BeatDetector call within the celery task"""
-    # Create a mock object simulating the Beats class structure
-    mock_beats_obj = MagicMock()
+    # Define the data the mock detector will produce
+    mock_bpb = 4
+    mock_timestamps = np.array([0.15, 0.55, 0.95, 1.35]) # Example timestamps
+    mock_counts = np.array([1, 2, 3, 4])
 
-    # --- Mimic attributes accessed in _perform_beat_detection ---
-    mock_beats_obj.beats_per_bar = 4
-    mock_beats_obj.timestamps = np.array([0.05, 0.08])
-    mock_beats_obj.overall_stats = SimpleNamespace(
-        tempo_bpm=120.0, irregularity_percent=0.0
+    # Create a mock RawBeats object to be returned by detect_beats
+    mock_raw_beats_obj = RawBeats(
+        timestamps=mock_timestamps,
+        beat_counts=mock_counts,
+        beats_per_bar=mock_bpb
     )
-    mock_beats_obj.get_irregular_beats.return_value = []
 
-    # --- Mock save_to_file to actually create the file ---
-    def _mock_save_beats(file_path: pathlib.Path):
-        """Side effect function to simulate file creation."""
-        print(f"Mock save_to_file called with path: {file_path}")
-        try:
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text("mock beat data\n0.05\n0.08")  # Write dummy content
-            print(f"Mock save_to_file created file: {file_path}")
-        except Exception as e:
-            print(f"ERROR in mock save_to_file: {e}")
-            # Propagate the error to potentially fail the test clearly
-            raise
-
-    mock_beats_obj.save_to_file = MagicMock(side_effect=_mock_save_beats)
-
-    # --- Mock other necessary attributes/methods ---
-    # mock_beats_obj.beat_list = [SimpleNamespace(beat_count=1), SimpleNamespace(beat_count=2)] # No longer needed externally
-    mock_beats_obj.start_regular_beat_idx = 0
-    mock_beats_obj.end_regular_beat_idx = 2
+    # --- Mock save_to_file to write correct JSON --- #
+    # Note: This mocks save_to_file on the *returned* RawBeats object,
+    # not the detector itself.
+    # We need to mock the object that _perform_beat_detection calls save_to_file on.
+    # Actually, _perform_beat_detection calls raw_beats.save_to_file(), so we just
+    # need detect_beats to return a RawBeats object whose save_to_file works.
+    # The real RawBeats.save_to_file will work, so no need to mock it here.
+    # We just need the detector mock.
 
     patch_target = "web_app.celery_app.BeatDetector"
     try:
         with patch(patch_target) as mock_DetectorClass:
             instance_mock = MagicMock()
-            instance_mock.detect_beats.return_value = mock_beats_obj
+            # Configure the detect_beats mock to return the RawBeats object
+            instance_mock.detect_beats.return_value = mock_raw_beats_obj
             mock_DetectorClass.return_value = instance_mock
             print(
-                f"Mocking '{patch_target}' - Instance will return a mock Beats object with file-creating save_to_file."
+                f"Mocking '{patch_target}' - Instance will return a mock RawBeats object."
             )
             yield mock_DetectorClass
     except ModuleNotFoundError:
@@ -352,7 +346,7 @@ def test_upload_valid_audio(
     print("Status after valid upload (mocked detector):", status_data)
     assert status_data["status"] == ANALYZED
     assert status_data["beats_file_exists"] is True
-    assert status_data["beat_stats"]["tempo_bpm"] == 120.0
+    assert status_data["beat_stats"]["tempo_bpm"] == 150.0
 
 
 def test_upload_invalid_type(test_client: TestClient):
@@ -427,7 +421,7 @@ def test_status_analyzed(
     data = response.json()
     print("Status ANALYZED data:", data)
     assert data["status"] == ANALYZED
-    assert data["beat_stats"]["tempo_bpm"] == 120.0  # From mock
+    assert data["beat_stats"]["tempo_bpm"] == 150.0  # From mock
     assert data["beats_file_exists"] is True
     # Ensure beat_error is not present in ANALYZED state
     assert "beat_error" not in data or data["beat_error"] is None
@@ -485,49 +479,20 @@ def test_confirm_analysis_not_ready(
     test_client: TestClient,
     test_storage: FileMetadataStorage,
     generated_sample_audio: Dict[str, Any],
+    mock_beat_detector,
 ):
     """Test confirming analysis when beat detection hasn't 'run' (no beats file)."""
-    # Create a mock object simulating the Beats class structure
-    mock_beats_obj = MagicMock()
-
-    # Configure the mock object with necessary attributes
-    mock_beats_obj.beats_per_bar = 4
-    mock_beats_obj.timestamps = np.array([0.05, 0.08])
-    mock_beats_obj.overall_stats = SimpleNamespace(
-        tempo_bpm=120.0,
-        mean_interval=0.5,
-        median_interval=0.5,
-        std_interval=0.05,
-        min_interval=0.4,
-        max_interval=0.6,
-        total_beats=2,
-        irregularity_percent=0.0,
-    )
-    mock_beats_obj.get_irregular_beats.return_value = []
-
-    # Mock save_to_file to actually create the file
-    def _mock_save_beats(file_path: pathlib.Path):
-        """Side effect function to simulate file creation."""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text("mock beat data\n0.05\n0.08")
-
-    mock_beats_obj.save_to_file = MagicMock(side_effect=_mock_save_beats)
-
     filename = "not_ready_" + generated_sample_audio["filename"]
     file_obj = generated_sample_audio["file_obj"]
     mime_type = generated_sample_audio["mime_type"]
     file_obj.seek(0)
     files = {"file": (filename, file_obj, mime_type)}
 
-    with patch("web_app.celery_app.BeatDetector") as mock_DetectorClass:
-        instance_mock = MagicMock()
-        instance_mock.detect_beats.return_value = mock_beats_obj
-        mock_DetectorClass.return_value = instance_mock
-        response = test_client.post("/upload", files=files, follow_redirects=False)
-    assert response.status_code == 303
+    response = test_client.post("/upload", files=files, follow_redirects=False)
+
+    assert response.status_code == 303, f"Upload failed unexpectedly: {response.text}"
     file_id = response.headers.get("Location").split("/")[-1]
 
-    # Now explicitly delete the beats file to test the "not ready" case
     beats_file = test_storage.get_beats_file_path(file_id)
     if beats_file.exists():
         beats_file.unlink()
@@ -696,13 +661,12 @@ def test_status_generating_video_with_progress(
 
 
 @patch("web_app.app.AsyncResult")
-@patch("web_app.celery_app.BeatDetector")
 def test_status_analyzing_failure_with_error(
-    mock_detector_class,
     mock_AsyncResult,
     test_client: TestClient,
     test_storage: FileMetadataStorage,
     generated_sample_audio: Dict[str, Any],
+    mock_beat_detector,
 ):
     """Test status endpoint includes error information when ANALYZING_FAILURE."""
     # Setup a file in ANALYZING state first
@@ -712,23 +676,10 @@ def test_status_analyzing_failure_with_error(
     file_obj.seek(0)
     files = {"file": (filename, file_obj, mime_type)}
 
-    # Setup detector mock to prevent real detection during upload
-    mock_beats_obj = MagicMock()
-    mock_beats_obj.beats_per_bar = 4
-    mock_beats_obj.timestamps = np.array([0.05, 0.08])
-    mock_beats_obj.overall_stats = SimpleNamespace(
-        tempo_bpm=120.0, irregularity_percent=0.0
-    )
-    mock_beats_obj.get_irregular_beats.return_value = []
-
-    # Setup detector instance
-    instance_mock = MagicMock()
-    instance_mock.detect_beats.return_value = mock_beats_obj
-    mock_detector_class.return_value = instance_mock
-
-    # Upload the file which will create a beat detection task
+    # Upload the file - this will use the mock_beat_detector fixture
     response = test_client.post("/upload", files=files, follow_redirects=False)
-    assert response.status_code == 303
+    # Upload should now succeed (303)
+    assert response.status_code == 303, f"Upload failed unexpectedly: {response.text}"
     file_id = response.headers.get("Location").split("/")[-1]
 
     # Configure mock for failure state

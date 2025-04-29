@@ -29,7 +29,7 @@ from beat_detection.core.detector import BeatDetector
 from beat_detection.utils.file_utils import find_audio_files
 from beat_detection.utils.beat_file import save_beats
 from beat_detection.utils import reporting
-from beat_detection.core.beats import Beats
+from beat_detection.core.beats import Beats, RawBeats
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,22 +81,27 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
-def process_file(audio_file: pathlib.Path, detector: BeatDetector, verbose: bool) -> Tuple[str, Optional[Beats]]:
+def process_file(audio_file: pathlib.Path, detector: BeatDetector, verbose: bool) -> Tuple[str, Optional[RawBeats]]:
     """Detect beats for *audio_file* and write them alongside the file.
 
-    Returns a tuple ``(filename, Beats|None)`` where the second element is the
-    Beats object on success or ``None`` on failure.  This aligns with the
-    signature expected by reporting utilities.
+    Returns a tuple ``(filename, RawBeats|None)`` where the second element is the
+    RawBeats object on success or ``None`` on failure.
     """
     try:
-        beats = detector.detect_beats(str(audio_file))
+        # Get RawBeats object (contains bpb)
+        raw_beats = detector.detect_beats(str(audio_file))
+        logging.debug(f"Detected raw beats for {audio_file} with bpb={raw_beats.beats_per_bar}")
+
         beats_file = audio_file.with_suffix(".beats")
-        save_beats(str(beats_file), beats)
+        # Pass RawBeats object to save_beats
+        save_beats(str(beats_file), raw_beats)
         if verbose:
-            logging.info("Saved beat data to %s", beats_file)
-        return (audio_file.name, beats)
+            logging.info("Saved raw beat data to %s", beats_file)
+        # Return RawBeats object on success
+        return (audio_file.name, raw_beats)
     except Exception:
         logging.exception("Error processing %s", audio_file)
+        # Return None on failure
         return (audio_file.name, None)
 
 
@@ -122,9 +127,7 @@ def main() -> None:  # noqa: D401
     detector = BeatDetector(
         min_bpm=args.min_bpm,
         max_bpm=args.max_bpm,
-        tolerance_percent=args.tolerance,
         beats_per_bar=args.beats_per_bar,
-        min_measures=args.min_measures,
         progress_callback=progress_callback,
     )
 
@@ -141,7 +144,8 @@ def main() -> None:  # noqa: D401
     if not args.quiet:
         print(f"Found {len(audio_files)} audio files to process")
 
-    results: List[Tuple[str, Optional[Beats]]] = []
+    # Results list now holds Optional[RawBeats]
+    results: List[Tuple[str, Optional[RawBeats]]] = []
 
     for audio_file in audio_files:
         if pbar:
@@ -156,11 +160,16 @@ def main() -> None:  # noqa: D401
         pbar.close()
 
     # Summary
-    successful = [r for r in results if r[1] is not None]
+    successful_raw = [r for r in results if r[1] is not None]
     failed = [r for r in results if r[1] is None]
 
     if not args.quiet:
-        reporting.print_batch_summary(results)  # type: ignore[arg-type]
+        # Modify reporting if needed, or keep simple count
+        print("\n--- Batch Processing Summary ---")
+        print(f"Total files processed: {len(results)}")
+        print(f"Successful detections: {len(successful_raw)}")
+        print(f"Failed detections: {len(failed)}")
+        # reporting.print_batch_summary(results) # Old reporting might expect Beats object
         if failed:
             print("\nFailed files:")
             for fname, _ in failed:

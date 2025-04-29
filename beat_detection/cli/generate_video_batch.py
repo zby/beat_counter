@@ -70,6 +70,20 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--tolerance-percent",
+        type=float,
+        default=10.0,
+        help="Tolerance percentage used for reconstructing Beats stats/sections (default: 10.0)."
+    )
+
+    parser.add_argument(
+        "--min-measures",
+        type=int,
+        default=5,
+        help="Minimum measures used for reconstructing Beats stats/sections (default: 5)."
+    )
+
+    parser.add_argument(
         "--sample",
         type=int,
         default=None,
@@ -116,19 +130,26 @@ def main() -> None:
             print(f"\nProcessing: {audio_file}")
 
         try:
+            # Determine the beats file path
+            beats_file = audio_file.with_suffix(".beats")
+            if not beats_file.exists():
+                 raise FileNotFoundError(f"Beats file not found: {beats_file}")
+
             # Determine the specific output file path for this audio file
             if output_dir:
-                # Ensure output dir exists (generate_counter_video also does this, but belt-and-suspenders)
+                # Ensure output dir exists
                 output_dir.mkdir(parents=True, exist_ok=True)
                 single_output_file = output_dir / f"{audio_file.stem}_counter.mp4"
             else:
-                # If no output dir specified, let generate_counter_video use its default logic
                 single_output_file = None
 
-            # Call the single-file processing function with the specific file path
+            # Call the single-file processing function with the specific file path AND NEW PARAMS
             success = generate_counter_video(
                 audio_file=audio_file,
-                output_file=single_output_file, # Pass the constructed path or None
+                beats_file=beats_file, # Pass inferred beats file
+                tolerance_percent=args.tolerance_percent, # Pass CLI arg
+                min_measures=args.min_measures,       # Pass CLI arg
+                output_file=single_output_file,
                 resolution=args.resolution,
                 fps=args.fps,
                 sample_beats=args.sample,

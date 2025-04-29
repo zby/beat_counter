@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional, Callable, Protocol
 from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
 from beat_detection.utils.constants import SUPPORTED_BEATS_PER_BAR
-from beat_detection.core.beats import Beats, BeatCalculationError
+from beat_detection.core.beats import BeatCalculationError, RawBeats
 
 
 class BeatDetector:
@@ -19,8 +19,6 @@ class BeatDetector:
         self,
         min_bpm: int = 60,
         max_bpm: int = 240,
-        tolerance_percent: float = 10.0,
-        min_measures: int = 5,
         beats_per_bar: Optional[int] = None,
         progress_callback: Optional[Callable[[str, float], None]] = None,
         fps: int = 100,
@@ -34,10 +32,6 @@ class BeatDetector:
             Minimum tempo to consider (default: 60).
         max_bpm : int
             Maximum tempo to consider (default: 240).
-        tolerance_percent : float
-            Allowed deviation (%) for classifying beats as regular (default: 10.0).
-        min_measures : int
-            Minimum number of full measures required for stable tempo/beats_per_bar (default: 5).
         beats_per_bar : Optional[int]
             Expected beats per bar. If None, it's auto-detected (default: None).
         progress_callback : Optional[Callable[[str, float], None]]
@@ -47,8 +41,6 @@ class BeatDetector:
         """
         self.min_bpm = min_bpm
         self.max_bpm = max_bpm
-        self.tolerance_percent = tolerance_percent
-        self.min_measures = min_measures
         self.beats_per_bar = beats_per_bar
         self.progress_callback = progress_callback
         self.fps = fps
@@ -63,9 +55,12 @@ class BeatDetector:
             fps=float(self.fps),  # Use self.fps here too (now it's a float)
         )
 
-    def detect_beats(self, audio_file: str) -> Beats:
+    def detect_beats(self, audio_file: str) -> RawBeats:
         """
-        Detect beats and downbeats in an audio file and return a Beats object.
+        Detect beats and downbeats in an audio file.
+
+        Returns a RawBeats object containing timestamps, counts, and the parameters
+        used for detection.
 
         Parameters:
         -----------
@@ -74,8 +69,8 @@ class BeatDetector:
 
         Returns:
         --------
-        Beats
-            Object containing all beat-related information
+        RawBeats
+            Object containing raw timestamps, beat counts, and detection parameters.
         """
         cb = self.progress_callback  # Use the instance callback directly
 
@@ -93,10 +88,7 @@ class BeatDetector:
         if cb:  # Check if instance callback exists
             report_progress("start", 0.0)
 
-        # Detect beats and downbeats together using DBNDownBeatTrackingProcessor
-
-        # Detect downbeats, beats_per_bar, and get all beat info (timestamps and counts)
-        # The _detect_downbeats method now returns the raw array and beats_per_bar
+        # Detect downbeats, getting raw data and the effective beats_per_bar
         raw_beats_with_counts, detected_beats_per_bar = self._detect_downbeats(
             audio_file
         )
@@ -107,32 +99,22 @@ class BeatDetector:
             )
 
         beat_timestamps = raw_beats_with_counts[:, 0]
-        beat_counts = raw_beats_with_counts[:, 1].astype(
-            int
-        )  # Ensure counts are integers
+        beat_counts = raw_beats_with_counts[:, 1].astype(int)
 
         if cb:
             report_progress("downbeats_detected", 0.8)
 
-        # Create Beats object using the factory method which handles calculations
-        try:
-            # Pass the extracted beat_counts to the factory method
-            beats_obj = Beats.from_timestamps(
-                timestamps=beat_timestamps,
-                beats_per_bar=detected_beats_per_bar,
-                beat_counts=beat_counts,  # Pass the counts from the processor
-                tolerance_percent=self.tolerance_percent,
-                min_measures=self.min_measures,
-            )
-        except BeatCalculationError as e:
-            raise BeatCalculationError(
-                f"Error creating Beats object for {audio_file}: {e}"
-            ) from e
-
         if cb:
             report_progress("analysis_complete", 1.0)
 
-        return beats_obj
+        # Return simplified RawBeats object (bpb only)
+        return RawBeats(
+            timestamps=beat_timestamps,
+            beat_counts=beat_counts,
+            beats_per_bar=detected_beats_per_bar, # The determined value
+            # tolerance_percent=self.tolerance_percent, # Removed
+            # min_measures=self.min_measures # Removed
+        )
 
     def _detect_downbeats(self, audio_file: str) -> Tuple[np.ndarray, int]:
         """

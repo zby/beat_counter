@@ -17,7 +17,7 @@ from web_app.storage import FileMetadataStorage
 from web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
 from beat_detection.core.detector import BeatDetector
 from beat_detection.core.video import BeatVideoGenerator
-from beat_detection.core.beats import Beats  # Import the Beats class
+from beat_detection.core.beats import Beats, BeatCalculationError, RawBeats
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -89,32 +89,38 @@ def _perform_beat_detection(
     max_bpm: int,
     tolerance_percent: float,
     min_measures: int,
-    beats_per_bar: Optional[int],
+    beats_per_bar: Optional[int], # Initial preference
     update_progress: Callable[[str, float], None],
 ) -> None:
     """Performs the actual beat detection, saving, and metadata update."""
-    # Configure detector
     detector = BeatDetector(
         min_bpm=min_bpm,
         max_bpm=max_bpm,
-        tolerance_percent=tolerance_percent,
-        min_measures=min_measures,
         beats_per_bar=beats_per_bar,
         progress_callback=update_progress,
     )
 
-    # Detect beats, ensuring the path is a string
+    # Detect beats, get simplified RawBeats object
     audio_path_str = str(storage.get_audio_file_path(file_id))
-    beats = detector.detect_beats(audio_path_str)
+    raw_beats = detector.detect_beats(audio_path_str)
+    logger.info(f"Raw beats detected for {file_id} (bpb={raw_beats.beats_per_bar})" )
 
-    # --- Add temporary debugging ---
-    logger.info(f"DEBUG: Type of 'beats' variable after call: {type(beats)}")
-    logger.info(
-        f"DEBUG: Value of 'beats' variable: {beats!r}"
-    )  # Use !r for detailed repr
-    # --- End temporary debugging ---
+    # Reconstruct the full Beats object using RawBeats data + function args for tol/meas
+    try:
+        beats = Beats.from_timestamps(
+            timestamps=raw_beats.timestamps,
+            beat_counts=raw_beats.beat_counts,
+            beats_per_bar=raw_beats.beats_per_bar,
+            # Get tolerance and min_measures from function args
+            tolerance_percent=tolerance_percent,
+            min_measures=min_measures,
+        )
+        logger.info(f"Reconstructed Beats object for {file_id}")
+    except BeatCalculationError as e:
+        logger.error(f"Failed to reconstruct Beats object for {file_id} from RawBeats: {e}")
+        raise # Re-raise the critical error
 
-    # Create metadata for the beat detection result
+    # Create metadata using the reconstructed Beats object
     beats_file_path = storage.get_beats_file_path(file_id)
     metadata_update = {
         "beat_detection_status": "success",
@@ -125,11 +131,17 @@ def _perform_beat_detection(
         "irregularity_percent": beats.overall_stats.irregularity_percent,
         "irregular_beats_count": len(beats.irregular_beat_indices),
         "beats_file": str(beats_file_path),
+        # Store tolerance/min_measures used for reconstruction in metadata
+        "reconstruction_params": {
+            # beats_per_bar is now in the RawBeats file
+            "tolerance_percent": tolerance_percent,
+            "min_measures": min_measures,
+        }
     }
 
-    # Save beat data (timestamps etc.) to the separate beats file
-    beats.save_to_file(beats_file_path)
-    logger.info(f"Beat timestamps saved to {beats_file_path}")
+    # Save the simplified RawBeats object (contains bpb)
+    raw_beats.save_to_file(beats_file_path)
+    logger.info(f"Raw beat data saved to {beats_file_path}")
 
     # Update the central metadata store
     storage.update_metadata(file_id, metadata_update)
@@ -137,7 +149,6 @@ def _perform_beat_detection(
         f"Metadata updated for file_id {file_id} after successful beat detection."
     )
 
-    # Return nothing - status is in metadata.json
     return
 
 
@@ -265,32 +276,74 @@ def _perform_video_generation(
         os.chdir(str(job_dir))
         logger.info(f"Changed working directory to: {job_dir}")
 
-        # --- Load Beat Data ---
-        update_progress("Loading beat data", 0.01)
+        # --- Load Data (Raw Beats and Reconstruction Params) ---
+        update_progress("Loading beat data and parameters", 0.01)
+        raw_beats: RawBeats = None
+        tolerance_percent: float = None
+        min_measures: int = None
         try:
-            # Load the full Beats object
-            beats = Beats.load_from_file(beats_path)
-            logger.info(f"Loaded Beats object from {beats_path}")
-            if not beats.timestamps.size > 0:
-                raise ValueError("Loaded Beats object contains no timestamps.")
+            # Load Raw Beats (contains beats_per_bar)
+            raw_beats = RawBeats.load_from_file(beats_path)
+            logger.info(f"Loaded RawBeats object from {beats_path} (bpb={raw_beats.beats_per_bar})")
+            if not raw_beats.timestamps.size > 0:
+                raise ValueError("Loaded RawBeats object contains no timestamps.")
+
+            # Load metadata to get reconstruction parameters (tolerance, min_measures)
+            metadata = storage.get_metadata(file_id)
+            if not metadata:
+                raise ValueError(f"Could not load metadata for file_id {file_id}")
+
+            recon_params = metadata.get("reconstruction_params")
+            if not recon_params:
+                raise ValueError(
+                    f"'reconstruction_params' not found in metadata for {file_id}. Cannot reconstruct Beats."
+                )
+
+            # Extract parameters
+            tolerance_percent = recon_params.get("tolerance_percent")
+            min_measures = recon_params.get("min_measures")
+
+            if tolerance_percent is None or min_measures is None:
+                raise ValueError(
+                    f"Missing tolerance_percent or min_measures within 'reconstruction_params' in metadata for {file_id}"
+                )
+
+            logger.info(
+                f"Loaded reconstruction params: tol%={tolerance_percent}, min_meas={min_measures}"
+            )
+
         except FileNotFoundError:
-            logger.error(f"Beats file not found for loading: {beats_path}")
+            logger.error(f"Raw Beats file not found for loading: {beats_path}")
             raise  # Re-raise the specific error
         except Exception as load_e:
-            logger.error(f"Failed to load Beats object from {beats_path}: {load_e}")
-            raise ValueError(f"Failed to load Beats object: {load_e}") from load_e
+            logger.error(f"Failed to load data or parameters from {beats_path} or metadata: {load_e}")
+            raise ValueError(f"Failed to load data/params: {load_e}") from load_e
+
+        # --- Reconstruct Beats Object ---
+        update_progress("Reconstructing beat analysis", 0.03)
+        try:
+            beats = Beats.from_timestamps(
+                timestamps=raw_beats.timestamps,
+                beat_counts=raw_beats.beat_counts,
+                beats_per_bar=raw_beats.beats_per_bar, # From RawBeats file
+                tolerance_percent=float(tolerance_percent), # From metadata
+                min_measures=int(min_measures) # From metadata
+            )
+            logger.info(f"Successfully reconstructed Beats object for {file_id}")
+        except Exception as recon_e:
+            logger.error(f"Failed to reconstruct Beats object: {recon_e}")
+            raise ValueError(f"Beats reconstruction failed: {recon_e}") from recon_e
 
         # --- Generate Video ---
-        # Instantiate generator (progress callback not passed via constructor anymore based on test example)
         video_generator = BeatVideoGenerator()
 
         update_progress("Starting video rendering", 0.05)
-        logger.info("Starting actual video generation process using Beats object...")
+        logger.info("Starting actual video generation process using reconstructed Beats object...")
 
-        # Call generate_video with audio path, Beats object, and output path
+        # Call generate_video with audio path, RECONSTRUCTED Beats object, and output path
         generated_video_file = video_generator.generate_video(
             audio_path=audio_path,
-            beats=beats,  # Pass the loaded Beats object
+            beats=beats,  # Pass the RECONSTRUCTED Beats object
             output_path=video_output,
         )
         logger.info(

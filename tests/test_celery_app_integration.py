@@ -14,7 +14,8 @@ from web_app.celery_app import (
     _perform_video_generation,
 )  # Import tasks and the new helper function
 from beat_detection.core.detector import BeatDetector  # Import real detector
-from beat_detection.core.beats import Beats
+from beat_detection.core.beats import Beats, RawBeats # Import RawBeats
+from beat_detection.utils.beat_file import load_raw_beats # Use utility if needed, or RawBeats directly
 
 # --- Fixtures ---
 
@@ -144,12 +145,13 @@ def test_detect_beats_task_integration_success(
     file_id, audio_path = sample_audio_file
     storage = temp_storage_integration  # Get the real storage instance
 
-    # Parameters for the function (can be adjusted)
+    # Define explicit params for detection and reconstruction
+    # Restore min/max bpm definitions
     min_bpm = 90
     max_bpm = 180
-    tolerance_percent = 10.0  # Use default or specify
-    min_measures = 1  # Use default or specify
-    beats_per_bar = None  # Use default or specify
+    beats_per_bar = 4
+    tolerance_percent = 15.0
+    min_measures = 2
 
     # Simple dummy progress callback for the test
     def dummy_progress_callback(stage: str, value: float):
@@ -170,9 +172,9 @@ def test_detect_beats_task_integration_success(
         file_id=file_id,
         min_bpm=min_bpm,
         max_bpm=max_bpm,
+        beats_per_bar=beats_per_bar,
         tolerance_percent=tolerance_percent,
         min_measures=min_measures,
-        beats_per_bar=beats_per_bar,
         update_progress=dummy_progress_callback,
     )
 
@@ -193,19 +195,21 @@ def test_detect_beats_task_integration_success(
         expected_beats_path.stat().st_size > 0
     ), f"Beats file {expected_beats_path} is empty."
 
-    # 4. Load the beat data (we need some info from it for metadata check)
-    beat_data_json = None
+    # 4. Load the RAW beat data and verify structure
+    raw_beat_data: RawBeats = None
     try:
-        with open(expected_beats_path, "r") as f:
-            beat_data_json = json.load(f)
-        # Verify expected top-level keys based on the actual output
-        assert "beat_list" in beat_data_json
-        assert "beats_per_bar" in beat_data_json
-        assert "overall_stats" in beat_data_json
-        assert "tempo_bpm" in beat_data_json["overall_stats"]
-        print(f"\nSuccessfully loaded beats JSON from {expected_beats_path}")
+        raw_beat_data = RawBeats.load_from_file(expected_beats_path)
+        assert isinstance(raw_beat_data, RawBeats)
+        assert raw_beat_data.beats_per_bar is not None
+        assert raw_beat_data.beats_per_bar > 0 # Basic sanity check
+        assert isinstance(raw_beat_data.timestamps, np.ndarray)
+        assert isinstance(raw_beat_data.beat_counts, np.ndarray)
+        assert raw_beat_data.timestamps.ndim == 1
+        assert raw_beat_data.timestamps.shape == raw_beat_data.beat_counts.shape
+        assert len(raw_beat_data.timestamps) > 0 # Check that some beats were detected
+        print(f"\nSuccessfully loaded RawBeats JSON from {expected_beats_path}")
     except Exception as e:
-        pytest.fail(f"Failed to load or validate beats JSON {expected_beats_path}: {e}")
+        pytest.fail(f"Failed to load or validate RawBeats JSON {expected_beats_path}: {e}")
 
     # 5. Check job directory creation
     job_dir = storage.get_job_directory(file_id)
@@ -218,42 +222,39 @@ def test_detect_beats_task_integration_success(
 
     assert metadata_after.get("beat_detection_status") == "success"
     assert metadata_after.get("beats_file") == str(expected_beats_path)
-    # Compare total beats count with the length of the beat_list
-    assert metadata_after.get("total_beats") == len(beat_data_json["beat_list"])
-    assert metadata_after.get("detected_beats_per_bar") == beat_data_json.get(
-        "beats_per_bar"
-    )
-    # Calculate irregular beats count correctly by loading the Beats object
+    assert metadata_after.get("total_beats") == len(raw_beat_data.timestamps)
+
+    # Check reconstruction params are stored (only tol & min_meas)
+    recon_params = metadata_after.get("reconstruction_params")
+    assert recon_params is not None, "'reconstruction_params' not found in metadata"
+    assert "beats_per_bar" not in recon_params # Verify bpb NOT stored here
+    assert recon_params.get("tolerance_percent") == tolerance_percent
+    assert recon_params.get("min_measures") == min_measures
+    # Check detected_beats_per_bar in metadata matches the value in the loaded RawBeats file
+    assert metadata_after.get("detected_beats_per_bar") == raw_beat_data.beats_per_bar
+
+    # 7. Reconstruct Beats from RawBeats and Metadata Params to check derived values
     try:
-        loaded_beats = Beats.load_from_file(expected_beats_path)
-        json_irregular_count = len(loaded_beats.irregular_beat_indices)
-    except Exception as load_e:
-        pytest.fail(
-            f"Failed to load Beats object from {expected_beats_path} to count irregularities: {load_e}"
-        )
+        bpb = raw_beat_data.beats_per_bar # Get bpb from loaded RawBeats
+        tol = float(recon_params["tolerance_percent"]) # Get tol from metadata
+        meas = int(recon_params["min_measures"])       # Get meas from metadata
 
-    assert metadata_after.get("irregular_beats_count") == json_irregular_count
-    # Compare BPM with a tolerance - assuming metadata uses overall_stats
-    # Check which stats object is actually used by _perform_beat_detection if this fails.
+        reconstructed_beats = Beats.from_timestamps(
+            timestamps=raw_beat_data.timestamps,
+            beat_counts=raw_beat_data.beat_counts,
+            beats_per_bar=bpb,
+            tolerance_percent=tol,
+            min_measures=meas
+        )
+    except Exception as recon_e:
+        pytest.fail(f"Failed to reconstruct Beats from {expected_beats_path} using metadata params: {recon_e}")
+
+    # Now check the metadata values that depend on the reconstructed Beats object
+    assert metadata_after.get("irregular_beats_count") == len(reconstructed_beats.irregular_beat_indices)
     assert "detected_tempo_bpm" in metadata_after
-    assert (
-        abs(
-            metadata_after["detected_tempo_bpm"]
-            - beat_data_json["overall_stats"]["tempo_bpm"]
-        )
-        < 0.01
-    )
+    assert abs(metadata_after["detected_tempo_bpm"] - reconstructed_beats.overall_stats.tempo_bpm) < 0.01
+
     print(f"\nSuccessfully verified metadata update for file_id {file_id}")
-
-    # Test beat data JSON structure
-    assert isinstance(beat_data_json, dict), "Beat data should be a dictionary"
-    assert "beats_per_bar" in beat_data_json, "Beat data should contain beats_per_bar"
-
-    # Test metadata structure
-    assert isinstance(metadata_after, dict), "Metadata should be a dictionary"
-    assert metadata_after.get("detected_beats_per_bar") == beat_data_json.get(
-        "beats_per_bar"
-    ), "Metadata beats_per_bar mismatch"
 
 
 def test_generate_video_integration_success(
@@ -266,9 +267,22 @@ def test_generate_video_integration_success(
     Requires a pre-existing audio file and beats file (handled by fixtures).
     """
     # --- Arrange ---
-    # Get file_id, audio path, and beats path from the fixture
     file_id, audio_path, beats_path = sample_beats_file
-    storage = temp_storage_integration  # Get the real storage instance
+    # NOTE: sample_beats_file fixture copies a pre-existing .beats.json file.
+    # This file MUST be updated manually or regenerated to contain the new RawBeats format
+    # (including beats_per_bar, excluding tol/meas) for this test to pass.
+    # We also need the tol/meas that correspond to that file for reconstruction.
+    # Let's assume the copied file corresponds to these parameters:
+    expected_tolerance = 10.0
+    expected_min_measures = 5
+    # We need to save these into metadata like the detection task would
+    storage = temp_storage_integration
+    storage.update_metadata(file_id, {
+        "reconstruction_params": {
+             "tolerance_percent": expected_tolerance,
+             "min_measures": expected_min_measures
+        }
+    })
     workspace_root = Path.cwd()  # Capture CWD at the start of the test
 
     # Simple dummy progress callback for the test

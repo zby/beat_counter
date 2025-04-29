@@ -2,9 +2,10 @@ import pytest
 import os  # Import os for file operations
 from pathlib import Path
 from beat_detection.core.detector import BeatDetector
-from beat_detection.core.beats import BeatCalculationError
+from beat_detection.core.beats import BeatCalculationError, Beats, RawBeats
 from beat_detection.core.video import BeatVideoGenerator  # Import video generator
-from beat_detection.core.beats import Beats  # Import Beats for loading
+from beat_detection.utils.beat_file import load_raw_beats # Import the new loading function
+import numpy as np
 
 # Define the path to the test audio file relative to the tests directory
 TEST_DATA_DIR = Path(__file__).parent / "data"
@@ -36,25 +37,44 @@ def test_generate_video_from_beats():
         pytest.fail(f"Test audio file not found: {TEST_AUDIO_FILE}")
 
     # --- Beat Detection ---
+    raw_beats: RawBeats = None
+    # effective_beats_per_bar: int = None # No longer need this from detector
+    # Define the parameters used for reconstruction in this test
+    tolerance_percent: float = 10.0
+    min_measures: int = 5
     try:
-        detector = BeatDetector()
-        beats = detector.detect_beats(str(TEST_AUDIO_FILE))
-        assert beats is not None, "Beats object was not created."
-        assert beats.beats_per_bar is not None, "Beats per bar was not determined."
-        assert beats.beat_data.shape[0] > 0, "No beats were detected."
+        # Remove tol/meas from detector instantiation
+        detector = BeatDetector(beats_per_bar=None) # Pass None for auto-detect as before
+        # Get the simplified RawBeats (contains bpb)
+        raw_beats = detector.detect_beats(str(TEST_AUDIO_FILE))
+        assert raw_beats is not None, "RawBeats object was not created."
+        assert raw_beats.timestamps.shape[0] > 0, "No raw beats were detected."
+        assert raw_beats.beats_per_bar > 0, "Invalid beats_per_bar in RawBeats."
+        print(f"Detected raw beats with bpb={raw_beats.beats_per_bar}")
 
-        # --- Save Beats to File ---
+        # --- Save Raw Beats to File ---
         try:
-            beats.save_to_file(OUTPUT_BEATS_FILE)
-            print(f"Saved beats to: {OUTPUT_BEATS_FILE}")
-            assert (
-                OUTPUT_BEATS_FILE.is_file()
-            ), f"Beats file was not created at {OUTPUT_BEATS_FILE}"
-            assert (
-                OUTPUT_BEATS_FILE.stat().st_size > 0
-            ), f"Beats file {OUTPUT_BEATS_FILE} is empty."
+            raw_beats.save_to_file(OUTPUT_BEATS_FILE)
+            print(f"Saved raw beats to: {OUTPUT_BEATS_FILE}")
+            assert OUTPUT_BEATS_FILE.is_file(), f"Raw beats file was not created at {OUTPUT_BEATS_FILE}"
+            assert OUTPUT_BEATS_FILE.stat().st_size > 0, f"Raw beats file {OUTPUT_BEATS_FILE} is empty."
         except Exception as e:
-            pytest.fail(f"Failed to save Beats object to {OUTPUT_BEATS_FILE}: {e}")
+            pytest.fail(f"Failed to save RawBeats object to {OUTPUT_BEATS_FILE}: {e}")
+
+        # --- Reconstruct Beats object (using data from RawBeats and test params) --- 
+        try:
+            reconstructed_beats = Beats.from_timestamps(
+                timestamps=raw_beats.timestamps,
+                beat_counts=raw_beats.beat_counts,
+                beats_per_bar=raw_beats.beats_per_bar, # From RawBeats
+                tolerance_percent=tolerance_percent,   # Restore test param
+                min_measures=min_measures          # Restore test param
+            )
+            assert reconstructed_beats is not None, "Failed to reconstruct Beats object."
+            assert reconstructed_beats.beats_per_bar == raw_beats.beats_per_bar
+            print(f"Reconstructed Beats object with bpb={reconstructed_beats.beats_per_bar}")
+        except Exception as e:
+            pytest.fail(f"Failed to reconstruct Beats object: {e}")
 
     except BeatCalculationError as e:
         pytest.fail(f"Beat detection failed for {TEST_AUDIO_FILE.name} with error: {e}")
@@ -63,47 +83,50 @@ def test_generate_video_from_beats():
             f"An unexpected error occurred during beat detection for {TEST_AUDIO_FILE.name}: {e}"
         )
 
-    # --- Load Beats from File ---
+    # --- Load Raw Beats from File (Refactoring Step 5) ---
+    loaded_raw_beats: RawBeats = None
     try:
-        loaded_beats = Beats.load_from_file(OUTPUT_BEATS_FILE)
-        print(f"Loaded beats from: {OUTPUT_BEATS_FILE}")
-        assert loaded_beats is not None, "Failed to load beats from file."
-        assert (
-            loaded_beats.beats_per_bar == beats.beats_per_bar
-        ), "Loaded beats_per_bar mismatch."
+        loaded_raw_beats = load_raw_beats(str(OUTPUT_BEATS_FILE))
+        print(f"Loaded raw beats data from: {OUTPUT_BEATS_FILE}")
+        assert loaded_raw_beats is not None, "Failed to load raw beats from file."
+        # Compare loaded RawBeats with the one saved earlier
+        np.testing.assert_array_equal(loaded_raw_beats.timestamps, raw_beats.timestamps)
+        np.testing.assert_array_equal(loaded_raw_beats.beat_counts, raw_beats.beat_counts)
+        assert loaded_raw_beats.beats_per_bar == raw_beats.beats_per_bar
+
+        # --- Reconstruct Beats from *loaded* data --- 
+        reconstructed_beats_from_load = Beats.from_timestamps(
+            timestamps=loaded_raw_beats.timestamps,
+            beat_counts=loaded_raw_beats.beat_counts,
+            beats_per_bar=loaded_raw_beats.beats_per_bar, # Use value from loaded RawBeats
+            # Use the same tolerance/min_measures defined earlier in the test
+            tolerance_percent=tolerance_percent, # Restore test param
+            min_measures=min_measures          # Restore test param
+        )
+        assert reconstructed_beats_from_load is not None, "Failed to reconstruct Beats object from loaded data."
+        print(f"Reconstructed Beats object from loaded data with bpb={reconstructed_beats_from_load.beats_per_bar}")
+
     except FileNotFoundError:
-        pytest.fail(f"Beats file not found for loading: {OUTPUT_BEATS_FILE}")
+        pytest.fail(f"Raw beats file not found for loading: {OUTPUT_BEATS_FILE}")
     except Exception as e:
-        pytest.fail(f"Failed to load Beats object from {OUTPUT_BEATS_FILE}: {e}")
+        pytest.fail(f"Failed to load/reconstruct from RawBeats file {OUTPUT_BEATS_FILE}: {e}")
 
-    # --- Video Generation ---
+    # --- Video Generation --- 
+    # Video generator needs a full Beats object. Use the one reconstructed from loaded data.
     try:
-        video_generator = BeatVideoGenerator()  # Use default settings
-
-        # Call the method that takes a Beats object and audio path, using the loaded object
+        video_generator = BeatVideoGenerator()
         output_path_str = video_generator.generate_video(
             audio_path=TEST_AUDIO_FILE,
-            beats=loaded_beats,  # Use the loaded beats object
+            beats=reconstructed_beats_from_load, # Use the object reconstructed from file
             output_path=OUTPUT_VIDEO_FILE,
         )
-
-        # Verify output path matches expected (optional, but good practice)
-        assert (
-            Path(output_path_str) == OUTPUT_VIDEO_FILE
-        ), f"Generated video path '{output_path_str}' does not match expected '{OUTPUT_VIDEO_FILE}'"
-
+        assert Path(output_path_str) == OUTPUT_VIDEO_FILE, f"Output path mismatch"
     except Exception as e:
-        pytest.fail(
-            f"Video generation failed for {TEST_AUDIO_FILE.name} with error: {e}"
-        )
+        pytest.fail(f"Video generation failed: {e}")
 
     # --- Post-check ---
-    assert (
-        OUTPUT_VIDEO_FILE.is_file()
-    ), f"Output video file was not created at {OUTPUT_VIDEO_FILE}"
-    assert (
-        OUTPUT_VIDEO_FILE.stat().st_size > 0
-    ), f"Output video file {OUTPUT_VIDEO_FILE} is empty."
+    assert OUTPUT_VIDEO_FILE.is_file(), f"Output video file was not created at {OUTPUT_VIDEO_FILE}"
+    assert OUTPUT_VIDEO_FILE.stat().st_size > 0, f"Output video file {OUTPUT_VIDEO_FILE} is empty."
 
     print(
         f"Successfully generated video: {OUTPUT_VIDEO_FILE} (Size: {OUTPUT_VIDEO_FILE.stat().st_size} bytes)"

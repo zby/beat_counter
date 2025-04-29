@@ -16,7 +16,7 @@ from moviepy import (
     TextClip,
     ColorClip,
 )
-from beat_detection.core.detector import Beats
+from beat_detection.core.beats import Beats
 
 # Video dimensions constants
 DEFAULT_VIDEO_WIDTH = 720

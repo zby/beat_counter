@@ -88,12 +88,15 @@ def main() -> None:  # noqa: D401 – simple imperative main
     detector = BeatDetector(
         min_bpm=args.min_bpm,
         max_bpm=args.max_bpm,
-        tolerance_percent=args.tolerance,
         beats_per_bar=args.beats_per_bar,
     )
 
     try:
-        beats = detector.detect_beats(str(audio_path))
+        # Get RawBeats object (contains bpb)
+        raw_beats = detector.detect_beats(str(audio_path))
+        logging.info(
+            f"Detected beats for {audio_path} with effective beats_per_bar={raw_beats.beats_per_bar}"
+        )
     except Exception as exc:  # fail fast but print cause
         logging.exception("Beat detection failed for %s: %s", audio_path, exc)
         sys.exit(1)
@@ -105,8 +108,9 @@ def main() -> None:  # noqa: D401 – simple imperative main
         out_path = audio_path.with_suffix(".beats")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    save_beats(str(out_path), beats)
-    logging.info("Saved beats to %s", out_path)
+    # Pass the RawBeats object directly to save_beats
+    save_beats(str(out_path), raw_beats)
+    logging.info("Saved raw beats to %s", out_path)
 
 
 if __name__ == "__main__":

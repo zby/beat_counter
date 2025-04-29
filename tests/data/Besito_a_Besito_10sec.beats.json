@@ -1,118 +1,51 @@
 {
-    "beats_per_bar": 4,
-    "tolerance_percent": 10.0,
-    "tolerance_interval": 0.04500000000000002,
-    "min_measures": 5,
-    "start_regular_beat_idx": 1,
-    "end_regular_beat_idx": 22,
-    "overall_stats": {
-        "mean_interval": 0.4519047619047619,
-        "median_interval": 0.4500000000000002,
-        "std_interval": 0.01051939144494016,
-        "min_interval": 0.4399999999999995,
-        "max_interval": 0.48,
-        "irregularity_percent": 0.0,
-        "tempo_bpm": 133.3333333333333,
-        "total_beats": 22
-    },
-    "regular_stats": {
-        "mean_interval": 0.4525,
-        "median_interval": 0.4500000000000002,
-        "std_interval": 0.010428326807307011,
-        "min_interval": 0.4399999999999995,
-        "max_interval": 0.48,
-        "irregularity_percent": 0.0,
-        "tempo_bpm": 133.3333333333333,
-        "total_beats": 21
-    },
-    "beat_list": [
-        {
-            "timestamp": 0.31,
-            "count": 4
-        },
-        {
-            "timestamp": 0.75,
-            "count": 1
-        },
-        {
-            "timestamp": 1.23,
-            "count": 2
-        },
-        {
-            "timestamp": 1.69,
-            "count": 3
-        },
-        {
-            "timestamp": 2.14,
-            "count": 4
-        },
-        {
-            "timestamp": 2.58,
-            "count": 1
-        },
-        {
-            "timestamp": 3.04,
-            "count": 2
-        },
-        {
-            "timestamp": 3.49,
-            "count": 3
-        },
-        {
-            "timestamp": 3.94,
-            "count": 4
-        },
-        {
-            "timestamp": 4.38,
-            "count": 1
-        },
-        {
-            "timestamp": 4.83,
-            "count": 2
-        },
-        {
-            "timestamp": 5.29,
-            "count": 3
-        },
-        {
-            "timestamp": 5.75,
-            "count": 4
-        },
-        {
-            "timestamp": 6.19,
-            "count": 1
-        },
-        {
-            "timestamp": 6.64,
-            "count": 2
-        },
-        {
-            "timestamp": 7.1,
-            "count": 3
-        },
-        {
-            "timestamp": 7.54,
-            "count": 4
-        },
-        {
-            "timestamp": 8.0,
-            "count": 1
-        },
-        {
-            "timestamp": 8.44,
-            "count": 2
-        },
-        {
-            "timestamp": 8.9,
-            "count": 3
-        },
-        {
-            "timestamp": 9.36,
-            "count": 4
-        },
-        {
-            "timestamp": 9.8,
-            "count": 1
-        }
-    ]
+  "beats_per_bar": 4,
+  "timestamps": [
+    0.31,
+    0.75,
+    1.23,
+    1.69,
+    2.14,
+    2.58,
+    3.04,
+    3.49,
+    3.94,
+    4.38,
+    4.83,
+    5.29,
+    5.75,
+    6.19,
+    6.64,
+    7.1,
+    7.54,
+    8.0,
+    8.44,
+    8.9,
+    9.36,
+    9.8
+  ],
+  "beat_counts": [
+    4,
+    1,
+    2,
+    3,
+    4,
+    1,
+    2,
+    3,
+    4,
+    1,
+    2,
+    3,
+    4,
+    1,
+    2,
+    3,
+    4,
+    1,
+    2,
+    3,
+    4,
+    1
+  ]
 }

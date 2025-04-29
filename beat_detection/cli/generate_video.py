@@ -27,6 +27,9 @@ from beat_detection.core.video import (
     DEFAULT_FPS,
 )
 from beat_detection.utils import file_utils
+from beat_detection.core.detector import BeatDetector
+from beat_detection.utils.beat_file import load_raw_beats
+from beat_detection.core.beats import Beats, RawBeats
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +81,18 @@ def parse_args():
         help=f"Frames per second for output videos (default: {DEFAULT_FPS})",
     )
     parser.add_argument(
+        "--tolerance-percent",
+        type=float,
+        default=10.0,
+        help="Tolerance percentage used for reconstructing Beats stats/sections (default: 10.0)."
+    )
+    parser.add_argument(
+        "--min-measures",
+        type=int,
+        default=5,
+        help="Minimum measures used for reconstructing Beats stats/sections (default: 5)."
+    )
+    parser.add_argument(
         "--sample",
         type=int,
         default=None,
@@ -93,6 +108,9 @@ def parse_args():
 
 def generate_counter_video(
     audio_file: pathlib.Path,
+    beats_file: pathlib.Path,
+    tolerance_percent: float,
+    min_measures: int,
     output_file: pathlib.Path | None = None,
     resolution=DEFAULT_VIDEO_RESOLUTION,
     fps: int = 30,
@@ -100,48 +118,40 @@ def generate_counter_video(
     verbose: bool = True,
 ):
     """
-    Process an audio file to generate a beat visualization video.
+    Process an audio file and its corresponding raw beats file to generate a beat visualization video.
 
-    This function first tries to find a corresponding beats file to use for beat timestamps.
-    If no beats file is found, it uses BeatVideoGenerator's automatic beat detection.
-
-    The function generates a counter video that displays a beat counter incrementing on each beat.
-
-    Parameters:
-    -----------
-    audio_file : pathlib.Path
-        Path to the audio file to process
-    output_file : pathlib.Path | None
-        Path to save the output video
-    resolution : tuple
-        Video resolution as (width, height)
-    fps : int
-        Frames per second for the video
-    sample_beats : int | None
-        Number of beats to process (for testing)
-    verbose : bool
-        Whether to print progress
-
-    Returns:
-    --------
-    bool
-        True if at least one video was successfully generated
+    This function loads raw beat data, reconstructs the full Beats object using
+    the provided parameters, and then generates the video.
     """
     audio_path = audio_file
+    beats_path = beats_file
 
     if not audio_path.is_file():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
-
-    beats_path = audio_path.with_suffix(".beats")
     if not beats_path.is_file():
-        raise FileNotFoundError(
-            f"Beats file not found: {beats_path}. Run beat detection first."
+        raise FileNotFoundError(f"Beats file not found: {beats_path}.")
+
+    # Load Raw Beats Data
+    try:
+        raw_beats = load_raw_beats(str(beats_path))
+        if verbose:
+            print(f"Loaded raw beats data from {beats_path} (bpb={raw_beats.beats_per_bar})")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load raw beats from {beats_path}: {e}") from e
+
+    # Reconstruct Beats object using parameters from raw_beats and function args
+    try:
+        beats = Beats.from_timestamps(
+            timestamps=raw_beats.timestamps,
+            beat_counts=raw_beats.beat_counts,
+            beats_per_bar=raw_beats.beats_per_bar,
+            tolerance_percent=tolerance_percent,
+            min_measures=min_measures
         )
-
-    # Load Beats object
-    from beat_detection.utils.beat_file import load_beats
-
-    beats = load_beats(str(beats_path))
+        if verbose:
+            print(f"Reconstructed Beats object using bpb={raw_beats.beats_per_bar}, tol={tolerance_percent}, min_meas={min_measures}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to reconstruct Beats object: {e}") from e
 
     # Determine output video path
     if output_file is None:
@@ -154,11 +164,12 @@ def generate_counter_video(
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if verbose:
-        print(f"Generating video for {audio_path} using {beats_path}")
+        print(f"Generating video for {audio_path} using reconstructed beats")
 
     # Create generator
     video_gen = BeatVideoGenerator(resolution=resolution, fps=fps)
 
+    # Generate video using the reconstructed Beats object
     video_gen.generate_video(audio_path, beats, output_path, sample_beats=sample_beats)
 
     if verbose:
@@ -175,12 +186,18 @@ def main():
     # The type argument in parse_args already handles conversion
     resolution = args.resolution
 
+    audio_path = pathlib.Path(args.audio_file)
+    beats_path = audio_path.with_suffix(".beats")
+
     # ------------------------------------------------------------------
     # Process the single audio file
     # ------------------------------------------------------------------
     try:
         generate_counter_video(
-            audio_file=pathlib.Path(args.audio_file),
+            audio_file=audio_path,
+            beats_file=beats_path,
+            tolerance_percent=args.tolerance_percent,
+            min_measures=args.min_measures,
             output_file=pathlib.Path(args.output_file) if args.output_file else None,
             resolution=resolution,
             fps=args.fps,
