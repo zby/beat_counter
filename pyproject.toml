@@ -43,6 +43,9 @@ dev = [
     "flake8>=3.9.2",
     "isort>=5.9.1"
 ]
+beat_this_algo = [
+    "beat_this @ git+https://github.com/CPJKU/beat_this@main#egg=beat_this"
+]
 
 [project.scripts]
 detect-beats = "beat_detection.cli.detect_beats:main"

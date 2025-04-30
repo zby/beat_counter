@@ -15,7 +15,7 @@ from celery import Celery, states, Task
 from web_app.config import Config
 from web_app.storage import FileMetadataStorage
 from web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
-from beat_detection.core.detector import BeatDetector
+from beat_detection.core.factory import get_beat_detector
 from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.core.beats import Beats, BeatCalculationError, RawBeats
 
@@ -85,61 +85,62 @@ app.context = AppContext(storage=FileMetadataStorage(config.storage))
 def _perform_beat_detection(
     storage: FileMetadataStorage,
     file_id: str,
+    algorithm: str,
     min_bpm: int,
     max_bpm: int,
     tolerance_percent: float,
     min_measures: int,
-    beats_per_bar: Optional[int], # Initial preference
+    beats_per_bar: Optional[int], # Optional override
     update_progress: Callable[[str, float], None],
 ) -> None:
     """Performs the actual beat detection, saving, and metadata update."""
-    detector = BeatDetector(
+    # Get detector from factory
+    detector = get_beat_detector(
+        algorithm=algorithm,
         min_bpm=min_bpm,
         max_bpm=max_bpm,
-        beats_per_bar=beats_per_bar,
         progress_callback=update_progress,
     )
 
     # Detect beats, get simplified RawBeats object
     audio_path_str = str(storage.get_audio_file_path(file_id))
-    raw_beats = detector.detect_beats(audio_path_str)
-    logger.info(f"Raw beats detected for {file_id} (bpb={raw_beats.beats_per_bar})" )
+    raw_beats = detector.detect(audio_path_str)
+    logger.info(f"Raw beats detected for {file_id}")
 
-    # Reconstruct the full Beats object using RawBeats data + function args for tol/meas
+    # Create the full Beats object using RawBeats data and optional beats_per_bar override
     try:
-        beats = Beats.from_timestamps(
-            timestamps=raw_beats.timestamps,
-            beat_counts=raw_beats.beat_counts,
-            beats_per_bar=raw_beats.beats_per_bar,
-            # Get tolerance and min_measures from function args
+        beats = Beats(
+            raw_beats=raw_beats,
+            beats_per_bar=beats_per_bar,  # Use the optional override if provided
             tolerance_percent=tolerance_percent,
             min_measures=min_measures,
         )
-        logger.info(f"Reconstructed Beats object for {file_id}")
+        logger.info(f"Created Beats object for {file_id} with beats_per_bar={beats.beats_per_bar}")
     except BeatCalculationError as e:
-        logger.error(f"Failed to reconstruct Beats object for {file_id} from RawBeats: {e}")
-        raise # Re-raise the critical error
+        logger.error(f"Failed to create Beats object for {file_id} from RawBeats: {e}")
+        raise  # Re-raise the critical error
 
-    # Create metadata using the reconstructed Beats object
+    # Create metadata using the Beats object
     beats_file_path = storage.get_beats_file_path(file_id)
     metadata_update = {
         "beat_detection_status": "success",
         "beat_detection_error": None,
+        "algorithm": algorithm,
         "detected_beats_per_bar": beats.beats_per_bar,
         "total_beats": len(beats.timestamps),
         "detected_tempo_bpm": beats.overall_stats.tempo_bpm,
         "irregularity_percent": beats.overall_stats.irregularity_percent,
         "irregular_beats_count": len(beats.irregular_beat_indices),
         "beats_file": str(beats_file_path),
-        # Store tolerance/min_measures used for reconstruction in metadata
-        "reconstruction_params": {
-            # beats_per_bar is now in the RawBeats file
+        # Store parameters used for beat analysis in metadata
+        "analysis_params": {
+            "beats_per_bar_override": beats_per_bar,  # None if inferred
             "tolerance_percent": tolerance_percent,
             "min_measures": min_measures,
         }
     }
 
-    # Save the simplified RawBeats object (contains bpb)
+    # Save the simplified RawBeats object
     raw_beats.save_to_file(beats_file_path)
     logger.info(f"Raw beat data saved to {beats_file_path}")
 
@@ -157,6 +158,7 @@ def _perform_beat_detection(
 def detect_beats_task(
     self: Task,
     file_id: str,
+    algorithm: str = "madmom",
     min_bpm: int = 60,
     max_bpm: int = 200,
     tolerance_percent: float = 10.0,
@@ -195,6 +197,7 @@ def detect_beats_task(
         _perform_beat_detection(
             storage=storage,
             file_id=file_id,
+            algorithm=algorithm,
             min_bpm=min_bpm,
             max_bpm=max_bpm,
             tolerance_percent=tolerance_percent,

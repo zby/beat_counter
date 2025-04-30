@@ -4,8 +4,10 @@ Utilities for saving and loading beat data.
 
 from pathlib import Path
 from beat_detection.core.beats import Beats, RawBeats  # Updated import
+import json
+import numpy as np
 
-# Removed unused imports: numpy, Dict, Any, asdict, BeatStatistics
+# Removed unused imports: Dict, Any, asdict, BeatStatistics
 
 
 def save_beats(file_path: str, raw_beats_data: RawBeats) -> None:
@@ -24,13 +26,13 @@ def save_beats(file_path: str, raw_beats_data: RawBeats) -> None:
     raw_beats_data.save_to_file(output_path)
 
 
-def load_raw_beats(file_path: str) -> RawBeats:
+def load_raw_beats(beat_file_path: str | Path) -> RawBeats:
     """
     Load raw beat data (timestamps, counts) from a JSON file.
 
     Parameters:
     -----------
-    file_path : str
+    file_path : str or Path
         Path to input JSON file
 
     Returns:
@@ -45,6 +47,6 @@ def load_raw_beats(file_path: str) -> RawBeats:
     ValueError:
         If the file is not valid JSON or missing required keys/structure.
     """
-    input_path = Path(file_path)
+    input_path = Path(beat_file_path)
     # Directly use RawBeats loading method
     return RawBeats.load_from_file(input_path)

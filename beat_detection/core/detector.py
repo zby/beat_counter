@@ -1,30 +1,53 @@
 """
-Core beat detection functionality.
+Core beat detection functionality and protocols.
 """
 
 import numpy as np
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Dict, Tuple, Optional, Callable, Protocol
-from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
+from typing import List, Dict, Tuple, Optional, Callable, Protocol, runtime_checkable
+from pathlib import Path
+from madmom.features.beats import DBNBeatTrackingProcessor, RNNBeatProcessor
+from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatProcessor
+from madmom.processors import IOProcessor, Processor
 from beat_detection.utils.constants import SUPPORTED_BEATS_PER_BAR
-from beat_detection.core.beats import BeatCalculationError, RawBeats
+from beat_detection.core.beats import RawBeats, Beats, BeatCalculationError
 
 
-class BeatDetector:
-    """Detect beats and downbeats in audio files."""
+@runtime_checkable
+class BeatDetector(Protocol):
+    """Protocol for beat detection algorithms."""
+
+    def detect(self, audio_path: str | Path) -> RawBeats:
+        """
+        Detects beats in an audio file and returns raw beat information.
+
+        Parameters:
+        -----------
+        audio_path : str | Path
+            Path to the input audio file.
+
+        Returns:
+        --------
+        RawBeats
+            Object containing only timestamps and beat counts.
+        """
+        ...
+
+
+class MadmomBeatDetector:
+    """Detect beats and downbeats in audio files using Madmom."""
 
     def __init__(
         self,
         min_bpm: int = 60,
         max_bpm: int = 240,
-        beats_per_bar: Optional[int] = None,
-        progress_callback: Optional[Callable[[str, float], None]] = None,
+        progress_callback: Optional[Callable[[float], None]] = None,
         fps: int = 100,
     ):
         """
-        Initialize the BeatDetector.
+        Initialize the MadmomBeatDetector.
 
         Parameters:
         ----------
@@ -32,129 +55,139 @@ class BeatDetector:
             Minimum tempo to consider (default: 60).
         max_bpm : int
             Maximum tempo to consider (default: 240).
-        beats_per_bar : Optional[int]
-            Expected beats per bar. If None, it's auto-detected (default: None).
-        progress_callback : Optional[Callable[[str, float], None]]
-            Callback function for progress updates (default: None).
+        progress_callback : Optional[Callable[[float], None]]
+            Callback function for progress updates (0.0 to 1.0) (default: None).
         fps : int
             Frames per second expected for the activation functions (default: 100).
+
+        Raises:
+        -------
+        BeatCalculationError
+            If BPM parameters are invalid.
         """
+        # --- Input Validation (Moved to __init__ for fail-fast) ---
+        if not isinstance(min_bpm, int) or min_bpm <= 0:
+            raise BeatCalculationError(
+                f"Invalid min_bpm: {min_bpm}. Must be a positive integer."
+            )
+        if not isinstance(max_bpm, int) or max_bpm <= min_bpm:
+            raise BeatCalculationError(
+                f"Invalid max_bpm: {max_bpm}. Must be > min_bpm ({min_bpm})."
+            )
+        if not isinstance(fps, int) or fps <= 0:
+            raise BeatCalculationError(
+                f"Invalid fps: {fps}. Must be a positive integer."
+            )
+        # --- End Validation ---
+
         self.min_bpm = min_bpm
         self.max_bpm = max_bpm
-        self.beats_per_bar = beats_per_bar
         self.progress_callback = progress_callback
         self.fps = fps
 
         # Initialize processors
-        self.downbeat_processor = RNNDownBeatProcessor()
-        # Initialize downbeat tracker
-        self.downbeat_tracker = DBNDownBeatTrackingProcessor(
-            beats_per_bar=SUPPORTED_BEATS_PER_BAR,  # Let madmom choose based on activation
-            min_bpm=float(self.min_bpm),
-            max_bpm=float(self.max_bpm),
-            fps=float(self.fps),  # Use self.fps here too (now it's a float)
-        )
+        try:
+            self.downbeat_processor = RNNDownBeatProcessor()
+            # Initialize downbeat tracker
+            self.downbeat_tracker = DBNDownBeatTrackingProcessor(
+                beats_per_bar=SUPPORTED_BEATS_PER_BAR,  # Let madmom choose based on activation
+                min_bpm=float(self.min_bpm),
+                max_bpm=float(self.max_bpm),
+                fps=float(self.fps),
+            )
+        except Exception as e:
+            # Catch potential madmom initialization errors (though validation should prevent most)
+            raise BeatCalculationError(f"Failed to initialize Madmom processors: {e}") from e
 
-    def detect_beats(self, audio_file: str) -> RawBeats:
+    def detect(self, audio_path: str | Path) -> RawBeats:
         """
-        Detect beats and downbeats in an audio file.
+        Detects beats in an audio file using Madmom.
 
-        Returns a RawBeats object containing timestamps, counts, and the parameters
-        used for detection.
+        Implements the BeatDetector protocol.
 
         Parameters:
         -----------
-        audio_file : str
-            Path to the input audio file
+        audio_path : str | Path
+            Path to the input audio file.
 
         Returns:
         --------
         RawBeats
-            Object containing raw timestamps, beat counts, and detection parameters.
+            Object containing detected timestamps and beat counts.
+
+        Raises:
+        -------
+        BeatCalculationError
+            If no beats are detected or an error occurs during processing.
+        FileNotFoundError
+            If the audio_path does not exist.
         """
-        cb = self.progress_callback  # Use the instance callback directly
+        audio_path = Path(audio_path)
+        if not audio_path.is_file():
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        def report_progress(stage: str, value: float):
+        cb = self.progress_callback
+
+        def report_progress(value: float):
             if cb:
-                if isinstance(cb, Callable) and not isinstance(cb, Protocol):
-                    try:
-                        cb(value)
-                    except TypeError:
-                        print(
-                            f"Note: Progress callback signature mismatch during {stage}."
-                        )
-                        pass
+                try:
+                    cb(value)
+                except Exception as e:
+                    # Fail fast but informatively if callback fails
+                    print(f"Warning: Progress callback failed: {e}")
 
-        if cb:  # Check if instance callback exists
-            report_progress("start", 0.0)
+        report_progress(0.0)
 
-        # Detect downbeats, getting raw data and the effective beats_per_bar
-        raw_beats_with_counts, detected_beats_per_bar = self._detect_downbeats(
-            audio_file
-        )
+        # Detect downbeats, getting only raw data (no bpb calculation here)
+        raw_beats_with_counts = self._detect_downbeats(str(audio_path)) # Pass string path
+
+        report_progress(0.8) # Approx progress after detection
 
         if raw_beats_with_counts is None or len(raw_beats_with_counts) == 0:
             raise BeatCalculationError(
-                f"No beats detected in file (DBN Tracker): {audio_file}"
+                f"No beats detected in file (Madmom DBN Tracker): {audio_path}"
             )
 
         beat_timestamps = raw_beats_with_counts[:, 0]
         beat_counts = raw_beats_with_counts[:, 1].astype(int)
 
-        if cb:
-            report_progress("downbeats_detected", 0.8)
+        report_progress(1.0)
 
-        if cb:
-            report_progress("analysis_complete", 1.0)
-
-        # Return simplified RawBeats object (bpb only)
+        # Return simplified RawBeats object (timestamps and counts only)
+        # Validation happens within RawBeats __post_init__
         return RawBeats(
             timestamps=beat_timestamps,
             beat_counts=beat_counts,
-            beats_per_bar=detected_beats_per_bar, # The determined value
-            # tolerance_percent=self.tolerance_percent, # Removed
-            # min_measures=self.min_measures # Removed
         )
 
-    def _detect_downbeats(self, audio_file: str) -> Tuple[np.ndarray, int]:
-        """
-        Detect beats and downbeats using madmom's DBNDownBeatTrackingProcessor.
-        Determines the beats_per_bar based on the processor's output.
+    def _detect_downbeats(self, audio_file_path: str) -> np.ndarray:
+        """Detect beats in an audio file using Madmom.
 
         Parameters:
-        ----------
-        audio_file : str
-            Path to the input audio file
+        -----------
+        audio_file_path : str
+            Path to the input audio file.
 
         Returns:
         --------
-        Tuple[np.ndarray, int]
-            Tuple containing:
-                - raw_beats_with_counts: Nx2 array where column 0 is timestamp, column 1 is beat count.
-                - beats_per_bar: Detected beats per bar (time signature numerator, e.g., 2, 3, 4).
+        np.ndarray
+            Array of shape (N, 2) containing beat times and beat counts.
 
         Raises:
-        ------
+        -------
         BeatCalculationError
-            If beats/downbeats cannot be determined or beats_per_bar is invalid.
+            If an error occurs during processing.
         """
-        # --- Input Validation ---
-        if not isinstance(self.min_bpm, int) or self.min_bpm <= 0:
-            raise BeatCalculationError(
-                f"Invalid min_bpm: {self.min_bpm}. Must be a positive integer."
-            )
-        if not isinstance(self.max_bpm, int) or self.max_bpm <= self.min_bpm:
-            raise BeatCalculationError(
-                f"Invalid max_bpm: {self.max_bpm}. Must be a positive integer greater than min_bpm ({self.min_bpm})."
-            )
-        # --- End Validation ---
+        try:
+            # Detect beat activations
+            downbeat_activations = self.downbeat_processor(audio_file_path)
 
-        # Detect downbeat activations first
-        downbeat_activations = self.downbeat_processor(audio_file)
+            # Pass activations to the DBNBeatTrackingProcessor
+            raw_downbeats = self.downbeat_tracker(downbeat_activations)
 
-        # Pass activations to the DBNDownBeatTrackingProcessor
-        # This processor handles both beat tracking and downbeat counting
-        raw_downbeats = self.downbeat_tracker(downbeat_activations)
+        except Exception as e:
+            # Catch potential Madmom errors
+            raise BeatCalculationError(f"Madmom processing failed: {e}") from e
 
         if raw_downbeats is None or len(raw_downbeats) == 0:
             raise BeatCalculationError(
@@ -186,4 +219,4 @@ class BeatDetector:
             ) from e
 
         # Return the full array and the determined beats_per_bar
-        return raw_downbeats, detected_beats_per_bar
+        return raw_downbeats

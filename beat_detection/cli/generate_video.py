@@ -135,21 +135,21 @@ def generate_counter_video(
     try:
         raw_beats = load_raw_beats(str(beats_path))
         if verbose:
-            print(f"Loaded raw beats data from {beats_path} (bpb={raw_beats.beats_per_bar})")
+            print(f"Loaded raw beats data from {beats_path} with {len(raw_beats.timestamps)} beats")
     except Exception as e:
         raise RuntimeError(f"Failed to load raw beats from {beats_path}: {e}") from e
 
     # Reconstruct Beats object using parameters from raw_beats and function args
     try:
-        beats = Beats.from_timestamps(
-            timestamps=raw_beats.timestamps,
-            beat_counts=raw_beats.beat_counts,
-            beats_per_bar=raw_beats.beats_per_bar,
+        # Create Beats object from RawBeats, inferring beats_per_bar if not provided
+        beats = Beats(
+            raw_beats=raw_beats,
+            beats_per_bar=None,  # Let Beats infer beats_per_bar from the pattern
             tolerance_percent=tolerance_percent,
             min_measures=min_measures
         )
         if verbose:
-            print(f"Reconstructed Beats object using bpb={raw_beats.beats_per_bar}, tol={tolerance_percent}, min_meas={min_measures}")
+            print(f"Reconstructed Beats object using bpb={beats.beats_per_bar}, tol={tolerance_percent}, min_meas={min_measures}")
     except Exception as e:
         raise RuntimeError(f"Failed to reconstruct Beats object: {e}") from e
 

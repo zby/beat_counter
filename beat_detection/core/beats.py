@@ -9,6 +9,9 @@ import json
 from pathlib import Path
 import dataclasses
 
+# Define TypeVar for RawBeats *before* Beats class uses it
+T_RawBeats = TypeVar("T_RawBeats", bound="RawBeats")
+
 MAX_START_TIME = 30.0
 
 class BeatCalculationError(Exception):
@@ -62,88 +65,85 @@ class Beats:
     )
     end_regular_beat_idx: int  # Index+1 of the last beat considered part of the regular section (exclusive index)
 
-    @classmethod
-    def from_timestamps(
-        cls,
-        timestamps: np.ndarray,
-        beats_per_bar: int,
-        beat_counts: np.ndarray,  # Use pre-calculated counts
+    def __init__(
+        self,
+        raw_beats: "RawBeats", # Use forward reference string
+        beats_per_bar: Optional[int] = None,
         tolerance_percent: float = 10.0,
         min_measures: int = 5,  # Minimum consistent measures required
         max_start_time: float = MAX_START_TIME,
-    ) -> "Beats":
+    ):
         """
-        Factory method to create a Beats object from raw timestamp data and counts.
+        Initializes the Beats object from raw beat data.
         Calculates statistics and identifies the longest regular section.
+        Infers beats_per_bar from raw_beats.beat_counts if not provided.
 
         Raises:
-        -------
+        -------\
         BeatCalculationError
-            If beat statistics or the regular section cannot be reliably calculated.
+            If beat statistics or the regular section cannot be reliably calculated,
+            or if beats_per_bar cannot be inferred (e.g., empty counts).
+        ValueError
+            If input RawBeats data is invalid (handled by RawBeats __post_init__).
         """
-        # --- Input Validation ---
-        if not isinstance(timestamps, np.ndarray) or timestamps.ndim != 1:
-            raise BeatCalculationError("Timestamps must be a 1D numpy array.")
-        if not isinstance(beat_counts, np.ndarray) or beat_counts.ndim != 1:
-            raise BeatCalculationError("beat_counts must be a 1D numpy array.")
-        if len(timestamps) != len(beat_counts):
-            raise BeatCalculationError(
-                f"Timestamp count ({len(timestamps)}) does not match beat_counts count ({len(beat_counts)})."
-            )
+        # --- Input Validation (RawBeats validation happens in its __post_init__) ---
+        if not isinstance(raw_beats, RawBeats):
+            raise TypeError("Input must be a RawBeats object.")
 
+        timestamps = raw_beats.timestamps
+        input_beat_counts = raw_beats.beat_counts # Use original counts for inference
         num_beats = len(timestamps)
 
-        # Check for strictly increasing timestamps
-        intervals = np.diff(timestamps)
-        if num_beats > 1 and not np.all(intervals > 0):
-            first_bad_idx = np.where(intervals <= 0)[0][0]
-            raise BeatCalculationError(
-                f"Timestamps must be strictly increasing. Error found after index {first_bad_idx} "
-                f"(timestamps: {timestamps[first_bad_idx]:.4f} -> {timestamps[first_bad_idx+1]:.4f})"
-            )
+        # --- Infer beats_per_bar if not provided ---
+        if beats_per_bar is None:
+            if num_beats == 0 or len(input_beat_counts) == 0:
+                raise BeatCalculationError(
+                    "Cannot infer beats_per_bar: No beats provided in RawBeats."
+                )
+            # Exclude potential zero counts (used for errors/flags) from inference
+            valid_counts = input_beat_counts[input_beat_counts > 0]
+            if len(valid_counts) == 0:
+                 raise BeatCalculationError(
+                    "Cannot infer beats_per_bar: No valid (non-zero) beat counts found."
+                )
+            inferred_bpb = int(np.max(valid_counts))
+            if inferred_bpb <= 1:
+                 raise BeatCalculationError(
+                    f"Inferred beats_per_bar ({inferred_bpb}) is invalid. Must be > 1."
+                )
+            self.beats_per_bar = inferred_bpb
+        else:
+             # --- Validate provided beats_per_bar ---
+            if not isinstance(beats_per_bar, int) or beats_per_bar <= 1:
+                raise BeatCalculationError(
+                    f"Invalid beats_per_bar provided: {beats_per_bar}. Must be an integer > 1."
+                )
+            self.beats_per_bar = beats_per_bar
 
+        # Continue with existing validation/calculation logic, using self.beats_per_bar
+        # --- Further Validation ---
         if not isinstance(tolerance_percent, (int, float)) or tolerance_percent < 0:
             raise BeatCalculationError(
                 f"Invalid tolerance_percent provided: {tolerance_percent}. Must be a non-negative number."
             )
 
-        if beats_per_bar <= 1:
-            raise BeatCalculationError(
-                f"Invalid beats_per_bar provided: {beats_per_bar}. Must be 2 or greater."
-            )
-
-        # Check minimum required beats AFTER potentially processing beat_counts
-        # We need the median interval first to find the regular sequence.
-
-        # This check implicitly handles num_beats <= 1 if min_measures >= 1
-        # Moved this check lower, after median interval calculation, as the requirement
-        # is primarily about having enough beats for a *stable* section analysis.
-        # required_beats = beats_per_bar * min_measures
-        # if num_beats < required_beats:
-        #     raise BeatCalculationError(
-        #         f"Insufficient number of total beats ({num_beats}) for analysis start with beats_per_bar {beats_per_bar}. "
-        #         f"Requires at least {required_beats} beats ({min_measures} measures)."
-        #     )
-        # --- End Basic Validation ---
-
-        # 1. Prepare beat_data array
-        # Apply the logic: counts > beats_per_bar or <= 0 are considered irregular (represented as 0)
+        # 1. Prepare beat_data array using the determined/validated beats_per_bar
+        # Apply the logic: counts > self.beats_per_bar or <= 0 are considered irregular (represented as 0)
         processed_beat_counts = np.where(
-            (beat_counts > 0) & (beat_counts <= beats_per_bar),
-            beat_counts,
+            (input_beat_counts > 0) & (input_beat_counts <= self.beats_per_bar),
+            input_beat_counts,
             0,  # Mark invalid/out-of-range counts as 0
         ).astype(
             int
         )  # Ensure integer type
 
         # Stack timestamps and processed counts into the main data array
-        beat_data = np.stack((timestamps, processed_beat_counts), axis=1)
+        self.beat_data = np.stack((timestamps, processed_beat_counts), axis=1)
 
         # 2. Calculate intervals and overall median interval
         if num_beats <= 1:
             # Handle cases with 0 or 1 beat
             median_interval = 0.0
-            tempo_bpm = 0.0
             tolerance_interval_calculated = 0.0
             overall_stats = BeatStatistics(
                 mean_interval=0.0,
@@ -151,16 +151,16 @@ class Beats:
                 std_interval=0.0,
                 min_interval=0.0,
                 max_interval=0.0,
-                irregularity_percent=(
+                irregularity_percent=(\
                     100.0 if num_beats == 1 and processed_beat_counts[0] == 0 else 0.0
-                ),  # 1 beat is regular if count is valid
+                ), # 1 beat is regular if count is valid
                 tempo_bpm=0.0,
                 total_beats=num_beats,
             )
             # Cannot find a regular sequence if fewer than 2 beats
             start_regular_beat_idx_calc = 0
-            end_regular_beat_idx_calc = num_beats  # Treat as all irregular/degenerate
-            regular_stats = BeatStatistics(  # Empty stats
+            end_regular_beat_idx_calc = num_beats # Treat as all irregular/degenerate
+            regular_stats = BeatStatistics( # Empty stats
                 mean_interval=0.0,
                 median_interval=0.0,
                 std_interval=0.0,
@@ -170,45 +170,42 @@ class Beats:
                 tempo_bpm=0.0,
                 total_beats=0,
             )
-            if num_beats >= 1:
-                # Need to check the min_measures requirement even for few beats
-                required_beats = beats_per_bar * min_measures
-                if num_beats < required_beats:
-                    raise BeatCalculationError(
-                        f"Insufficient number of beats ({num_beats}) for analysis with beats_per_bar {beats_per_bar}. "
-                        f"Requires at least {required_beats} beats ({min_measures} measures)."
-                    )
-                # If we pass the check but still have < 2 beats, it implies min_measures allows it,
-                # but we still can't calculate regular stats properly. The empty stats above handle this.
 
-            # Construct and return early for 0 or 1 beat cases
-            return cls(
-                beat_data=beat_data,
-                overall_stats=overall_stats,
-                regular_stats=regular_stats,
-                beats_per_bar=beats_per_bar,
-                tolerance_percent=tolerance_percent,
-                tolerance_interval=tolerance_interval_calculated,
-                min_measures=min_measures,
-                start_regular_beat_idx=start_regular_beat_idx_calc,
-                end_regular_beat_idx=end_regular_beat_idx_calc,
-            )
+            # We still need to check min_measures, even if we can't find a regular sequence
+            required_beats = self.beats_per_bar * min_measures
+            if num_beats < required_beats:
+                 raise BeatCalculationError(
+                    f"Insufficient number of beats ({num_beats}) for analysis with beats_per_bar {self.beats_per_bar}. "
+                    f"Requires at least {required_beats} beats ({min_measures} measures)."
+                 )
+
+            # Assign calculated values and return early for 0 or 1 beat cases
+            self.overall_stats = overall_stats
+            self.regular_stats = regular_stats
+            self.tolerance_percent = tolerance_percent
+            self.tolerance_interval = tolerance_interval_calculated
+            self.min_measures = min_measures
+            self.start_regular_beat_idx = start_regular_beat_idx_calc
+            self.end_regular_beat_idx = end_regular_beat_idx_calc
+            return # Exit __init__
 
         # --- Calculations for 2+ beats ---
-        intervals = np.diff(beat_data[:, 0])  # Use timestamp column
+        intervals = np.diff(self.beat_data[:, 0]) # Use timestamp column
         median_interval = np.median(intervals)
         if median_interval <= 0:
+            first_bad_idx = np.where(np.diff(timestamps) <= 0)[0][0]
             raise BeatCalculationError(
                 f"Cannot calculate reliable beat statistics: Median interval is {median_interval:.4f}. "
-                f"Check input timestamps: {beat_data[:5, 0]}..."
+                f"Timestamp sequence issue near index {first_bad_idx} "
+                f"(timestamps: {timestamps[first_bad_idx]:.4f} -> {timestamps[first_bad_idx+1]:.4f})?"
             )
 
         tempo_bpm = 60 / median_interval
         tolerance_interval_calculated = median_interval * (tolerance_percent / 100.0)
 
         # 3. Calculate overall statistics (irregularity based on count==0)
-        irregular_count = np.sum(beat_data[:, 1] == 0)  # Count where beat_count is 0
-        overall_irregularity_percent = (
+        irregular_count = np.sum(self.beat_data[:, 1] == 0) # Count where beat_count is 0
+        overall_irregularity_percent = (\
             (irregular_count / num_beats) * 100 if num_beats > 0 else 0.0
         )
 
@@ -224,76 +221,75 @@ class Beats:
         )
 
         # 4. Find the longest regular sequence using the static helper
-        try:
-            # Pass the beat_data array directly
-            # Specify max_start_time=30.0
-            start_idx, end_idx, _ = cls._find_longest_regular_sequence_static(
-                beat_data,
-                tolerance_percent,
-                beats_per_bar,
-                median_interval,
-                tolerance_interval_calculated,
-                max_start_time=MAX_START_TIME,
-            )
-            start_regular_beat_idx_calc = start_idx
-            end_regular_beat_idx_calc = (
-                end_idx + 1
-            )  # Convert inclusive end index to exclusive
+        # Pass the beat_data array directly
+        # Specify max_start_time
+        start_idx, end_idx, _ = self._find_longest_regular_sequence_static(
+            self.beat_data,
+            tolerance_percent,
+            self.beats_per_bar,
+            median_interval,
+            tolerance_interval_calculated,
+            max_start_time=max_start_time, # Pass max_start_time argument
+        )
+        start_regular_beat_idx_calc = start_idx
+        end_regular_beat_idx_calc = (\
+            end_idx + 1
+        ) # Convert inclusive end index to exclusive
 
-            # Check if the found sequence meets the minimum length requirement
-            sequence_length = end_regular_beat_idx_calc - start_regular_beat_idx_calc
-            required_beats = beats_per_bar * min_measures
-            if sequence_length < required_beats:
-                raise BeatCalculationError(
-                    f"Longest regular sequence found ({sequence_length} beats from index {start_idx} to {end_idx}) is shorter than required "
-                    f"({required_beats} beats = {min_measures} measures of {beats_per_bar}/X time)."
-                )
-        except BeatCalculationError as e:
-            # Re-raise with more context if finding the sequence failed
+        # Check if the found sequence meets the minimum length requirement
+        sequence_length = end_regular_beat_idx_calc - start_regular_beat_idx_calc
+        required_beats = self.beats_per_bar * min_measures
+        if sequence_length < required_beats:
+            # This error will now propagate directly
             raise BeatCalculationError(
-                f"Could not determine a stable regular section: {e}"
-            ) from e
+                f"Longest regular sequence found ({sequence_length} beats from index {start_idx} to {end_idx}) is shorter than required "
+                f"({required_beats} beats = {min_measures} measures of {self.beats_per_bar}/X time)."
+            )
 
         # 5. Calculate statistics for the identified regular section
         if start_regular_beat_idx_calc >= end_regular_beat_idx_calc:
-            raise BeatCalculationError(
-                f"Invalid regular section bounds calculated: start={start_regular_beat_idx_calc}, end={end_regular_beat_idx_calc}. "
-                f"Cannot calculate regular statistics."
+            # This case should ideally be prevented by the sequence length check above,
+            # but keep as a safeguard.
+             raise BeatCalculationError(
+                f"Invalid regular section bounds calculated: start={start_regular_beat_idx_calc}, end={end_regular_beat_idx_calc} "
+                f"(length {end_regular_beat_idx_calc - start_regular_beat_idx_calc}). Cannot calculate regular statistics."
             )
 
+
         # Extract timestamps for the regular section
-        regular_timestamps = beat_data[
+        regular_timestamps = self.beat_data[\
             start_regular_beat_idx_calc:end_regular_beat_idx_calc, 0
         ]
         num_regular_beats = len(regular_timestamps)
 
-        if num_regular_beats <= 1:
-            # Handle case where regular section has 0 or 1 beat (shouldn't happen if required_beats > 1)
-            regular_mean_interval = 0.0
-            regular_median_interval = 0.0
-            regular_std_interval = 0.0
-            regular_min_interval = 0.0
-            regular_max_interval = 0.0
-            regular_tempo_bpm = 0.0
-            regular_irregularity_percent = (
-                0.0  # No intervals or counts to check within the section
-            )
-        else:
-            regular_intervals = np.diff(regular_timestamps)
-            if (
-                len(regular_intervals) == 0
-            ):  # Should not happen if num_regular_beats > 1
-                raise BeatCalculationError(
-                    f"Internal error: Regular section has {num_regular_beats} beats, "
-                    f"but no intervals were extracted for statistics. Indices: {start_regular_beat_idx_calc} to {end_regular_beat_idx_calc-1}"
-                )
+        # The sequence length check above ensures num_regular_beats >= required_beats.
+        # If required_beats >= 2 (which it should be if beats_per_bar > 1, min_measures >= 1),
+        # then num_regular_beats will be >= 2.
+        # Therefore, we don't need the explicit check for num_regular_beats <= 1 here.
 
+        regular_intervals = np.diff(regular_timestamps)
+        if (\
+            len(regular_intervals) == 0 and num_regular_beats > 1
+        ): # Should not happen if num_regular_beats > 1
+            raise BeatCalculationError(\
+                f"Internal error: Regular section has {num_regular_beats} beats, "\
+                f"but no intervals were extracted for statistics. Indices: {start_regular_beat_idx_calc} to {end_regular_beat_idx_calc-1}"\
+            )
+        elif num_regular_beats <= 1: # Handle case where required_beats was 1 (e.g. bpb=1, min_measures=1 - though bpb=1 is disallowed)
+             regular_mean_interval = 0.0
+             regular_median_interval = 0.0
+             regular_std_interval = 0.0
+             regular_min_interval = 0.0
+             regular_max_interval = 0.0
+             regular_tempo_bpm = 0.0
+             regular_irregularity_percent = 0.0
+        else:
             regular_median_interval = np.median(regular_intervals)
             if regular_median_interval <= 0:
-                raise BeatCalculationError(
-                    f"Cannot calculate reliable regular beat statistics: Median interval is {regular_median_interval:.4f}. "
-                    f"Regular section indices: {start_regular_beat_idx_calc}-{end_regular_beat_idx_calc}. "
-                    f"Intervals: {regular_intervals[:5]}..."
+                raise BeatCalculationError(\
+                    f"Cannot calculate reliable regular beat statistics: Median interval is {regular_median_interval:.4f}. "\
+                    f"Regular section indices: {start_regular_beat_idx_calc}-{end_regular_beat_idx_calc}. "\
+                    f"Intervals: {regular_intervals[:5]}..."\
                 )
             regular_tempo_bpm = 60 / regular_median_interval
             regular_mean_interval = np.mean(regular_intervals)
@@ -302,11 +298,11 @@ class Beats:
             regular_max_interval = np.max(regular_intervals)
 
             # Calculate irregularity within the regular section (based on count==0)
-            regular_section_counts = beat_data[
+            regular_section_counts = self.beat_data[\
                 start_regular_beat_idx_calc:end_regular_beat_idx_calc, 1
             ]
             regular_section_irregular_count = np.sum(regular_section_counts == 0)
-            regular_irregularity_percent = (
+            regular_irregularity_percent = (\
                 regular_section_irregular_count / num_regular_beats
             ) * 100
 
@@ -316,23 +312,20 @@ class Beats:
             std_interval=regular_std_interval,
             min_interval=regular_min_interval,
             max_interval=regular_max_interval,
-            irregularity_percent=regular_irregularity_percent,  # Based on count==0 within the section
+            irregularity_percent=regular_irregularity_percent, # Based on count==0 within the section
             tempo_bpm=regular_tempo_bpm,
             total_beats=num_regular_beats,
         )
 
-        # 6. Construct the final Beats object
-        return cls(
-            beat_data=beat_data,
-            overall_stats=overall_stats,
-            regular_stats=regular_stats,
-            beats_per_bar=beats_per_bar,
-            tolerance_percent=tolerance_percent,
-            tolerance_interval=tolerance_interval_calculated,
-            min_measures=min_measures,
-            start_regular_beat_idx=start_regular_beat_idx_calc,
-            end_regular_beat_idx=end_regular_beat_idx_calc,
-        )
+        # 6. Assign final instance attributes
+        self.overall_stats = overall_stats
+        self.regular_stats = regular_stats
+        # self.beats_per_bar = beats_per_bar # Assigned earlier
+        self.tolerance_percent = tolerance_percent
+        self.tolerance_interval = tolerance_interval_calculated
+        self.min_measures = min_measures
+        self.start_regular_beat_idx = start_regular_beat_idx_calc
+        self.end_regular_beat_idx = end_regular_beat_idx_calc
 
     def to_dict(self) -> Dict:
         """Convert the Beats object to a dictionary suitable for JSON serialization."""
@@ -573,50 +566,65 @@ class Beats:
 
         return best_start, best_end, best_irregularity
 
+    # ------------------------------------------------------------------
+    # Representation helpers
+    # ------------------------------------------------------------------
+    def __repr__(self) -> str:  # Added to avoid AttributeError during partial init
+        """Return a safe, informative representation even if partially constructed."""
+        if not hasattr(self, "beat_data"):
+            # Partially constructed
+            return f"<Beats (partially initialized) at {hex(id(self))}>"
+        try:
+            beats_len = self.beat_data.shape[0]
+        except Exception:
+            beats_len = "?"
+        bpb = getattr(self, "beats_per_bar", "?")
+        start_idx = getattr(self, "start_regular_beat_idx", "?")
+        end_idx = getattr(self, "end_regular_beat_idx", "?")
+        return (
+            f"<Beats beats={beats_len}, bpb={bpb}, regular_section={start_idx}-{end_idx} at {hex(id(self))}>"
+        )
 
-T = TypeVar("T", bound="RawBeats")
 
-@dataclasses.dataclass(frozen=True)
+@dataclass
 class RawBeats:
-    """Stores the raw timestamp/count data and the beats_per_bar used for detection."""
+    """Stores the raw timestamp/count data detected from audio."""
 
     timestamps: np.ndarray
     beat_counts: np.ndarray
-    beats_per_bar: int
-    # tolerance_percent: float # Removed
-    # min_measures: int      # Removed
 
     def __post_init__(self):
-        if self.timestamps.shape != self.beat_counts.shape:
+        # Basic validation moved from Beats.from_timestamps
+        if not isinstance(self.timestamps, np.ndarray) or self.timestamps.ndim != 1:
+            raise ValueError("Timestamps must be a 1D numpy array.")
+        if not isinstance(self.beat_counts, np.ndarray) or self.beat_counts.ndim != 1:
+            raise ValueError("Beat counts must be a 1D numpy array.")
+        if len(self.timestamps) != len(self.beat_counts):
             raise ValueError(
-                "Timestamps and beat_counts must have the same shape. "
-                f"Got {self.timestamps.shape} and {self.beat_counts.shape}"
-            )
-        if self.timestamps.ndim != 1:
-            raise ValueError(
-                "Timestamps must be a 1D array. "
-                f"Got shape {self.timestamps.shape}"
-            )
-        if not isinstance(self.beats_per_bar, int) or self.beats_per_bar <= 0:
-            raise ValueError(f"beats_per_bar must be a positive integer, got {self.beats_per_bar}")
-        # Removed validation for tolerance_percent and min_measures
+                f"Timestamp count ({len(self.timestamps)}) does not match beat count ({len(self.beat_counts)}).")
+        # Check for strictly increasing timestamps only if there's more than one
+        if len(self.timestamps) > 1:
+            intervals = np.diff(self.timestamps)
+            if not np.all(intervals > 0):
+                first_bad_idx = np.where(intervals <= 0)[0][0]
+                raise ValueError(
+                    f"Timestamps must be strictly increasing. Error found after index {first_bad_idx} "
+                    f"(timestamps: {self.timestamps[first_bad_idx]:.4f} -> {self.timestamps[first_bad_idx+1]:.4f})")
 
     def save_to_file(self, path: Path | str) -> None:
-        """Saves the raw beat data and beats_per_bar to a JSON file."""
-        save_path = Path(path)
-        save_path.parent.mkdir(parents=True, exist_ok=True)
+        """Saves the raw beat data to a JSON file."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         data_to_save = {
-            "beats_per_bar": self.beats_per_bar,
-            # Removed tolerance_percent, min_measures
             "timestamps": self.timestamps.tolist(),
-            "beat_counts": self.beat_counts.tolist(),
+            "beat_counts": self.beat_counts.astype(int).tolist(),
         }
-        with save_path.open("w") as f:
-            json.dump(data_to_save, f, indent=2)
+        with path.open("w") as f:
+            json.dump(data_to_save, f, indent=4)
 
     @classmethod
-    def load_from_file(cls: Type[T], path: Path | str) -> T:
-        """Loads raw beat data and beats_per_bar from a JSON file."""
+    def load_from_file(cls: Type[T_RawBeats], path: Path | str) -> T_RawBeats:
+        """Loads raw beat data from a JSON file."""
         load_path = Path(path)
         if not load_path.is_file():
             raise FileNotFoundError(f"Beat file not found: {load_path}")
@@ -629,16 +637,13 @@ class RawBeats:
 
         # Check for required keys
         required_keys = {
-            "beats_per_bar",
-            # Removed tolerance_percent, min_measures
             "timestamps",
             "beat_counts",
         }
         missing_keys = required_keys - set(data.keys())
         if missing_keys:
             raise ValueError(
-                f"File {load_path} is missing required keys: {sorted(list(missing_keys))}."
-            )
+                f"File {load_path} is missing required keys: {sorted(list(missing_keys))}.")
 
         timestamps_list = data["timestamps"]
         beat_counts_list = data["beat_counts"]
@@ -646,23 +651,14 @@ class RawBeats:
         if len(timestamps_list) != len(beat_counts_list):
             raise ValueError(
                 f"Mismatched lengths in {load_path}: "
-                f"{len(timestamps_list)} timestamps vs {len(beat_counts_list)} counts."
-            )
+                f"{len(timestamps_list)} timestamps vs {len(beat_counts_list)} counts.")
 
         timestamps = np.array(timestamps_list, dtype=float)
         beat_counts = np.array(beat_counts_list, dtype=int)
-
-        try:
-             beats_per_bar = int(data["beats_per_bar"])
-             # Removed tolerance_percent, min_measures
-        except (TypeError, ValueError) as e:
-             raise ValueError(f"Invalid type for beats_per_bar in {load_path}: {e}") from e
 
         # Rely on __post_init__ for final validation
         return cls(
             timestamps=timestamps,
             beat_counts=beat_counts,
-            beats_per_bar=beats_per_bar,
-            # Removed tolerance_percent, min_measures
         )
 

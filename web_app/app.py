@@ -282,6 +282,8 @@ async def index_route(
 async def upload_audio_route(
     request: Request,
     file: UploadFile = File(...),
+    algorithm: str = Form("madmom"),  # Default to madmom
+    beats_per_bar: Optional[int] = Form(None),  # Optional override
     storage: FileMetadataStorage = Depends(get_storage),
     config: Config = Depends(get_config),
     user: Dict[str, Any] = Depends(require_auth),
@@ -308,7 +310,12 @@ async def upload_audio_route(
         raise HTTPException(status_code=500, detail=f"Error saving uploaded file: {e}")
 
     try:
-        task = detect_beats_task.delay(file_id)
+        # Pass algorithm and beats_per_bar to the task
+        task = detect_beats_task.delay(
+            file_id,
+            algorithm=algorithm,
+            beats_per_bar=beats_per_bar if beats_per_bar else None
+        )
         if not task or not task.id:
             raise RuntimeError("Failed to get task ID after submission.")
     except Exception as e:

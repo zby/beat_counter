@@ -35,6 +35,23 @@
                         <input type="file" id="file-input" name="file" accept=".mp3,.wav,.flac,.m4a,.ogg" hidden>
                         <label for="file-input" class="upload-button">Choose File</label>
                         <p>or drag and drop file here</p>
+                        
+                        <div class="form-options">
+                            <div class="form-group">
+                                <label for="algorithm">Beat Detection Algorithm:</label>
+                                <select id="algorithm" name="algorithm">
+                                    <option value="madmom" selected>Madmom (Default)</option>
+                                    <option value="beat_this">Beat This</option>
+                                </select>
+                                <small>Choose the algorithm for beat detection</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="beats_per_bar">Beats Per Bar (Optional):</label>
+                                <input type="number" id="beats_per_bar" name="beats_per_bar" min="2" max="12" placeholder="Auto-detect">
+                                <small>Override time signature detection (e.g., 3 for 3/4, 4 for 4/4)</small>
+                            </div>
+                        </div>
                     </form>
                     <div id="file-info" class="hidden">
                         <p>Selected file: <span id="file-name"></span></p>

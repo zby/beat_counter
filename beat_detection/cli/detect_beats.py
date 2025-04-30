@@ -23,7 +23,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from beat_detection.core.detector import BeatDetector
+from beat_detection.core.factory import get_beat_detector
+from beat_detection.core.beats import Beats
 from beat_detection.utils.beat_file import save_beats
 
 
@@ -48,6 +49,15 @@ def parse_args() -> argparse.Namespace:
         help="Path to save the output .beats file. Defaults to <audio_file>.beats",
     )
 
+    # Algorithm selection
+    parser.add_argument(
+        "--algorithm",
+        type=str,
+        default="madmom",
+        choices=["madmom", "beat_this"],
+        help="Beat detection algorithm to use.",
+    )
+    
     # Detection parameters
     parser.add_argument("--min-bpm", type=int, default=60, help="Minimum BPM.")
     parser.add_argument("--max-bpm", type=int, default=240, help="Maximum BPM.")
@@ -61,7 +71,13 @@ def parse_args() -> argparse.Namespace:
         "--beats-per-bar",
         type=int,
         default=None,
-        help="Fix the time-signature numerator.  When omitted the detector tries to infer it.",
+        help="Fix the time-signature numerator. When omitted, it will be inferred from the detected beats.",
+    )
+    parser.add_argument(
+        "--min-measures",
+        type=int,
+        default=2,
+        help="Minimum number of consistent measures required for regular section detection.",
     )
 
     return parser.parse_args()
@@ -84,18 +100,27 @@ def main() -> None:  # noqa: D401 – simple imperative main
         logging.error("Audio file not found: %s", audio_path)
         sys.exit(1)
 
-    # Configure detector – uses project defaults unless user overrides
-    detector = BeatDetector(
+    # Get detector from factory – uses project defaults unless user overrides
+    detector = get_beat_detector(
+        algorithm=args.algorithm,
         min_bpm=args.min_bpm,
         max_bpm=args.max_bpm,
-        beats_per_bar=args.beats_per_bar,
     )
 
     try:
-        # Get RawBeats object (contains bpb)
-        raw_beats = detector.detect_beats(str(audio_path))
+        # Get simplified RawBeats object (timestamps and counts only)
+        raw_beats = detector.detect(str(audio_path))
+        
+        # Create Beats object with optional beats_per_bar override
+        beats = Beats(
+            raw_beats=raw_beats,
+            beats_per_bar=args.beats_per_bar,
+            tolerance_percent=args.tolerance,
+            min_measures=args.min_measures,
+        )
+        
         logging.info(
-            f"Detected beats for {audio_path} with effective beats_per_bar={raw_beats.beats_per_bar}"
+            f"Detected beats for {audio_path} with effective beats_per_bar={beats.beats_per_bar}"
         )
     except Exception as exc:  # fail fast but print cause
         logging.exception("Beat detection failed for %s: %s", audio_path, exc)
@@ -108,7 +133,7 @@ def main() -> None:  # noqa: D401 – simple imperative main
         out_path = audio_path.with_suffix(".beats")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Pass the RawBeats object directly to save_beats
+    # Save the raw_beats object
     save_beats(str(out_path), raw_beats)
     logging.info("Saved raw beats to %s", out_path)
 
