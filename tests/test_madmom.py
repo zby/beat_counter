@@ -1,11 +1,7 @@
 import pytest
 import os  # Import os for file operations
 from pathlib import Path
-from typing import Tuple, Iterator, Optional
 from beat_detection.core.detector import BeatDetector
-from beat_detection.core.beats import BeatCalculationError, Beats, RawBeats
-# from beat_detection.core.video import BeatVideoGenerator # Removed
-from beat_detection.utils.beat_file import load_raw_beats
 from beat_detection.core.factory import get_beat_detector
 import numpy as np
 

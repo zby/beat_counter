@@ -1,21 +1,13 @@
-"""End-to-end tests for the Beat-This! integration.
-
-These tests mirror the legacy *test_process_audio_file.py* suite but run
-through `BeatThisDetector` instead of the Madmom‐based pipeline.
-"""
+"""Functional tests for the Beat-This! integration."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterator, Tuple, Optional
 
 import numpy as np
 import pytest
 import os  # Import os for file operations
 
-from beat_detection.core.beats import Beats, RawBeats, BeatCalculationError
-from beat_detection.utils.beat_file import load_raw_beats
-from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.core.detector import BeatDetector
 from beat_detection.core.factory import get_beat_detector
 
@@ -66,12 +58,10 @@ def test_beat_this_detect_save_load_reconstruct():
     assert raw_beats.timestamps.shape[0] > 0, "No raw beats were detected by beat_this."
 
     # Infer beats_per_bar from the detected counts
-    inferred_beats_per_bar: Optional[int] = None
     assert raw_beats.beat_counts.size > 0, "No beat counts detected by beat_this, cannot infer beats_per_bar."
     assert int(np.max(raw_beats.beat_counts)) == 4, "Inferred beats_per_bar by beat_this is invalid."
 
     # --- 3. Save RawBeats --- 
-    # (Removed try...except)
     raw_beats.save_to_file(output_beats_file)
     print(f"[Test beat_this] Saved simplified raw beats to fixed path: {output_beats_file}")
     assert (

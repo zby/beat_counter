@@ -196,11 +196,18 @@ class MadmomBeatDetector:
 
         # Determine beats_per_bar from the max beat number reported by madmom
         try:
-            # Ensure there's a second column before accessing it
+            # --- Shape Validation ---
+            # Check number of dimensions first
+            if raw_downbeats.ndim != 2:
+                raise BeatCalculationError(
+                    f"Madmom output array has unexpected shape (ndim != 2): {raw_downbeats.shape}"
+                )
+            # Then check number of columns
             if raw_downbeats.shape[1] < 2:
                 raise BeatCalculationError(
-                    "Madmom output array has unexpected shape (less than 2 columns)."
+                    f"Madmom output array has unexpected shape (columns < 2): {raw_downbeats.shape}"
                 )
+            # --- End Shape Validation ---
 
             detected_beats_per_bar = int(np.max(raw_downbeats[:, 1]))
             if detected_beats_per_bar not in SUPPORTED_BEATS_PER_BAR:
@@ -214,8 +221,9 @@ class MadmomBeatDetector:
                     f"Madmom detected an unsupported beats_per_bar: {detected_beats_per_bar}. Using it anyway."
                 )
         except (ValueError, IndexError) as e:
+            # This catch might now be less likely for shape errors, but keep for np.max etc.
             raise BeatCalculationError(
-                f"Could not determine beats_per_bar from madmom output: {e}"
+                f"Could not process madmom output: {e}"
             ) from e
 
         # Return the full array and the determined beats_per_bar

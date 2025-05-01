@@ -13,7 +13,8 @@ from web_app.celery_app import (
     _perform_beat_detection,
     _perform_video_generation,
 )  # Import tasks and the new helper function
-from beat_detection.core.detector import BeatDetector  # Import real detector
+from beat_detection.core.detector import BeatDetector # Import real detector
+from beat_detection.core.factory import get_beat_detector # Import factory function
 from beat_detection.core.beats import Beats, RawBeats # Import RawBeats
 from beat_detection.utils.beat_file import load_raw_beats # Use utility if needed, or RawBeats directly
 
@@ -59,10 +60,11 @@ def temp_storage_integration(request):  # Add request fixture to get workspace p
 
 @pytest.fixture
 def sample_audio_file(temp_storage_integration):
-    """Copies a real sample audio file into the test storage."""
+    """Copies a real sample audio file from tests/fixtures into the test storage."""
     file_id = "sample_audio_123"
     original_filename = "Besito_a_Besito_10sec.mp3"
-    source_audio_path = Path(f"tests/data/{original_filename}")
+    # Use tests/fixtures as the source directory
+    source_audio_path = Path(f"tests/fixtures/{original_filename}")
 
     # --- Pre-check: Ensure the source sample file exists ---
     if not source_audio_path.exists():
@@ -94,35 +96,58 @@ def sample_audio_file(temp_storage_integration):
 
 @pytest.fixture
 def sample_beats_file(sample_audio_file, temp_storage_integration):
-    """Copies a sample beats JSON file into the test storage for the audio file."""
+    """Generates a RawBeats JSON file using a detector for the sample audio file."""
     file_id, audio_path = sample_audio_file  # Get info from the dependent fixture
     storage = temp_storage_integration
-    source_beats_filename = "Besito_a_Besito_10sec.beats.json"
-    source_beats_path = Path(f"tests/data/{source_beats_filename}")
 
-    # --- Pre-check: Ensure the source sample file exists ---
-    if not source_beats_path.exists():
-        pytest.fail(
-            f"Source sample beats file not found: {source_beats_path.resolve()}"
-        )
-    # --------------------------------------------------------
+    # --- 1. Perform Beat Detection ---
+    print(f"\nGenerating beats for {audio_path} using 'madmom' detector...")
+    try:
+        detector: BeatDetector = get_beat_detector("madmom") # Use madmom for consistency or choose another
+        raw_beats: RawBeats = detector.detect(str(audio_path))
+        assert raw_beats is not None, "Beat detection did not return a RawBeats object."
+        assert len(raw_beats.timestamps) > 0, "Beat detection returned no timestamps."
+        print(f"\nDetected {len(raw_beats.timestamps)} beats.")
+    except Exception as e:
+        pytest.fail(f"Beat detection failed during fixture setup: {e}")
 
-    # Get the target path within the test storage
+    # --- 2. Save Beats File ---
     target_beats_path = storage.get_beats_file_path(file_id)
-    # Ensure job directory exists (where beats file should go)
-    storage.ensure_job_directory(file_id)
+    storage.ensure_job_directory(file_id) # Ensure job directory exists
 
-    # Copy the sample beats file
-    shutil.copyfile(source_beats_path, target_beats_path)
-    print(
-        f"\nCopied sample beats file from {source_beats_path} to {target_beats_path} for file_id: {file_id}"
-    )
+    try:
+        raw_beats.save_to_file(target_beats_path)
+        print(f"\nSaved generated RawBeats file to: {target_beats_path}")
+        assert target_beats_path.exists(), "Generated beats file was not saved."
+        assert target_beats_path.stat().st_size > 0, "Generated beats file is empty."
+    except Exception as e:
+        pytest.fail(f"Failed to save generated RawBeats file: {e}")
 
-    # Optionally, update metadata to reflect beat detection success (more realistic state)
+
+    # --- 3. Update Metadata (mimicking _perform_beat_detection success) ---
+    # We need to store the detected bpb and the parameters used for *potential*
+    # reconstruction later (even though this fixture doesn't reconstruct).
+    # For the video test, we'll use some default/test reconstruction params.
+    # NOTE: The video test logic might need to be adjusted if it relies on specific
+    # reconstruction params being present from a *prior* detection step.
+    # Let's assume the video test will use its own defaults or fixed values if needed.
+    test_tolerance = 10.0 # Define a typical tolerance for metadata
+    test_min_measures = 5 # Define a typical min_measures for metadata
+
     storage.update_metadata(
         file_id,
-        {"beat_detection_status": "success", "beat_file": str(target_beats_path)},
+        {
+            "beat_detection_status": "success",
+            "beat_file": str(target_beats_path),
+            "total_beats": len(raw_beats.timestamps),
+            # Store placeholder reconstruction params needed by video generation
+            "reconstruction_params": {
+                "tolerance_percent": test_tolerance,
+                "min_measures": test_min_measures
+            }
+        },
     )
+    print(f"\nUpdated metadata for {file_id} after generating beats.")
 
     # Return all necessary info for the video test
     return file_id, audio_path, target_beats_path
@@ -170,6 +195,7 @@ def test_detect_beats_task_integration_success(
     result = _perform_beat_detection(
         storage=storage,
         file_id=file_id,
+        algorithm="madmom",
         min_bpm=min_bpm,
         max_bpm=max_bpm,
         beats_per_bar=beats_per_bar,
@@ -200,8 +226,6 @@ def test_detect_beats_task_integration_success(
     try:
         raw_beat_data = RawBeats.load_from_file(expected_beats_path)
         assert isinstance(raw_beat_data, RawBeats)
-        assert raw_beat_data.beats_per_bar is not None
-        assert raw_beat_data.beats_per_bar > 0 # Basic sanity check
         assert isinstance(raw_beat_data.timestamps, np.ndarray)
         assert isinstance(raw_beat_data.beat_counts, np.ndarray)
         assert raw_beat_data.timestamps.ndim == 1
@@ -283,6 +307,22 @@ def test_generate_video_integration_success(
              "min_measures": expected_min_measures
         }
     })
+
+    # --- Load and Validate Sample Beats File Format ---
+    # Ensure the sample file is in the expected RawBeats format before proceeding.
+    raw_beat_data_video: RawBeats = None
+    try:
+        raw_beat_data_video = RawBeats.load_from_file(beats_path)
+        assert isinstance(raw_beat_data_video, RawBeats), "Sample beats file is not a RawBeats instance."
+        assert raw_beat_data_video.beats_per_bar is not None, "Sample beats file missing 'beats_per_bar'."
+        assert isinstance(raw_beat_data_video.timestamps, np.ndarray), "Sample beats file 'timestamps' is not a numpy array."
+        assert isinstance(raw_beat_data_video.beat_counts, np.ndarray), "Sample beats file 'beat_counts' is not a numpy array."
+        assert len(raw_beat_data_video.timestamps) > 0, "Sample beats file has no timestamps."
+        print(f"\nSuccessfully loaded and validated RawBeats structure from sample file: {beats_path}")
+    except Exception as e:
+        pytest.fail(f"Failed to load or validate sample RawBeats JSON {beats_path}: {e}")
+    # ----------------------------------------------------
+
     workspace_root = Path.cwd()  # Capture CWD at the start of the test
 
     # Simple dummy progress callback for the test

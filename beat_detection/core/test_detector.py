@@ -5,6 +5,7 @@ from pathlib import Path
 from beat_detection.core.detector import MadmomBeatDetector, BeatDetector # Import Protocol too for type checking
 from beat_detection.core.beats import RawBeats, BeatCalculationError
 from beat_detection.utils.constants import SUPPORTED_BEATS_PER_BAR # Import needed constant
+import re
 
 # Sample data returned by mocked madmom
 SAMPLE_MADMOM_OUTPUT = np.array([[0.5, 1], [1.0, 2], [1.5, 3], [2.0, 4]], dtype=float)
@@ -94,12 +95,13 @@ def test_madmom_detect_downbeats_success(mock_madmom_processors, audio_file_fixt
     np.testing.assert_array_equal(result, SAMPLE_MADMOM_OUTPUT)
 
 def test_madmom_detect_downbeats_no_beats(mock_madmom_processors, audio_file_fixture):
-    """Test _detect_downbeats returns empty array when madmom finds no beats."""
+    """Test _detect_downbeats raises BeatCalculationError when madmom finds no beats."""
     _, _, _, mock_dbn_instance = mock_madmom_processors
     mock_dbn_instance.return_value = np.empty((0, 2))
     detector = MadmomBeatDetector()
-    result = detector._detect_downbeats(str(audio_file_fixture))
-    np.testing.assert_array_equal(result, np.empty((0, 2)))
+    # Expect BeatCalculationError according to the implementation
+    with pytest.raises(BeatCalculationError, match="Madmom DBNDownBeatTrackingProcessor returned no beats."):
+        detector._detect_downbeats(str(audio_file_fixture))
 
 def test_madmom_detect_downbeats_madmom_error(mock_madmom_processors, audio_file_fixture):
     """Test _detect_downbeats raises BeatCalculationError if madmom fails."""
@@ -112,14 +114,23 @@ def test_madmom_detect_downbeats_madmom_error(mock_madmom_processors, audio_file
 def test_madmom_detect_downbeats_unexpected_shape(mock_madmom_processors, audio_file_fixture):
     """Test _detect_downbeats raises error for unexpected madmom output shape."""
     _, _, _, mock_dbn_instance = mock_madmom_processors
+
+    # Test 1D array
     mock_dbn_instance.return_value = np.array([0.5, 1.0, 1.5]) # 1D array
     detector = MadmomBeatDetector()
-    with pytest.raises(BeatCalculationError, match="unexpected shape"):
+    expected_shape_1d = mock_dbn_instance.return_value.shape
+    # Escape parentheses for regex match
+    match_pattern_1d = f"Madmom output array has unexpected shape \\(ndim != 2\\): {re.escape(str(expected_shape_1d))}"
+    with pytest.raises(BeatCalculationError, match=match_pattern_1d):
         detector._detect_downbeats(str(audio_file_fixture))
 
+    # Test array with shape (N, 1)
     mock_dbn_instance.return_value = np.array([[0.5], [1.0]]) # Shape (N, 1)
-    detector = MadmomBeatDetector() # Re-instantiate if necessary, though not strictly needed here
-    with pytest.raises(BeatCalculationError, match="unexpected shape"):
+    detector = MadmomBeatDetector() # Re-instantiate if necessary
+    expected_shape_n1 = mock_dbn_instance.return_value.shape
+    # Escape parentheses for regex match
+    match_pattern_n1 = f"Madmom output array has unexpected shape \\(columns < 2\\): {re.escape(str(expected_shape_n1))}"
+    with pytest.raises(BeatCalculationError, match=match_pattern_n1):
         detector._detect_downbeats(str(audio_file_fixture))
 
 

@@ -182,3 +182,4 @@ cython_debug/
 /web_app/config/config.json
 /web_app/config/users.json
 
+/tests/output/
