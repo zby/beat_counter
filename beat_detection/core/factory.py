@@ -2,6 +2,7 @@
 Factory for creating beat detectors.
 """
 from typing import Dict, Type, Optional, Any
+import inspect  # Add inspect import
 
 from beat_detection.core.detector import BeatDetector, MadmomBeatDetector
 from beat_detection.core.beat_this_detector import BeatThisDetector
@@ -53,22 +54,16 @@ def get_beat_detector(algorithm: str = "madmom", **kwargs: Any) -> BeatDetector:
     
     detector_class = DETECTOR_REGISTRY[algorithm]
     
-    # Filter kwargs based on the detector type
-    filtered_kwargs = {}
+    # Get the signature of the detector's __init__ method
+    init_signature = inspect.signature(detector_class.__init__)
+    valid_params = {param.name for param in init_signature.parameters.values()}
     
-    # Common parameters for all detectors
-    if "progress_callback" in kwargs:
-        filtered_kwargs["progress_callback"] = kwargs["progress_callback"]
+    # Filter kwargs to only include valid parameters for the detector's __init__
+    filtered_kwargs = {
+        key: value for key, value in kwargs.items() if key in valid_params
+    }
     
-    # Algorithm-specific parameters
-    if algorithm == "madmom":
-        # MadmomBeatDetector parameters
-        for param in ["min_bpm", "max_bpm", "fps"]:
-            if param in kwargs:
-                filtered_kwargs[param] = kwargs[param]
-    elif algorithm == "beat_this":
-        # BeatThisDetector parameters
-        if "file2beats_processor" in kwargs:
-            filtered_kwargs["file2beats_processor"] = kwargs["file2beats_processor"]
+    # Debugging: Print filtered kwargs
+    # print(f"Initializing {detector_class.__name__} with: {filtered_kwargs}")
     
     return detector_class(**filtered_kwargs)
