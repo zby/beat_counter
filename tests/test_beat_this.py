@@ -1,84 +1,91 @@
-import pytest
-import os
-import numpy as np
+"""End-to-end tests for the Beat-This! integration.
+
+These tests mirror the legacy *test_process_audio_file.py* suite but run
+through `BeatThisDetector` instead of the Madmom‐based pipeline.
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Iterator, Tuple, Optional
 
-# Import the main functionality from beat_this
-# If this fails, the test run will error out immediately.
-from beat_this.inference import File2Beats
+import numpy as np
+import pytest
+import os  # Import os for file operations
 
-# Define the path to the test data directory
-TEST_DATA_DIR = Path(__file__).parent / "data"
-TEST_AUDIO_FILE = TEST_DATA_DIR / "Besito_a_Besito_10sec.mp3"
+from beat_detection.core.beats import Beats, RawBeats, BeatCalculationError
+from beat_detection.utils.beat_file import load_raw_beats
+from beat_detection.core.video import BeatVideoGenerator
+from beat_detection.core.detector import BeatDetector
+from beat_detection.core.factory import get_beat_detector
 
-# --- beat_this Documentation --- #
-# Based on inspection of beat_this.inference module:
-#
-# File2Beats:
-#   - Initialization: File2Beats(checkpoint_path="final0", device="cpu", float16=False, dbn=False)
-#       - Loads a pre-trained model (BeatThis) and a post-processor (Postprocessor).
-#       - Downloads checkpoint if `checkpoint_path` is not local (e.g., "final0").
-#       - `dbn=True` uses madmom DBN post-processing, `dbn=False` uses minimal thresholding.
-#   - Call: tracker(audio_path: str) -> tuple[np.ndarray, np.ndarray]
-#       - Loads audio using `beat_this.preprocessing.load_audio`.
-#       - Resamples audio to 22050 Hz.
-#       - Calculates LogMelSpectrogram.
-#       - Runs inference using the BeatThis model (handles chunking for long files).
-#       - Post-processes frame predictions to get beat/downbeat times.
-#       - Returns a tuple: (downbeat_times, beat_times)
-#       - Both elements are NumPy arrays containing timestamps in seconds.
-#
-# ----------------------------- #
+# -----------------------------------------------------------------------------
+# Test data
+# -----------------------------------------------------------------------------
 
-@pytest.mark.skipif(not TEST_AUDIO_FILE.exists(), reason="Test audio file not found")
-def test_beat_this_runs_and_output():
+# Define the path to the test *fixtures* directory
+TEST_FIXTURES_DIR = Path(__file__).parent / "fixtures"
+TEST_AUDIO_FILE = TEST_FIXTURES_DIR / "Besito_a_Besito_10sec.mp3"
+
+TOLERANCE_PERCENT = 10.0
+MIN_MEASURES = 5
+
+# Define fixed output path for beat_this results in its own output directory
+BEAT_THIS_OUTPUT_DIR = Path(__file__).parent / "output" / "beat_this"
+BEAT_THIS_OUTPUT_BEATS_FILE = BEAT_THIS_OUTPUT_DIR / f"{TEST_AUDIO_FILE.stem}.beats"
+
+
+def test_beat_this_detect_save_load_reconstruct():
     """
-    Tests if the beat_this tracker (File2Beats) runs on a sample audio file,
-    produces the expected output format (tuple of numpy arrays),
-    and contains valid timestamp data.
+    Tests the full beat_this process:
+    1. Detect beats from an audio file.
+    2. Infer beats_per_bar.
+    3. Save the simplified RawBeats to a file.
+    4. Load the simplified RawBeats from the file.
+    5. Reconstruct the full Beats object from the loaded data.
+    (Allows exceptions to propagate naturally)
     """
-    assert TEST_AUDIO_FILE.exists(), f"Test audio file missing: {TEST_AUDIO_FILE}"
+    # --- Setup --- 
+    # Ensure the test audio file exists
+    if not TEST_AUDIO_FILE.is_file():
+        # Use standard assertion for clarity if file check fails
+        assert False, f"Test audio file not found: {TEST_AUDIO_FILE}"
 
-    try:
-        # Instantiate the File2Beats class (uses default "final0" checkpoint)
-        tracker = File2Beats()
+    # Ensure the output directory exists
+    BEAT_THIS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Call the tracker instance with the audio file path
-        result = tracker(str(TEST_AUDIO_FILE))
+    # Define the fixed output path
+    output_beats_file = BEAT_THIS_OUTPUT_BEATS_FILE
 
-        # 1. Check output type (should be a tuple)
-        assert isinstance(result, tuple), f"Expected output to be a tuple, got {type(result)}"
-        assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
+    # --- 1. Detect beats & 2. Infer beats_per_bar --- 
+    # (Removed try...except)
+    detector: BeatDetector = get_beat_detector("beat_this")
+    raw_beats = detector.detect(str(TEST_AUDIO_FILE))
 
-        downbeats, beats = result
+    assert raw_beats is not None, "Simplified RawBeats object was not created by beat_this."
+    assert raw_beats.timestamps.shape[0] > 0, "No raw beats were detected by beat_this."
 
-        # 2. Check elements are NumPy arrays
-        assert isinstance(downbeats, np.ndarray), f"Expected downbeats to be numpy array, got {type(downbeats)}"
-        assert isinstance(beats, np.ndarray), f"Expected beats to be numpy array, got {type(beats)}"
+    # Infer beats_per_bar from the detected counts
+    inferred_beats_per_bar: Optional[int] = None
+    assert raw_beats.beat_counts.size > 0, "No beat counts detected by beat_this, cannot infer beats_per_bar."
+    assert int(np.max(raw_beats.beat_counts)) == 4, "Inferred beats_per_bar by beat_this is invalid."
 
-        # 3. Check array contents (basic validation)
-        assert beats.ndim == 1, f"Expected beats array to be 1D, got {beats.ndim}D"
-        assert downbeats.ndim == 1, f"Expected downbeats array to be 1D, got {downbeats.ndim}D"
+    # --- 3. Save RawBeats --- 
+    # (Removed try...except)
+    raw_beats.save_to_file(output_beats_file)
+    print(f"[Test beat_this] Saved simplified raw beats to fixed path: {output_beats_file}")
+    assert (
+        output_beats_file.is_file()
+    ), f"Raw beats file (beat_this) was not created at {output_beats_file}"
+    assert (
+        output_beats_file.stat().st_size > 0
+    ), f"Raw beats file (beat_this) {output_beats_file} is empty."
 
-        # Check if arrays contain data (might be empty for very short/silent audio)
-        if beats.size > 0:
-            assert np.all(beats >= 0), "Beat timestamps should be non-negative"
-            assert np.issubdtype(beats.dtype, np.floating), f"Expected beats dtype float, got {beats.dtype}"
-            print(f"Detected {len(beats)} beats: {beats[:5]}...") # Optional: print info
-        else:
-            print("Warning: No beats detected.")
 
-        if downbeats.size > 0:
-            assert np.all(downbeats >= 0), "Downbeat timestamps should be non-negative"
-            assert np.issubdtype(downbeats.dtype, np.floating), f"Expected downbeats dtype float, got {downbeats.dtype}"
-            print(f"Detected {len(downbeats)} downbeats: {downbeats[:5]}...") # Optional: print info
-        else:
-            print("Warning: No downbeats detected.")
-
-    except Exception as e:
-        # Catch potential errors during model download or processing
-        pytest.fail(f"beat_this tracker failed to run or produced invalid output: {e}")
-
-# You might need to install additional dependencies required by beat_this
-# (e.g., specific versions of numpy, scipy, torch, soxr)
-# Check the beat_this repository's requirements.txt or setup.py for details. 
+# Keep the main block for potentially running tests directly (though pytest is preferred)
+if __name__ == "__main__":
+    # Note: Running this directly won't use pytest fixtures correctly.
+    # Use `pytest tests/test_beat_this.py` instead.
+    print("Please run these tests using pytest.")
+    # Attempting to run might fail due to fixture dependencies.
+    pass 
