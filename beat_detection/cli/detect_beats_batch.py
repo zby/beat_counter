@@ -200,7 +200,8 @@ def main() -> None:  # noqa: D401
         # reporting.print_batch_summary(results) # Old reporting might expect Beats object
         if failed:
             print("\nFailed files:")
-            for fname, _ in failed:
+            # Unpack all three elements, but only use fname
+            for fname, _, _ in failed:
                 print(f"  - {fname}")
 
 
