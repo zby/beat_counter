@@ -132,7 +132,7 @@ def generate_counter_video(
     try:
         raw_beats = RawBeats.load_from_file(beats_path)
         if verbose:
-            print(f"Loaded raw beats data from {beats_path} with {len(raw_beats.beat_timestamps)} beats")
+            print(f"Loaded raw beats data from {beats_path} with {len(raw_beats.timestamps)} beats")
     except Exception as e:
         raise RuntimeError(f"Failed to load raw beats from {beats_path}: {e}") from e
 
