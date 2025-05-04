@@ -279,40 +279,52 @@ def _perform_video_generation(
         os.chdir(str(job_dir))
         logger.info(f"Changed working directory to: {job_dir}")
 
-        # --- Load Data (Raw Beats and Reconstruction Params) ---
+        # --- Load Data (Simplified Raw Beats and Analysis Params) ---
         update_progress("Loading beat data and parameters", 0.01)
         raw_beats: RawBeats = None
-        tolerance_percent: float = None
-        min_measures: int = None
+        beats_per_bar_override: Optional[int] = None
+        tolerance_percent: Optional[float] = None
+        min_measures: Optional[int] = None
         try:
-            # Load Raw Beats (contains beats_per_bar)
+            # Load Simplified Raw Beats (no beats_per_bar)
             raw_beats = RawBeats.load_from_file(beats_path)
-            logger.info(f"Loaded RawBeats object from {beats_path} (bpb={raw_beats.beats_per_bar})")
+            logger.info(f"Loaded simplified RawBeats object from {beats_path}")
             if not raw_beats.timestamps.size > 0:
                 raise ValueError("Loaded RawBeats object contains no timestamps.")
 
-            # Load metadata to get reconstruction parameters (tolerance, min_measures)
+            # Load metadata to get analysis parameters
             metadata = storage.get_metadata(file_id)
             if not metadata:
                 raise ValueError(f"Could not load metadata for file_id {file_id}")
 
-            recon_params = metadata.get("reconstruction_params")
-            if not recon_params:
+            analysis_params = metadata.get("analysis_params")
+            if not analysis_params:
+                # If analysis_params are missing, maybe log a warning and try defaults?
+                # For now, let's enforce the fail-fast principle.
+                logger.error(
+                    f"CRITICAL: 'analysis_params' not found in metadata for {file_id}. Cannot reconstruct Beats. Beat detection task likely failed to save them."
+                )
                 raise ValueError(
-                    f"'reconstruction_params' not found in metadata for {file_id}. Cannot reconstruct Beats."
+                    f"'analysis_params' missing in metadata for {file_id}."
                 )
 
             # Extract parameters
-            tolerance_percent = recon_params.get("tolerance_percent")
-            min_measures = recon_params.get("min_measures")
+            beats_per_bar_override = analysis_params.get("beats_per_bar_override") # Optional
+            tolerance_percent = analysis_params.get("tolerance_percent")
+            min_measures = analysis_params.get("min_measures")
 
-            if tolerance_percent is None or min_measures is None:
-                raise ValueError(
-                    f"Missing tolerance_percent or min_measures within 'reconstruction_params' in metadata for {file_id}"
-                )
+            # tolerance_percent and min_measures are required by Beats constructor
+            if tolerance_percent is None:
+                 raise ValueError(
+                     f"Missing 'tolerance_percent' within 'analysis_params' in metadata for {file_id}"
+                 )
+            if min_measures is None:
+                 raise ValueError(
+                     f"Missing 'min_measures' within 'analysis_params' in metadata for {file_id}"
+                 )
 
             logger.info(
-                f"Loaded reconstruction params: tol%={tolerance_percent}, min_meas={min_measures}"
+                f"Loaded analysis params: bpb_override={beats_per_bar_override}, tol%={tolerance_percent}, min_meas={min_measures}"
             )
 
         except FileNotFoundError:
@@ -322,20 +334,20 @@ def _perform_video_generation(
             logger.error(f"Failed to load data or parameters from {beats_path} or metadata: {load_e}")
             raise ValueError(f"Failed to load data/params: {load_e}") from load_e
 
-        # --- Reconstruct Beats Object ---
-        update_progress("Reconstructing beat analysis", 0.03)
+        # --- Construct Beats Object ---
+        update_progress("Constructing beat analysis object", 0.03)
         try:
-            beats = Beats.from_timestamps(
-                timestamps=raw_beats.timestamps,
-                beat_counts=raw_beats.beat_counts,
-                beats_per_bar=raw_beats.beats_per_bar, # From RawBeats file
-                tolerance_percent=float(tolerance_percent), # From metadata
-                min_measures=int(min_measures) # From metadata
+            # Use the analysis parameters from metadata when constructing Beats
+            beats = Beats(
+                raw_beats=raw_beats, # Pass the loaded simplified RawBeats
+                beats_per_bar=beats_per_bar_override, # Pass the optional override
+                tolerance_percent=float(tolerance_percent),
+                min_measures=int(min_measures)
             )
-            logger.info(f"Successfully reconstructed Beats object for {file_id}")
-        except Exception as recon_e:
-            logger.error(f"Failed to reconstruct Beats object: {recon_e}")
-            raise ValueError(f"Beats reconstruction failed: {recon_e}") from recon_e
+            logger.info(f"Successfully constructed Beats object for {file_id}")
+        except Exception as construct_e:
+            logger.error(f"Failed to construct Beats object: {construct_e}", exc_info=True)
+            raise ValueError(f"Beats construction failed: {construct_e}") from construct_e
 
         # --- Generate Video ---
         video_generator = BeatVideoGenerator()

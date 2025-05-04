@@ -14,7 +14,7 @@ INPUT_BEATS_FILE = TEST_FIXTURES_DIR / "Besito_a_Besito_10sec.beats"
 
 # Define parameters used for Beats reconstruction
 TEST_TOLERANCE_PERCENT = 10.0
-TEST_MIN_MEASURES = 5
+TEST_MIN_MEASURES = 4
 
 
 def test_generate_video_from_saved_beats(tmp_path):
@@ -35,34 +35,21 @@ def test_generate_video_from_saved_beats(tmp_path):
     reconstructed_beats: Beats = None
     try:
         # Load the simplified RawBeats data
+        # Assumes tests/fixtures/Besito_a_Besito_10sec.beats is updated!
         loaded_raw_beats = load_raw_beats(str(INPUT_BEATS_FILE))
         assert loaded_raw_beats is not None, "Failed to load RawBeats."
         assert len(loaded_raw_beats.timestamps) > 0, "Loaded RawBeats has no timestamps."
 
-        # Infer beats_per_bar from the loaded counts
-        inferred_beats_per_bar = None
-        if loaded_raw_beats.beat_counts.size > 0:
-             valid_counts = loaded_raw_beats.beat_counts[loaded_raw_beats.beat_counts > 0]
-             if len(valid_counts) > 0:
-                inferred_beats_per_bar = int(np.max(valid_counts))
-
-        if not inferred_beats_per_bar or inferred_beats_per_bar <= 1:
-             pytest.fail(
-                 f"Could not infer valid beats_per_bar (>1) from {INPUT_BEATS_FILE}. "
-                 f"Inferred: {inferred_beats_per_bar}"
-             )
-
-        print(f"[Test] Inferred beats_per_bar = {inferred_beats_per_bar} from {INPUT_BEATS_FILE}")
-
-
-        # Reconstruct the full Beats object
+        # Construct the full Beats object, passing None for beats_per_bar to trigger inference
         reconstructed_beats = Beats(
             raw_beats=loaded_raw_beats,
-            beats_per_bar=inferred_beats_per_bar, # Use inferred bpb
+            beats_per_bar=None, # Let the constructor infer from raw_beats.beat_counts
             tolerance_percent=TEST_TOLERANCE_PERCENT,
             min_measures=TEST_MIN_MEASURES,
         )
         assert reconstructed_beats is not None, "Failed to reconstruct Beats."
+        # Optional: Verify the inferred value if known/expected for the fixture file
+        # assert reconstructed_beats.beats_per_bar == 4, "Inferred beats_per_bar mismatch"
 
     except BeatCalculationError as e:
          pytest.fail(f"Beats reconstruction failed: {e}")

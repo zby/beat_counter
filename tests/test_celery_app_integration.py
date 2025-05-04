@@ -248,25 +248,26 @@ def test_detect_beats_task_integration_success(
     assert metadata_after.get("beats_file") == str(expected_beats_path)
     assert metadata_after.get("total_beats") == len(raw_beat_data.timestamps)
 
-    # Check reconstruction params are stored (only tol & min_meas)
-    recon_params = metadata_after.get("reconstruction_params")
-    assert recon_params is not None, "'reconstruction_params' not found in metadata"
-    assert "beats_per_bar" not in recon_params # Verify bpb NOT stored here
-    assert recon_params.get("tolerance_percent") == tolerance_percent
-    assert recon_params.get("min_measures") == min_measures
-    # Check detected_beats_per_bar in metadata matches the value in the loaded RawBeats file
-    assert metadata_after.get("detected_beats_per_bar") == raw_beat_data.beats_per_bar
+    # Check analysis params are stored
+    analysis_params = metadata_after.get("analysis_params")
+    assert analysis_params is not None, "'analysis_params' not found in metadata"
+    assert analysis_params.get("beats_per_bar_override") == beats_per_bar
+    assert analysis_params.get("tolerance_percent") == tolerance_percent
+    assert analysis_params.get("min_measures") == min_measures
+    # Assertions for other fields if needed
 
     # 7. Reconstruct Beats from RawBeats and Metadata Params to check derived values
+    reconstructed_beats: Beats = None
     try:
-        bpb = raw_beat_data.beats_per_bar # Get bpb from loaded RawBeats
-        tol = float(recon_params["tolerance_percent"]) # Get tol from metadata
-        meas = int(recon_params["min_measures"])       # Get meas from metadata
+        # Get analysis params from metadata (already asserted they exist)
+        bpb_override = analysis_params.get("beats_per_bar_override") # Could be None
+        tol = float(analysis_params["tolerance_percent"])
+        meas = int(analysis_params["min_measures"])
 
-        reconstructed_beats = Beats.from_timestamps(
-            timestamps=raw_beat_data.timestamps,
-            beat_counts=raw_beat_data.beat_counts,
-            beats_per_bar=bpb,
+        # Use the standard Beats constructor with the loaded RawBeats and analysis params
+        reconstructed_beats = Beats(
+            raw_beats=raw_beat_data,
+            beats_per_bar=bpb_override, # Pass the override (constructor handles None)
             tolerance_percent=tol,
             min_measures=meas
         )
@@ -274,6 +275,8 @@ def test_detect_beats_task_integration_success(
         pytest.fail(f"Failed to reconstruct Beats from {expected_beats_path} using metadata params: {recon_e}")
 
     # Now check the metadata values that depend on the reconstructed Beats object
+    assert reconstructed_beats is not None, "Reconstruction failed silently."
+    assert metadata_after.get("detected_beats_per_bar") == reconstructed_beats.beats_per_bar # Check inferred/overridden bpb
     assert metadata_after.get("irregular_beats_count") == len(reconstructed_beats.irregular_beat_indices)
     assert "detected_tempo_bpm" in metadata_after
     assert abs(metadata_after["detected_tempo_bpm"] - reconstructed_beats.overall_stats.tempo_bpm) < 0.01
@@ -301,8 +304,10 @@ def test_generate_video_integration_success(
     expected_min_measures = 5
     # We need to save these into metadata like the detection task would
     storage = temp_storage_integration
+    # Store the analysis params that would have been saved by the detection task
     storage.update_metadata(file_id, {
-        "reconstruction_params": {
+        "analysis_params": {
+             "beats_per_bar_override": 4, # Assume 4 for this test fixture
              "tolerance_percent": expected_tolerance,
              "min_measures": expected_min_measures
         }
@@ -314,7 +319,7 @@ def test_generate_video_integration_success(
     try:
         raw_beat_data_video = RawBeats.load_from_file(beats_path)
         assert isinstance(raw_beat_data_video, RawBeats), "Sample beats file is not a RawBeats instance."
-        assert raw_beat_data_video.beats_per_bar is not None, "Sample beats file missing 'beats_per_bar'."
+        # assert raw_beat_data_video.beats_per_bar is not None, "Sample beats file missing 'beats_per_bar'." # REMOVED: RawBeats no longer has bpb
         assert isinstance(raw_beat_data_video.timestamps, np.ndarray), "Sample beats file 'timestamps' is not a numpy array."
         assert isinstance(raw_beat_data_video.beat_counts, np.ndarray), "Sample beats file 'beat_counts' is not a numpy array."
         assert len(raw_beat_data_video.timestamps) > 0, "Sample beats file has no timestamps."

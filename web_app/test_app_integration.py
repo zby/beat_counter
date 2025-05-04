@@ -202,39 +202,32 @@ def generated_sample_audio() -> Dict[str, Any]:
 # --- Mocking Fixture ---
 @pytest.fixture
 def mock_beat_detector():
-    """Mocks the BeatDetector call within the celery task"""
-    # Define the data the mock detector will produce
-    mock_bpb = 4
+    """Mocks the get_beat_detector factory call within the celery task."""
+    # Define the data the mock detector's detect method will return
     mock_timestamps = np.array([0.15, 0.55, 0.95, 1.35]) # Example timestamps
     mock_counts = np.array([1, 2, 3, 4])
 
-    # Create a mock RawBeats object to be returned by detect_beats
+    # Create a simplified RawBeats object (no beats_per_bar)
     mock_raw_beats_obj = RawBeats(
         timestamps=mock_timestamps,
-        beat_counts=mock_counts,
-        beats_per_bar=mock_bpb
+        beat_counts=mock_counts
+        # No beats_per_bar here
     )
 
-    # --- Mock save_to_file to write correct JSON --- #
-    # Note: This mocks save_to_file on the *returned* RawBeats object,
-    # not the detector itself.
-    # We need to mock the object that _perform_beat_detection calls save_to_file on.
-    # Actually, _perform_beat_detection calls raw_beats.save_to_file(), so we just
-    # need detect_beats to return a RawBeats object whose save_to_file works.
-    # The real RawBeats.save_to_file will work, so no need to mock it here.
-    # We just need the detector mock.
-
-    patch_target = "web_app.celery_app.BeatDetector"
+    patch_target = "web_app.celery_app.get_beat_detector" # Patch the factory
     try:
-        with patch(patch_target) as mock_DetectorClass:
-            instance_mock = MagicMock()
-            # Configure the detect_beats mock to return the RawBeats object
-            instance_mock.detect_beats.return_value = mock_raw_beats_obj
-            mock_DetectorClass.return_value = instance_mock
+        with patch(patch_target) as mock_get_detector:
+            # Mock the detector instance that the factory would return
+            mock_detector_instance = MagicMock()
+            # Configure the detect method on the instance to return the simplified RawBeats
+            mock_detector_instance.detect.return_value = mock_raw_beats_obj
+            # Configure the factory mock to return our mock instance
+            mock_get_detector.return_value = mock_detector_instance
+
             print(
-                f"Mocking '{patch_target}' - Instance will return a mock RawBeats object."
+                f"Mocking '{patch_target}' - Factory will return a mock detector instance."
             )
-            yield mock_DetectorClass
+            yield mock_get_detector # Yield the factory mock itself
     except ModuleNotFoundError:
         pytest.fail(f"Failed to patch '{patch_target}'. Is the import path correct?")
     except Exception as e:
@@ -324,6 +317,16 @@ def test_upload_valid_audio(
     assert metadata is not None
     assert "beat_detection" in metadata
 
+    # --- Check metadata for analysis_params --- #
+    assert "analysis_params" in metadata, "'analysis_params' key missing from metadata"
+    analysis_params = metadata["analysis_params"]
+    # Check default values used when not specified in upload
+    assert analysis_params.get("beats_per_bar_override") is None, "bpb_override should be None (default)"
+    assert analysis_params.get("tolerance_percent") == 10.0, "tolerance_percent should be 10.0 (default)"
+    assert analysis_params.get("min_measures") == 1, "min_measures should be 1 (default)"
+    assert metadata.get("algorithm") == "madmom", "algorithm should be madmom (default)"
+    # ---- End analysis_params check ---- #
+
     # --- Explicitly ensure the mock beats file exists before checking status --- #
     beats_file_path_str = metadata.get("beats_file")
     assert (
@@ -405,6 +408,16 @@ def uploaded_file_id(
     assert (
         metadata_after_upload.get("beat_detection_status") == "success"
     ), f"Metadata missing 'beat_detection_status: success' immediately after upload. Got: {metadata_after_upload.get('beat_detection_status')}"
+
+    # --- Check analysis_params in metadata --- #
+    assert "analysis_params" in metadata_after_upload, "'analysis_params' key missing from metadata in fixture"
+    analysis_params_fixture = metadata_after_upload["analysis_params"]
+    assert analysis_params_fixture.get("beats_per_bar_override") is None
+    assert analysis_params_fixture.get("tolerance_percent") == 10.0
+    assert analysis_params_fixture.get("min_measures") == 1
+    assert metadata_after_upload.get("algorithm") == "madmom"
+    # --- End analysis_params check --- #
+
     # --- End immediate check --- #
 
     assert test_storage.get_beats_file_path(file_id).exists()  # Check mock worked
