@@ -25,7 +25,12 @@ from typing import Optional
 
 from beat_detection.core.factory import get_beat_detector
 from beat_detection.core.beats import Beats
-from beat_detection.utils.beat_file import save_beats
+from beat_detection.utils.audio_file import load_audio, save_audio
+from beat_detection.utils.beat_analysis import create_beat_statistics
+from beat_detection.utils.beat_visualization import (
+    create_spectrogram_with_beats,
+    save_spectrogram,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -134,7 +139,7 @@ def main() -> None:  # noqa: D401 – simple imperative main
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # Save the raw_beats object
-    save_beats(str(out_path), raw_beats)
+    raw_beats.save_to_file(out_path)
     logging.info("Saved raw beats to %s", out_path)
 
 

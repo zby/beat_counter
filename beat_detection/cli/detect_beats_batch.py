@@ -27,9 +27,13 @@ from tqdm import tqdm
 
 from beat_detection.core.factory import get_beat_detector
 from beat_detection.utils.file_utils import find_audio_files
-from beat_detection.utils.beat_file import save_beats
 from beat_detection.utils import reporting
 from beat_detection.core.beats import Beats, RawBeats
+from beat_detection.utils.audio_file import load_audio, save_audio
+from beat_detection.utils.beat_visualization import (
+    create_spectrogram_with_beats,
+    save_spectrogram,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,7 +100,7 @@ def setup_logging(verbose: bool) -> None:
 def process_file(audio_file: pathlib.Path, detector, beats_per_bar: Optional[int], tolerance_percent: float, min_measures: int, verbose: bool) -> Tuple[str, Optional[RawBeats], Optional[Beats]]:
     """Detect beats for *audio_file* and write them alongside the file.
 
-    Returns a tuple ``(filename, RawBeats|None)`` where the second element is the
+    Returns a tuple ``(filename, RawBeats|None, Beats|None)`` where the second element is the
     RawBeats object on success or ``None`` on failure.
     """
     try:
@@ -114,8 +118,9 @@ def process_file(audio_file: pathlib.Path, detector, beats_per_bar: Optional[int
         logging.debug(f"Created Beats object with beats_per_bar={beats.beats_per_bar}")
 
         beats_file = audio_file.with_suffix(".beats")
-        # Save the raw_beats object
-        save_beats(str(beats_file), raw_beats)
+        logging.debug(f"Saving beats to {beats_file}")
+        raw_beats.save_to_file(beats_file)
+
         if verbose:
             logging.info(f"Saved raw beat data to {beats_file} (beats_per_bar={beats.beats_per_bar})")
         # Return both RawBeats and Beats objects on success

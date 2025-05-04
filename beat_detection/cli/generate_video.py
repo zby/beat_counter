@@ -26,9 +26,6 @@ from beat_detection.core.video import (
     DEFAULT_VIDEO_HEIGHT,
     DEFAULT_FPS,
 )
-from beat_detection.utils import file_utils
-from beat_detection.core.detector import BeatDetector
-from beat_detection.utils.beat_file import load_raw_beats
 from beat_detection.core.beats import Beats, RawBeats
 
 
@@ -133,9 +130,9 @@ def generate_counter_video(
 
     # Load Raw Beats Data
     try:
-        raw_beats = load_raw_beats(str(beats_path))
+        raw_beats = RawBeats.load_from_file(beats_path)
         if verbose:
-            print(f"Loaded raw beats data from {beats_path} with {len(raw_beats.timestamps)} beats")
+            print(f"Loaded raw beats data from {beats_path} with {len(raw_beats.beat_timestamps)} beats")
     except Exception as e:
         raise RuntimeError(f"Failed to load raw beats from {beats_path}: {e}") from e
 

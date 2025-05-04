@@ -4,7 +4,7 @@ from pathlib import Path
 
 from beat_detection.core.beats import Beats, RawBeats, BeatCalculationError
 from beat_detection.core.video import BeatVideoGenerator
-from beat_detection.utils.beat_file import load_raw_beats
+from beat_detection.cli.generate_video import main as generate_video_main
 
 # Define paths relative to the tests directory, using the fixtures subdir
 TEST_FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -16,6 +16,10 @@ INPUT_BEATS_FILE = TEST_FIXTURES_DIR / "Besito_a_Besito_10sec.beats"
 TEST_TOLERANCE_PERCENT = 10.0
 TEST_MIN_MEASURES = 4
 
+@pytest.fixture(scope="module")
+def raw_beats_fixture() -> RawBeats:
+    loaded_raw_beats = RawBeats.load_from_file(INPUT_BEATS_FILE)
+    return loaded_raw_beats
 
 def test_generate_video_from_saved_beats(tmp_path):
     """
@@ -35,8 +39,7 @@ def test_generate_video_from_saved_beats(tmp_path):
     reconstructed_beats: Beats = None
     try:
         # Load the simplified RawBeats data
-        # Assumes tests/fixtures/Besito_a_Besito_10sec.beats is updated!
-        loaded_raw_beats = load_raw_beats(str(INPUT_BEATS_FILE))
+        loaded_raw_beats = RawBeats.load_from_file(INPUT_BEATS_FILE)
         assert loaded_raw_beats is not None, "Failed to load RawBeats."
         assert len(loaded_raw_beats.timestamps) > 0, "Loaded RawBeats has no timestamps."
 

@@ -16,7 +16,6 @@ from web_app.celery_app import (
 from beat_detection.core.detector import BeatDetector # Import real detector
 from beat_detection.core.factory import get_beat_detector # Import factory function
 from beat_detection.core.beats import Beats, RawBeats # Import RawBeats
-from beat_detection.utils.beat_file import load_raw_beats # Use utility if needed, or RawBeats directly
 
 # --- Fixtures ---
 
