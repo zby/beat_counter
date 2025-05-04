@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import os  # Import os for file operations
 
-from beat_detection.core.detector import BeatDetector
+from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.core.factory import get_beat_detector
 
 # -----------------------------------------------------------------------------

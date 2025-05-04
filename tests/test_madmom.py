@@ -1,7 +1,7 @@
 import pytest
 import os  # Import os for file operations
 from pathlib import Path
-from beat_detection.core.detector import BeatDetector
+from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.core.factory import get_beat_detector
 import numpy as np
 

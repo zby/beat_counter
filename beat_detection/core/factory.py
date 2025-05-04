@@ -5,7 +5,7 @@ from typing import Dict, Type, Optional, Any
 import inspect  # Add inspect import
 import warnings # Add warnings import
 
-from beat_detection.core.detector import BeatDetector
+from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.core.madmom_detector import MadmomBeatDetector
 from beat_detection.core.beat_this_detector import BeatThisDetector
 

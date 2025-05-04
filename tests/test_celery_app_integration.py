@@ -13,7 +13,7 @@ from web_app.celery_app import (
     _perform_beat_detection,
     _perform_video_generation,
 )  # Import tasks and the new helper function
-from beat_detection.core.detector import BeatDetector # Import real detector
+from beat_detection.core.detector_protocol import BeatDetector # Import real detector
 from beat_detection.core.factory import get_beat_detector # Import factory function
 from beat_detection.core.beats import Beats, RawBeats # Import RawBeats
 

@@ -11,7 +11,7 @@ from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatP
 
 from beat_detection.utils.constants import SUPPORTED_BEATS_PER_BAR
 from beat_detection.core.beats import RawBeats, BeatCalculationError
-from beat_detection.core.detector import BeatDetector # Import the protocol
+from beat_detection.core.detector_protocol import BeatDetector # Import the protocol
 
 
 class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @runtime_checkable

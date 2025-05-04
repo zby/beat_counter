@@ -14,7 +14,7 @@ import torch
 from beat_this.inference import File2Beats
 
 from beat_detection.core.beats import RawBeats
-from beat_detection.core.detector import BeatDetector  # Reuse the existing protocol
+from beat_detection.core.detector_protocol import BeatDetector  # Reuse the existing protocol
 
 
 class BeatThisDetector:
