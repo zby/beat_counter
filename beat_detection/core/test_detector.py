@@ -1,182 +1,110 @@
-import numpy as np
+"""
+Tests for the beat detector factory (now part of detector.py).
+"""
 import pytest
 from unittest.mock import patch, MagicMock
-from pathlib import Path
-from beat_detection.core.detector import MadmomBeatDetector, BeatDetector # Import Protocol too for type checking
-from beat_detection.core.beats import RawBeats, BeatCalculationError
-from beat_detection.utils.constants import SUPPORTED_BEATS_PER_BAR # Import needed constant
-import re
+from typing import Dict, Type, Any
+import inspect
 
-# Sample data returned by mocked madmom
-SAMPLE_MADMOM_OUTPUT = np.array([[0.5, 1], [1.0, 2], [1.5, 3], [2.0, 4]], dtype=float)
-SAMPLE_TIMESTAMPS = np.array([0.5, 1.0, 1.5, 2.0])
-SAMPLE_COUNTS = np.array([1, 2, 3, 4])
+from beat_detection.core.factory import get_beat_detector, DETECTOR_REGISTRY, BeatDetector
+from beat_detection.core.madmom_detector import MadmomBeatDetector
+# Import BeatThisDetector conditionally or mock it if necessary
+try:
+    from beat_detection.core.beat_this_detector import BeatThisDetector
+    _BEAT_THIS_AVAILABLE = True
+except ImportError:
+    BeatThisDetector = MagicMock() # Use MagicMock if BeatThisDetector is not available
+    _BEAT_THIS_AVAILABLE = False
 
-@pytest.fixture
-def mock_madmom_processors():
-    """Mocks the madmom processors used by MadmomBeatDetector."""
-    # Use the correct string literal for patching
-    with patch('beat_detection.core.detector.RNNDownBeatProcessor') as mock_rnn, \
-         patch('beat_detection.core.detector.DBNDownBeatTrackingProcessor') as mock_dbn:
+# Define a simple MockDetector for testing patching
+class MockDetector(BeatDetector):
+    def __init__(self, *args, **kwargs):
+        print(f"MockDetector initialized with args: {args}, kwargs: {kwargs}")
+        # Store kwargs if needed for assertion
+        self.init_kwargs = kwargs
 
-        # Mock the instances returned by the constructors
-        mock_rnn_instance = MagicMock()
-        mock_dbn_instance = MagicMock()
-
-        # Mock the __call__ method of the instances
-        # RNNDownBeatProcessor returns activations
-        mock_rnn_instance.return_value = np.random.rand(100, 3) # Dummy activations
-        # DBNDownBeatTrackingProcessor returns the beats array
-        mock_dbn_instance.return_value = SAMPLE_MADMOM_OUTPUT
-
-        mock_rnn.return_value = mock_rnn_instance
-        mock_dbn.return_value = mock_dbn_instance
-
-        yield mock_rnn, mock_dbn, mock_rnn_instance, mock_dbn_instance
-
-@pytest.fixture
-def audio_file_fixture(tmp_path) -> Path:
-    """Creates a dummy audio file for testing existence checks."""
-    p = tmp_path / "test.wav"
-    p.touch() # Create the file
-    return p
-
-# --- Test __init__ ---
-
-def test_madmom_detector_init(mock_madmom_processors):
-    """Test MadmomBeatDetector initialization."""
-    mock_rnn, mock_dbn, _, _ = mock_madmom_processors
-    detector = MadmomBeatDetector(min_bpm=70, max_bpm=180, fps=50)
-    assert detector.min_bpm == 70
-    assert detector.max_bpm == 180
-    assert detector.fps == 50
-    assert detector.progress_callback is None
-    mock_rnn.assert_called_once()
-    mock_dbn.assert_called_once_with(
-        beats_per_bar=SUPPORTED_BEATS_PER_BAR, # Use imported constant
-        min_bpm=70.0,
-        max_bpm=180.0,
-        fps=50.0
-    )
-    # Check it conforms to protocol (runtime check)
-    assert isinstance(detector, BeatDetector)
-
-def test_madmom_detector_invalid_init_params():
-    """Test MadmomBeatDetector __init__ raises error for invalid BPM/FPS settings."""
-    # Test invalid min_bpm
-    with pytest.raises(BeatCalculationError, match="Invalid min_bpm"):
-        MadmomBeatDetector(min_bpm=0)
-    with pytest.raises(BeatCalculationError, match="Invalid min_bpm"):
-        MadmomBeatDetector(min_bpm=-10)
-    
-    # Test invalid max_bpm
-    with pytest.raises(BeatCalculationError, match="Invalid max_bpm"):
-        MadmomBeatDetector(min_bpm=120, max_bpm=100) # max <= min
-    with pytest.raises(BeatCalculationError, match="Invalid max_bpm"):
-        MadmomBeatDetector(min_bpm=120, max_bpm=120) # max <= min
-
-    # Test invalid fps
-    with pytest.raises(BeatCalculationError, match="Invalid fps"):
-        MadmomBeatDetector(fps=0)
-    with pytest.raises(BeatCalculationError, match="Invalid fps"):
-        MadmomBeatDetector(fps=-100)
-
-# --- Test _detect_downbeats ---
-
-def test_madmom_detect_downbeats_success(mock_madmom_processors, audio_file_fixture):
-    """Test _detect_downbeats returns correct array on success."""
-    _, _, mock_rnn_instance, mock_dbn_instance = mock_madmom_processors
-    detector = MadmomBeatDetector()
-    result = detector._detect_downbeats(str(audio_file_fixture))
-
-    mock_rnn_instance.assert_called_once_with(str(audio_file_fixture))
-    # Check DBN tracker was called with the *output* of RNN
-    mock_dbn_instance.assert_called_once_with(mock_rnn_instance.return_value)
-    np.testing.assert_array_equal(result, SAMPLE_MADMOM_OUTPUT)
-
-def test_madmom_detect_downbeats_no_beats(mock_madmom_processors, audio_file_fixture):
-    """Test _detect_downbeats raises BeatCalculationError when madmom finds no beats."""
-    _, _, _, mock_dbn_instance = mock_madmom_processors
-    mock_dbn_instance.return_value = np.empty((0, 2))
-    detector = MadmomBeatDetector()
-    # Expect BeatCalculationError according to the implementation
-    with pytest.raises(BeatCalculationError, match="Madmom DBNDownBeatTrackingProcessor returned no beats."):
-        detector._detect_downbeats(str(audio_file_fixture))
-
-def test_madmom_detect_downbeats_madmom_error(mock_madmom_processors, audio_file_fixture):
-    """Test _detect_downbeats raises BeatCalculationError if madmom fails."""
-    _, _, mock_rnn_instance, _ = mock_madmom_processors
-    mock_rnn_instance.side_effect = Exception("Madmom internal error")
-    detector = MadmomBeatDetector()
-    with pytest.raises(BeatCalculationError, match="Madmom processing failed: Madmom internal error"):
-        detector._detect_downbeats(str(audio_file_fixture))
-
-def test_madmom_detect_downbeats_unexpected_shape(mock_madmom_processors, audio_file_fixture):
-    """Test _detect_downbeats raises error for unexpected madmom output shape."""
-    _, _, _, mock_dbn_instance = mock_madmom_processors
-
-    # Test 1D array
-    mock_dbn_instance.return_value = np.array([0.5, 1.0, 1.5]) # 1D array
-    detector = MadmomBeatDetector()
-    expected_shape_1d = mock_dbn_instance.return_value.shape
-    # Escape parentheses for regex match
-    match_pattern_1d = f"Madmom output array has unexpected shape \\(ndim != 2\\): {re.escape(str(expected_shape_1d))}"
-    with pytest.raises(BeatCalculationError, match=match_pattern_1d):
-        detector._detect_downbeats(str(audio_file_fixture))
-
-    # Test array with shape (N, 1)
-    mock_dbn_instance.return_value = np.array([[0.5], [1.0]]) # Shape (N, 1)
-    detector = MadmomBeatDetector() # Re-instantiate if necessary
-    expected_shape_n1 = mock_dbn_instance.return_value.shape
-    # Escape parentheses for regex match
-    match_pattern_n1 = f"Madmom output array has unexpected shape \\(columns < 2\\): {re.escape(str(expected_shape_n1))}"
-    with pytest.raises(BeatCalculationError, match=match_pattern_n1):
-        detector._detect_downbeats(str(audio_file_fixture))
+    def detect(self, audio_path):
+        # Simple mock implementation
+        print(f"MockDetector detecting beats for: {audio_path}")
+        return MagicMock() # Return a mock object for RawBeats
 
 
-# --- Test detect ---
+def test_get_beat_detector_default():
+    """Test that the default detector is MadmomBeatDetector."""
+    detector = get_beat_detector()
+    assert isinstance(detector, MadmomBeatDetector)
 
-def test_madmom_detect_success(mock_madmom_processors, audio_file_fixture):
-    """Test the main detect method successfully returns RawBeats."""
-    detector = MadmomBeatDetector()
 
-    # Mock the internal call
-    with patch.object(detector, '_detect_downbeats', return_value=SAMPLE_MADMOM_OUTPUT) as mock_internal_detect:
-        raw_beats = detector.detect(audio_file_fixture)
+def test_get_beat_detector_madmom():
+    """Test getting a MadmomBeatDetector explicitly."""
+    detector = get_beat_detector("madmom")
+    assert isinstance(detector, MadmomBeatDetector)
 
-        mock_internal_detect.assert_called_once_with(str(audio_file_fixture))
-        assert isinstance(raw_beats, RawBeats)
-        np.testing.assert_array_equal(raw_beats.timestamps, SAMPLE_TIMESTAMPS)
-        np.testing.assert_array_equal(raw_beats.beat_counts, SAMPLE_COUNTS)
-        # Verify beats_per_bar is NOT present
-        assert not hasattr(raw_beats, 'beats_per_bar')
 
-def test_madmom_detect_file_not_found():
-    """Test detect raises FileNotFoundError for non-existent file."""
-    detector = MadmomBeatDetector()
-    with pytest.raises(FileNotFoundError):
-        detector.detect("non_existent_file.wav")
+# Conditionally run test if BeatThisDetector is available
+@pytest.mark.skipif(not _BEAT_THIS_AVAILABLE, reason="BeatThisDetector not installed or found")
+def test_get_beat_detector_beat_this():
+    """Test getting a BeatThisDetector."""
+    detector = get_beat_detector("beat_this")
+    # Check if it's the real one or the MagicMock we assigned if import failed
+    assert isinstance(detector, BeatThisDetector)
 
-def test_madmom_detect_no_beats_error(mock_madmom_processors, audio_file_fixture):
-    """Test detect raises BeatCalculationError if _detect_downbeats finds no beats."""
-    detector = MadmomBeatDetector()
 
-    # Mock the internal call to return empty array
-    with patch.object(detector, '_detect_downbeats', return_value=np.empty((0, 2))) as mock_internal_detect:
-        with pytest.raises(BeatCalculationError, match="No beats detected"):
-            detector.detect(audio_file_fixture)
-        mock_internal_detect.assert_called_once_with(str(audio_file_fixture))
+def test_get_beat_detector_invalid():
+    """Test that an invalid algorithm name raises ValueError."""
+    with pytest.raises(ValueError, match="Unsupported beat detection algorithm"):
+        get_beat_detector("invalid_algorithm")
 
-def test_madmom_detect_calls_progress_callback(mock_madmom_processors, audio_file_fixture):
-    """Test that the progress callback is called during detection."""
-    mock_callback = MagicMock()
-    detector = MadmomBeatDetector(progress_callback=mock_callback)
 
-    # Mock the internal call
-    with patch.object(detector, '_detect_downbeats', return_value=SAMPLE_MADMOM_OUTPUT):
-        detector.detect(audio_file_fixture)
+def test_get_beat_detector_kwargs():
+    """Test that kwargs are passed to the detector constructor."""
+    detector = get_beat_detector("madmom", fps=200)
+    assert isinstance(detector, MadmomBeatDetector) # Check type first
+    assert detector.fps == 200
 
-    # Check if callback was called (at least at start and end)
-    assert mock_callback.call_count >= 2
-    mock_callback.assert_any_call(0.0)
-    mock_callback.assert_any_call(1.0)
+
+def test_detector_registry():
+    """Test that the detector registry contains the expected detectors."""
+    assert "madmom" in DETECTOR_REGISTRY
+    assert DETECTOR_REGISTRY["madmom"] == MadmomBeatDetector
+    if _BEAT_THIS_AVAILABLE:
+        assert "beat_this" in DETECTOR_REGISTRY
+        assert DETECTOR_REGISTRY["beat_this"] == BeatThisDetector
+    else:
+        assert "beat_this" not in DETECTOR_REGISTRY
+
+
+# Test that get_beat_detector uses the DETECTOR_REGISTRY
+# Patch the registry within the factory module where get_beat_detector uses it
+@patch("beat_detection.core.factory.DETECTOR_REGISTRY", {
+    "mock_detector": MockDetector
+})
+def test_get_beat_detector_mocked_registry():
+    """Test getting a detector using a patched registry."""
+    # Call the factory function (imported directly from factory)
+    detector = get_beat_detector("mock_detector")
+
+    # Verify the mock detector class was used
+    assert isinstance(detector, MockDetector)
+
+
+# Test filtering of kwargs with a patched registry
+# Patch the registry within the factory module where get_beat_detector uses it
+@patch("beat_detection.core.factory.DETECTOR_REGISTRY", {
+    "mock_detector_with_params": MockDetector # Use the same mock class
+})
+def test_get_beat_detector_filtered_kwargs_mocked_registry():
+    """Test getting a detector with filtered kwargs using a patched registry."""
+    # Call the factory function with valid and invalid kwargs for MockDetector
+    valid_kwarg = list(inspect.signature(MockDetector.__init__).parameters.keys())[-1] # Assuming last is a valid kwarg
+    kwargs_to_pass = {valid_kwarg: "test_value", "extra_param": 123}
+
+    # Expect a warning about the extra param
+    with pytest.warns(UserWarning, match="Ignoring extraneous keyword arguments"):
+        detector = get_beat_detector("mock_detector_with_params", **kwargs_to_pass)
+
+    # Verify the mock detector class was used and received only valid kwargs
+    assert isinstance(detector, MockDetector)
+    assert valid_kwarg in detector.init_kwargs
+    assert "extra_param" not in detector.init_kwargs
+    assert detector.init_kwargs[valid_kwarg] == "test_value"

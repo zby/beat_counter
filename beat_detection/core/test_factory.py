@@ -5,7 +5,8 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from beat_detection.core.factory import get_beat_detector, DETECTOR_REGISTRY
-from beat_detection.core.detector import MadmomBeatDetector
+from beat_detection.core.beat_this_detector import BeatThisDetector
+from beat_detection.core.madmom_detector import MadmomBeatDetector
 
 
 def test_get_beat_detector_default():

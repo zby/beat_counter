@@ -3,8 +3,10 @@ Factory for creating beat detectors.
 """
 from typing import Dict, Type, Optional, Any
 import inspect  # Add inspect import
+import warnings # Add warnings import
 
-from beat_detection.core.detector import BeatDetector, MadmomBeatDetector
+from beat_detection.core.detector import BeatDetector
+from beat_detection.core.madmom_detector import MadmomBeatDetector
 from beat_detection.core.beat_this_detector import BeatThisDetector
 
 # Registry of available detectors
@@ -63,6 +65,15 @@ def get_beat_detector(algorithm: str = "madmom", **kwargs: Any) -> BeatDetector:
         key: value for key, value in kwargs.items() if key in valid_params
     }
     
+    # Check for extraneous arguments and issue a warning
+    extraneous_kwargs = {key for key in kwargs if key not in valid_params}
+    if extraneous_kwargs:
+        warnings.warn(
+            f"Ignoring extraneous keyword arguments for {detector_class.__name__}: "
+            f"{', '.join(extraneous_kwargs)}",
+            UserWarning
+        )
+
     # Debugging: Print filtered kwargs
     # print(f"Initializing {detector_class.__name__} with: {filtered_kwargs}")
     
