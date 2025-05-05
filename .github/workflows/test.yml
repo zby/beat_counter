@@ -28,15 +28,22 @@ jobs:
         uv venv
         source .venv/bin/activate
         uv pip install ".[dev]"
+        # Print installed packages to verify dependencies
+        uv pip list
         
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg libavcodec-extra58
+        sudo apt-get install -y ffmpeg
+        # Install Python dev package for compiling C extensions in madmom
+        sudo apt-get install -y python${{ matrix.python-version }}-dev
         
     - name: Run tests
       run: |
         source .venv/bin/activate
+        # Verify that complex dependencies are available
+        python -c "import madmom; import numpy; print(f'madmom version: {madmom.__version__}')"
+        # Then run tests
         pytest -v --override-ini="addopts="  # Run all tests including slow ones
 
     - name: Tag successful main branch builds
