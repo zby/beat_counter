@@ -1,10 +1,12 @@
 """
 Factory for creating beat detectors.
 """
+import logging # Add logging import
 from typing import Dict, Type, Optional, Any
 import inspect  # Add inspect import
 import warnings # Add warnings import
 import os # Add os import
+from pathlib import Path # Add Path import
 
 from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.core.madmom_detector import MadmomBeatDetector
@@ -106,6 +108,8 @@ def extract_beats(
     algorithm : str
         Name of the beat detection algorithm to use (passed to get_beat_detector).
         Defaults to "madmom".
+    beats_args : Optional[Dict[str, Any]], optional
+        Arguments to pass to the Beats constructor. Defaults to {}.
     **kwargs : Any
         Additional keyword arguments to pass to the detector constructor
         (passed to get_beat_detector).
@@ -120,25 +124,48 @@ def extract_beats(
     ValueError
         If the requested algorithm is not supported (raised by get_beat_detector).
     FileNotFoundError
-        If the audio_file_path does not exist (may be raised by the detector).
+        If the audio_file_path does not exist.
     IOError
         If there's an error writing to the output_path.
+    Exception
+        Catches and logs any other exceptions during processing, then re-raises.
     """
+    # Check if audio file exists
+    audio_path = Path(audio_file_path)
+    if not audio_path.is_file():
+        logging.error("Audio file not found: %s", audio_path)
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
     # Determine the output path if not provided
-    if output_path is None:
+    # Create parent directory if an explicit output path is given
+    final_output_path = output_path
+    if final_output_path is None:
         base, _ = os.path.splitext(audio_file_path)
-        output_path = base + ".beats"
-        
-    detector = get_beat_detector(algorithm=algorithm, **kwargs)
-    raw_beats = detector.detect_beats(audio_file_path)
-    
-    # Create Beats object to validate raw_beats structure
-    beats_obj = Beats(
-        raw_beats, # Positional argument
-        **beats_args,
+        final_output_path = base + ".beats"
+    else:
+        # Ensure the parent directory exists if an explicit path was provided
+        Path(final_output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    logging.info(f"Starting beat detection for {audio_file_path} using {algorithm}...")
+
+    try:
+        detector = get_beat_detector(algorithm=algorithm, **kwargs)
+        raw_beats = detector.detect_beats(audio_file_path)
+
+        # Create Beats object to validate raw_beats structure and infer parameters
+        beats_obj = Beats(
+            raw_beats, # Positional argument
+            **(beats_args or {}), # Ensure beats_args is a dict
+            )
+
+        # Save raw beats to the output file
+        raw_beats.save_to_file(final_output_path)
+
+        logging.info(
+            f"Successfully processed {audio_file_path}. Effective beats_per_bar: {beats_obj.beats_per_bar}. Beats saved to {final_output_path}."
         )
+        return beats_obj
 
-    # Save raw beats to the output file - Beats object can be reconstructed from raw_beats
-    raw_beats.save_to_file(output_path) # Use the determined output_path
-
-    return beats_obj
+    except Exception as exc:
+        logging.exception("Beat detection failed for %s: %s", audio_file_path, exc)
+        raise # Re-raise the exception after logging

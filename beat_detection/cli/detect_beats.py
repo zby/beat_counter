@@ -17,14 +17,12 @@ less configurability means fewer silent mis-configurations.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
 from typing import Optional
 
 from beat_detection.core.factory import extract_beats
-from beat_detection.core.beats import Beats
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
@@ -93,11 +91,6 @@ def main() -> None:  # noqa: D401 – simple imperative main
     args = parse_args()
     setup_logging()
 
-    audio_path = Path(args.audio_file)
-    if not audio_path.is_file():
-        logging.error("Audio file not found: %s", audio_path)
-        sys.exit(1)
-
     # Prepare arguments for extract_beats
     detector_kwargs = {
         "min_bpm": args.min_bpm,
@@ -109,35 +102,14 @@ def main() -> None:  # noqa: D401 – simple imperative main
         "min_measures": args.min_measures,
     }
     
-    # Determine output path (needed before calling extract_beats)
-    output_path_str: Optional[str] = None
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path_str = str(output_path)
-
-    try:
-        logging.info(f"Starting beat detection for {audio_path} using {args.algorithm}...")
-        # Call extract_beats which handles detector creation, detection, Beats creation, and saving
-        beats_obj = extract_beats(
-            audio_file_path=str(audio_path),
-            output_path=output_path_str,
-            algorithm=args.algorithm,
-            beats_args=beats_constructor_args,
-            **detector_kwargs
-        )
-
-        # Get the actual path used for saving (could be default)
-        final_output_path = Path(output_path_str if output_path_str else str(audio_path.with_suffix(".beats")))
-
-        logging.info(
-            f"Successfully processed {audio_path}. Effective beats_per_bar: {beats_obj.beats_per_bar}. Beats saved to {final_output_path}."
-        )
-
-    except Exception as exc:  # fail fast but print cause
-        logging.exception("Beat detection failed for %s: %s", audio_path, exc)
-        sys.exit(1)
-
+    # Call extract_beats which now handles logging, file checks, and dir creation
+    extract_beats(
+        audio_file_path=args.audio_file,
+        output_path=args.output,
+        algorithm=args.algorithm,
+        beats_args=beats_constructor_args,
+        **detector_kwargs
+    )
 
 if __name__ == "__main__":
     main() 
