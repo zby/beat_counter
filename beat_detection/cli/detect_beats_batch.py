@@ -23,11 +23,7 @@ import pathlib
 import sys
 from typing import List, Tuple, Optional, Dict, Any
 
-from tqdm import tqdm
-
-from beat_detection.core.factory import extract_beats
-from beat_detection.utils.file_utils import find_audio_files
-from beat_detection.utils import reporting
+from beat_detection.core.factory import process_batch
 from beat_detection.core.beats import Beats
 
 
@@ -83,9 +79,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def setup_logging(verbose: bool) -> None:
-    """Configure logging level according to *verbose* flag."""
-    level = logging.DEBUG if verbose else logging.INFO
+def setup_logging(quiet: bool) -> None:
+    """Configure logging level according to *quiet* flag."""
+    level = logging.WARNING if quiet else logging.INFO
     logging.basicConfig(
         level=level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -94,33 +90,12 @@ def setup_logging(verbose: bool) -> None:
 
 def main() -> None:  # noqa: D401
     args = parse_args()
-    setup_logging(verbose=not args.quiet)
-
-    # Progress bar setup
-    pbar: Optional[tqdm] = None
+    setup_logging(quiet=args.quiet)
 
     directory_path = pathlib.Path(args.directory)
     if not directory_path.exists():
         logging.error("Directory not found: %s", directory_path)
         sys.exit(1)
-
-    audio_files = find_audio_files(directory_path)
-    if not audio_files:
-        logging.error("No audio files found in %s", directory_path)
-        sys.exit(1)
-
-    if not args.quiet:
-        print(f"Found {len(audio_files)} audio files to process")
-        if not args.no_progress:
-            pbar = tqdm(audio_files, desc="Processing files", unit="file", ncols=100)
-            file_iterator = pbar
-        else:
-            file_iterator = audio_files
-    else:
-        file_iterator = audio_files
-
-    # Results list now holds tuples of (filename, Optional[Beats])
-    results: List[Tuple[str, Optional[Beats]]] = []
 
     # Detector/Beats arguments (prepared once)
     detector_kwargs: Dict[str, Any] = {
@@ -133,30 +108,15 @@ def main() -> None:  # noqa: D401
         "min_measures": args.min_measures,
     }
 
-    for audio_file in file_iterator:
-        file_name = audio_file.name
-        if pbar:
-            pbar.set_description(f"Processing {file_name}")
-        elif not args.quiet:
-            pass
-
-        try:
-            # Call extract_beats directly for each file
-            beats_obj = extract_beats(
-                audio_file_path=str(audio_file),
-                algorithm=args.algorithm,
-                beats_args=beats_constructor_args,
-                **detector_kwargs,
-            )
-            results.append((file_name, beats_obj))
-            if not args.quiet:
-                logging.info(f"Successfully processed and saved beats for {file_name}")
-        except Exception as e:
-            results.append((file_name, None))
-            logging.error(f"Failed to process {file_name}: {e}")
-
-    if pbar:
-        pbar.close()
+    # Call the centralized batch processing function
+    # It handles finding files, iteration, progress bar, calling extract_beats, and error handling per file
+    results: List[Tuple[str, Optional[Beats]]] = process_batch(
+        directory_path=directory_path,
+        algorithm=args.algorithm,
+        beats_args=beats_constructor_args,
+        detector_kwargs=detector_kwargs,
+        no_progress=args.no_progress,
+    )
 
     # Summary
     successful = [r for r in results if r[1] is not None]

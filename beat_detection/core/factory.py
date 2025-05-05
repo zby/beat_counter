@@ -2,16 +2,19 @@
 Factory for creating beat detectors.
 """
 import logging # Add logging import
-from typing import Dict, Type, Optional, Any
+from typing import Dict, Type, Optional, Any, List, Tuple # Add List, Tuple
 import inspect  # Add inspect import
 import warnings # Add warnings import
 import os # Add os import
 from pathlib import Path # Add Path import
 
+from tqdm import tqdm # Add tqdm import
+
 from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.core.madmom_detector import MadmomBeatDetector
 from beat_detection.core.beat_this_detector import BeatThisDetector
 from beat_detection.core.beats import Beats
+from beat_detection.utils.file_utils import find_audio_files # Add find_audio_files import
 
 # Registry of available detectors
 DETECTOR_REGISTRY: Dict[str, Type[BeatDetector]] = {
@@ -169,3 +172,95 @@ def extract_beats(
     except Exception as exc:
         logging.exception("Beat detection failed for %s: %s", audio_file_path, exc)
         raise # Re-raise the exception after logging
+
+
+def process_batch(
+    directory_path: str | Path,
+    algorithm: str = "madmom",
+    beats_args: Optional[Dict[str, Any]] = None,
+    detector_kwargs: Optional[Dict[str, Any]] = None,
+    no_progress: bool = False,
+) -> List[Tuple[str, Optional[Beats]]]:
+    """
+    Processes all audio files in a directory tree for beat detection.
+
+    Recursively finds audio files, runs beat detection on each, saves the
+    `.beats` file alongside the original audio, and returns a summary of results.
+
+    Parameters
+    ----------
+    directory_path : str | Path
+        The root directory to scan for audio files.
+    algorithm : str, optional
+        Beat detection algorithm to use, by default "madmom".
+    beats_args : Optional[Dict[str, Any]], optional
+        Arguments to pass to the Beats constructor, by default None.
+    detector_kwargs : Optional[Dict[str, Any]], optional
+        Arguments to pass to the beat detector constructor, by default None.
+    no_progress : bool, optional
+        If True, disable the progress bar, by default False.
+
+    Returns
+    -------
+    List[Tuple[str, Optional[Beats]]]
+        A list of tuples, where each tuple contains the relative path (as str)
+        of the processed file and the resulting Beats object, or None if processing failed.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the directory_path does not exist.
+    """
+    dir_path = Path(directory_path)
+    if not dir_path.is_dir():
+        logging.error("Directory not found: %s", dir_path)
+        raise FileNotFoundError(f"Directory not found: {dir_path}")
+
+    audio_files = find_audio_files(dir_path)
+    if not audio_files:
+        logging.warning("No audio files found in %s", dir_path)
+        return [] # Return empty list if no files found
+
+    logging.info(f"Found {len(audio_files)} audio files to process in {dir_path}")
+
+    pbar: Optional[tqdm] = None
+    if not no_progress:
+        pbar = tqdm(audio_files, desc="Processing files", unit="file", ncols=100)
+        file_iterator = pbar
+    else:
+        file_iterator = audio_files
+
+    results: List[Tuple[str, Optional[Beats]]] = []
+    _beats_args = beats_args or {}
+    _detector_kwargs = detector_kwargs or {}
+
+    for audio_file in file_iterator:
+        # Use relative path for reporting, but full path for processing
+        relative_path_str = str(audio_file.relative_to(dir_path))
+        if pbar:
+            pbar.set_description(f"Processing {audio_file.name}")
+        else:
+            # Log start only if not using progress bar and not quiet
+            logging.info(f"Processing {relative_path_str}...")
+
+        try:
+            # extract_beats handles saving the .beats file next to the audio file by default
+            beats_obj = extract_beats(
+                audio_file_path=str(audio_file),
+                output_path=None, # Let extract_beats handle default output
+                algorithm=algorithm,
+                beats_args=_beats_args,
+                **_detector_kwargs,
+            )
+            results.append((relative_path_str, beats_obj))
+            if pbar is None: # Log success only if not using progress bar
+                logging.info(f"Successfully processed {relative_path_str}")
+        except Exception as e:
+            results.append((relative_path_str, None))
+            # Always log errors
+            logging.error(f"Failed to process {relative_path_str}: {e}")
+
+    if pbar:
+        pbar.close()
+
+    return results
