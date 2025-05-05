@@ -49,10 +49,10 @@ def test_beat_this_detect_save_load_reconstruct():
     # Define the fixed output path
     output_beats_file = BEAT_THIS_OUTPUT_BEATS_FILE
 
-    # --- 1. Detect beats & 2. Infer beats_per_bar --- 
+    # --- 1. Detect beats & 2. Infer beats_per_bar ---
     # (Removed try...except)
     detector: BeatDetector = get_beat_detector("beat_this")
-    raw_beats = detector.detect(str(TEST_AUDIO_FILE))
+    raw_beats = detector.detect_beats(str(TEST_AUDIO_FILE))
 
     assert raw_beats is not None, "Simplified RawBeats object was not created by beat_this."
     assert raw_beats.timestamps.shape[0] > 0, "No raw beats were detected by beat_this."

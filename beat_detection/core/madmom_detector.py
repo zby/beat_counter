@@ -21,7 +21,6 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
         self,
         min_bpm: int = 60,
         max_bpm: int = 240,
-        progress_callback: Optional[Callable[[float], None]] = None,
         fps: int = 100,
     ):
         """
@@ -33,8 +32,6 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
             Minimum tempo to consider (default: 60).
         max_bpm : int
             Maximum tempo to consider (default: 240).
-        progress_callback : Optional[Callable[[float], None]]
-            Callback function for progress updates (0.0 to 1.0) (default: None).
         fps : int
             Frames per second expected for the activation functions (default: 100).
 
@@ -60,7 +57,6 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
 
         self.min_bpm = min_bpm
         self.max_bpm = max_bpm
-        self.progress_callback = progress_callback
         self.fps = fps
 
         # Initialize processors
@@ -77,7 +73,7 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
             # Catch potential madmom initialization errors (though validation should prevent most)
             raise BeatCalculationError(f"Failed to initialize Madmom processors: {e}") from e
 
-    def detect(self, audio_path: str | Path) -> RawBeats:
+    def detect_beats(self, audio_path: str | Path) -> RawBeats:
         """
         Detects beats in an audio file using Madmom.
 
@@ -104,22 +100,8 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
         if not audio_path.is_file():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        cb = self.progress_callback
-
-        def report_progress(value: float):
-            if cb:
-                try:
-                    cb(value)
-                except Exception as e:
-                    # Fail fast but informatively if callback fails
-                    print(f"Warning: Progress callback failed: {e}")
-
-        report_progress(0.0)
-
         # Detect downbeats, getting only raw data (no bpb calculation here)
         raw_beats_with_counts = self._detect_downbeats(str(audio_path)) # Pass string path
-
-        report_progress(0.8) # Approx progress after detection
 
         if raw_beats_with_counts is None or len(raw_beats_with_counts) == 0:
             raise BeatCalculationError(
@@ -128,8 +110,6 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
 
         beat_timestamps = raw_beats_with_counts[:, 0]
         beat_counts = raw_beats_with_counts[:, 1].astype(int)
-
-        report_progress(1.0)
 
         # Return simplified RawBeats object (timestamps and counts only)
         # Validation happens within RawBeats __post_init__

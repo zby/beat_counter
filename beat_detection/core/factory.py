@@ -4,10 +4,12 @@ Factory for creating beat detectors.
 from typing import Dict, Type, Optional, Any
 import inspect  # Add inspect import
 import warnings # Add warnings import
+import os # Add os import
 
 from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.core.madmom_detector import MadmomBeatDetector
 from beat_detection.core.beat_this_detector import BeatThisDetector
+from beat_detection.core.beats import Beats
 
 # Registry of available detectors
 DETECTOR_REGISTRY: Dict[str, Type[BeatDetector]] = {
@@ -27,7 +29,6 @@ def get_beat_detector(algorithm: str = "madmom", **kwargs: Any) -> BeatDetector:
     **kwargs : Any
         Additional keyword arguments to pass to the detector constructor.
         Common parameters:
-        - progress_callback: Callback function for progress updates
         
         MadmomBeatDetector specific parameters:
         - min_bpm: Minimum BPM to consider
@@ -78,3 +79,66 @@ def get_beat_detector(algorithm: str = "madmom", **kwargs: Any) -> BeatDetector:
     # print(f"Initializing {detector_class.__name__} with: {filtered_kwargs}")
     
     return detector_class(**filtered_kwargs)
+
+
+def extract_beats(
+    audio_file_path: str,
+    output_path: Optional[str] = None,
+    algorithm: str = "madmom",
+    beats_args: Optional[Dict[str, Any]] = {},
+    **kwargs: Any
+) -> Beats:  # Update return type hint
+    """
+    Detects beats in an audio file using the specified algorithm and saves them.
+
+    This function gets the appropriate detector, detects beats, creates a Beats
+    object, saves the beats to the specified output file, and returns the
+    Beats object.
+
+    Parameters
+    ----------
+    audio_file_path : str
+        Path to the audio file to process.
+    output_path : Optional[str], optional
+        Path where the detected beat times will be saved (one time per line).
+        If None, defaults to the audio file path with the extension replaced by '.beats'.
+        Defaults to None.
+    algorithm : str
+        Name of the beat detection algorithm to use (passed to get_beat_detector).
+        Defaults to "madmom".
+    **kwargs : Any
+        Additional keyword arguments to pass to the detector constructor
+        (passed to get_beat_detector).
+
+    Returns
+    -------
+    Beats
+        The Beats object containing the detected beat times.
+
+    Raises
+    ------
+    ValueError
+        If the requested algorithm is not supported (raised by get_beat_detector).
+    FileNotFoundError
+        If the audio_file_path does not exist (may be raised by the detector).
+    IOError
+        If there's an error writing to the output_path.
+    """
+    # Determine the output path if not provided
+    if output_path is None:
+        base, _ = os.path.splitext(audio_file_path)
+        output_path = base + ".beats"
+        
+    detector = get_beat_detector(algorithm=algorithm, **kwargs)
+    raw_beats = detector.detect_beats(audio_file_path)
+    
+    # Create Beats object to validate raw_beats structure
+    beats_obj = Beats(
+        raw_beats, # Positional argument
+        **beats_args,
+        )
+
+    # Save raw beats to the output file - Beats object can be reconstructed from raw_beats
+    raw_beats.save_to_file(output_path) # Use the determined output_path
+
+    return beats_obj

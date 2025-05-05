@@ -55,7 +55,7 @@ def test_detect_returns_rawbeats(tmp_path: Path):
     downbeats = np.array([0.0])
 
     detector = _make_mock_detector(beats, downbeats)
-    raw = detector.detect(audio_file)
+    raw = detector.detect_beats(audio_file)
 
     assert isinstance(raw, RawBeats)
     np.testing.assert_array_equal(raw.timestamps, beats)
@@ -67,4 +67,4 @@ def test_detect_file_not_found():
 
     detector = _make_mock_detector(np.array([]), np.array([]))
     with pytest.raises(FileNotFoundError):
-        detector.detect("missing.wav") 
+        detector.detect_beats("missing.wav") 

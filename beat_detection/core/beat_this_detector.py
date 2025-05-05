@@ -45,7 +45,7 @@ class BeatThisDetector:
     # ---------------------------------------------------------------------
     # Public API – part of the BeatDetector protocol
     # ---------------------------------------------------------------------
-    def detect(self, audio_path: str | Path) -> RawBeats:
+    def detect_beats(self, audio_path: str | Path) -> RawBeats:
         """Run Beat-This! on *audio_path* and return raw timestamp data."""
 
         audio_path = Path(audio_path)

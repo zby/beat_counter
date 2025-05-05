@@ -15,9 +15,10 @@ from celery import Celery, states, Task
 from web_app.config import Config
 from web_app.storage import FileMetadataStorage
 from web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
-from beat_detection.core.factory import get_beat_detector
+from beat_detection.core.factory import get_beat_detector, extract_beats
 from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.core.beats import Beats, BeatCalculationError, RawBeats
+from beat_detection.core.detector_protocol import BeatDetector
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -91,66 +92,75 @@ def _perform_beat_detection(
     tolerance_percent: float,
     min_measures: int,
     beats_per_bar: Optional[int], # Optional override
-    update_progress: Callable[[str, float], None],
 ) -> None:
-    """Performs the actual beat detection, saving, and metadata update."""
-    # Get detector from factory
-    detector = get_beat_detector(
-        algorithm=algorithm,
-        min_bpm=min_bpm,
-        max_bpm=max_bpm,
-        progress_callback=update_progress,
-    )
+    """Performs beat detection using extract_beats, saves Beats object, and updates metadata."""
 
-    # Detect beats, get simplified RawBeats object
     audio_path_str = str(storage.get_audio_file_path(file_id))
-    raw_beats = detector.detect(audio_path_str)
-    logger.info(f"Raw beats detected for {file_id}")
-
-    # Create the full Beats object using RawBeats data and optional beats_per_bar override
-    try:
-        beats = Beats(
-            raw_beats=raw_beats,
-            beats_per_bar=beats_per_bar,  # Use the optional override if provided
-            tolerance_percent=tolerance_percent,
-            min_measures=min_measures,
-        )
-        logger.info(f"Created Beats object for {file_id} with beats_per_bar={beats.beats_per_bar}")
-    except BeatCalculationError as e:
-        logger.error(f"Failed to create Beats object for {file_id} from RawBeats: {e}")
-        raise  # Re-raise the critical error
-
-    # Create metadata using the Beats object
     beats_file_path = storage.get_beats_file_path(file_id)
-    metadata_update = {
-        "beat_detection_status": "success",
-        "beat_detection_error": None,
-        "algorithm": algorithm,
-        "detected_beats_per_bar": beats.beats_per_bar,
-        "total_beats": len(beats.timestamps),
-        "detected_tempo_bpm": beats.overall_stats.tempo_bpm,
-        "irregularity_percent": beats.overall_stats.irregularity_percent,
-        "irregular_beats_count": len(beats.irregular_beat_indices),
-        "beats_file": str(beats_file_path),
-        # Store parameters used for beat analysis in metadata
-        "analysis_params": {
-            "beats_per_bar_override": beats_per_bar,  # None if inferred
-            "tolerance_percent": tolerance_percent,
-            "min_measures": min_measures,
-        }
+    output_path_str = str(beats_file_path)
+
+    # Prepare arguments
+    detector_kwargs = {
+        "min_bpm": min_bpm,
+        "max_bpm": max_bpm,
+    }
+    beats_constructor_args = {
+        "beats_per_bar": beats_per_bar,
+        "tolerance_percent": tolerance_percent,
+        "min_measures": min_measures,
     }
 
-    # Save the simplified RawBeats object
-    raw_beats.save_to_file(beats_file_path)
-    logger.info(f"Raw beat data saved to {beats_file_path}")
+    try:
+        # Call extract_beats - handles detection, Beats creation, and saving
+        beats_obj = extract_beats(
+            audio_file_path=audio_path_str,
+            output_path=output_path_str, 
+            algorithm=algorithm,
+            beats_args=beats_constructor_args,
+            **detector_kwargs
+        )
+        logger.info(f"extract_beats succeeded for {file_id}. Beats saved to {output_path_str}")
 
-    # Update the central metadata store
-    storage.update_metadata(file_id, metadata_update)
-    logger.info(
-        f"Metadata updated for file_id {file_id} after successful beat detection."
-    )
+    except (BeatCalculationError, FileNotFoundError, ValueError, IOError) as e:
+        # Catch specific errors from extract_beats or its callees
+        logger.error(f"Beat detection failed during extract_beats for {file_id}: {e}")
+        raise # Re-raise critical errors
+    except Exception as e:
+        # Catch unexpected errors
+        logger.exception(f"Unexpected error during extract_beats for {file_id}: {e}")
+        raise
 
-    return
+    # --- Metadata Update (using the returned beats_obj) ---
+    try:
+        metadata_update = {
+            "beat_detection_status": "success",
+            "beat_detection_error": None,
+            "algorithm": algorithm,
+            "detected_beats_per_bar": beats_obj.beats_per_bar,
+            "total_beats": len(beats_obj.timestamps),
+            "detected_tempo_bpm": beats_obj.overall_stats.tempo_bpm,
+            "irregularity_percent": beats_obj.overall_stats.irregularity_percent,
+            "irregular_beats_count": len(beats_obj.irregular_beat_indices),
+            "beats_file": output_path_str, # Use the path where extract_beats saved the file
+            "analysis_params": {
+                "beats_per_bar_override": beats_per_bar,
+                "tolerance_percent": tolerance_percent,
+                "min_measures": min_measures,
+            }
+        }
+        # Update the central metadata store
+        storage.update_metadata(file_id, metadata_update)
+        logger.info(
+            f"Metadata updated for file_id {file_id} after successful beat detection."
+        )
+    except Exception as e:
+        # If metadata update fails AFTER successful detection/saving, log but don't fail task?
+        # Or should this also cause a task failure?
+        logger.exception(f"Failed to update metadata for {file_id} after successful beat detection: {e}")
+        # Decide whether to re-raise here based on desired behavior
+        # raise 
+
+    # No explicit return needed, success/failure handled via metadata and exceptions
 
 
 # Celery Task Definition
@@ -188,11 +198,6 @@ def detect_beats_task(
         # Create output directory if it doesn't exist
         storage.ensure_job_directory(file_id)
 
-        # Create progress updater callback
-        update_progress = create_progress_updater(
-            self, {"file_id": file_id}, "beat_detection_progress"
-        )
-
         # Call the core processing function
         _perform_beat_detection(
             storage=storage,
@@ -203,7 +208,6 @@ def detect_beats_task(
             tolerance_percent=tolerance_percent,
             min_measures=min_measures,
             beats_per_bar=beats_per_bar,
-            update_progress=update_progress,
         )
         return
 

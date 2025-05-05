@@ -21,14 +21,14 @@ import argparse
 import logging
 import pathlib
 import sys
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 from tqdm import tqdm
 
-from beat_detection.core.factory import get_beat_detector
+from beat_detection.core.factory import extract_beats
 from beat_detection.utils.file_utils import find_audio_files
 from beat_detection.utils import reporting
-from beat_detection.core.beats import Beats, RawBeats
+from beat_detection.core.beats import Beats
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,65 +92,12 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
-def process_file(audio_file: pathlib.Path, detector, beats_per_bar: Optional[int], tolerance_percent: float, min_measures: int, verbose: bool) -> Tuple[str, Optional[RawBeats], Optional[Beats]]:
-    """Detect beats for *audio_file* and write them alongside the file.
-
-    Returns a tuple ``(filename, RawBeats|None, Beats|None)`` where the second element is the
-    RawBeats object on success or ``None`` on failure.
-    """
-    try:
-        # Get simplified RawBeats object (timestamps and counts only)
-        raw_beats = detector.detect(str(audio_file))
-        logging.debug(f"Detected raw beats for {audio_file}")
-        
-        # Create Beats object with optional beats_per_bar override
-        beats = Beats(
-            raw_beats=raw_beats,
-            beats_per_bar=beats_per_bar,
-            tolerance_percent=tolerance_percent,
-            min_measures=min_measures,
-        )
-        logging.debug(f"Created Beats object with beats_per_bar={beats.beats_per_bar}")
-
-        beats_file = audio_file.with_suffix(".beats")
-        logging.debug(f"Saving beats to {beats_file}")
-        raw_beats.save_to_file(beats_file)
-
-        if verbose:
-            logging.info(f"Saved raw beat data to {beats_file} (beats_per_bar={beats.beats_per_bar})")
-        # Return both RawBeats and Beats objects on success
-        return (audio_file.name, raw_beats, beats)
-    except Exception:
-        logging.exception("Error processing %s", audio_file)
-        # Return None for both RawBeats and Beats on failure
-        return (audio_file.name, None, None)
-
-
 def main() -> None:  # noqa: D401
     args = parse_args()
     setup_logging(verbose=not args.quiet)
 
     # Progress bar setup
     pbar: Optional[tqdm] = None
-    progress_callback = None
-
-    if not args.quiet and not args.no_progress:
-        pbar = tqdm(total=100, desc="Processing", unit="%", ncols=80)
-
-        def _update(progress_value: float) -> None:
-            if pbar is not None:
-                pbar.n = int(progress_value * 100)
-                pbar.refresh()
-
-        progress_callback = _update
-
-    # Get detector from factory
-    detector = get_beat_detector(
-        algorithm=args.algorithm,
-        min_bpm=args.min_bpm,
-        max_bpm=args.max_bpm,
-        progress_callback=progress_callback,
-    )
 
     directory_path = pathlib.Path(args.directory)
     if not directory_path.exists():
@@ -164,44 +111,65 @@ def main() -> None:  # noqa: D401
 
     if not args.quiet:
         print(f"Found {len(audio_files)} audio files to process")
+        if not args.no_progress:
+            pbar = tqdm(audio_files, desc="Processing files", unit="file", ncols=100)
+            file_iterator = pbar
+        else:
+            file_iterator = audio_files
+    else:
+        file_iterator = audio_files
 
-    # Results list now holds Optional[RawBeats] and Optional[Beats]
-    results: List[Tuple[str, Optional[RawBeats], Optional[Beats]]] = []
+    # Results list now holds tuples of (filename, Optional[Beats])
+    results: List[Tuple[str, Optional[Beats]]] = []
 
-    for audio_file in audio_files:
+    # Detector/Beats arguments (prepared once)
+    detector_kwargs: Dict[str, Any] = {
+        "min_bpm": args.min_bpm,
+        "max_bpm": args.max_bpm,
+    }
+    beats_constructor_args: Dict[str, Any] = {
+        "beats_per_bar": args.beats_per_bar,
+        "tolerance_percent": args.tolerance,
+        "min_measures": args.min_measures,
+    }
+
+    for audio_file in file_iterator:
+        file_name = audio_file.name
         if pbar:
-            pbar.set_description(f"Processing {audio_file.name}")
-            pbar.reset()
+            pbar.set_description(f"Processing {file_name}")
         elif not args.quiet:
-            print(f"\nProcessing: {audio_file}\n" + "=" * 80)
+            pass
 
-        results.append(process_file(
-            audio_file, 
-            detector, 
-            beats_per_bar=args.beats_per_bar,
-            tolerance_percent=args.tolerance,
-            min_measures=args.min_measures,
-            verbose=not args.quiet
-        ))
+        try:
+            # Call extract_beats directly for each file
+            beats_obj = extract_beats(
+                audio_file_path=str(audio_file),
+                algorithm=args.algorithm,
+                beats_args=beats_constructor_args,
+                **detector_kwargs,
+            )
+            results.append((file_name, beats_obj))
+            if not args.quiet:
+                logging.info(f"Successfully processed and saved beats for {file_name}")
+        except Exception as e:
+            results.append((file_name, None))
+            logging.error(f"Failed to process {file_name}: {e}")
 
     if pbar:
         pbar.close()
 
     # Summary
-    successful = [r for r in results if r[1] is not None and r[2] is not None]
-    failed = [r for r in results if r[1] is None or r[2] is None]
+    successful = [r for r in results if r[1] is not None]
+    failed = [r for r in results if r[1] is None]
 
     if not args.quiet:
-        # Modify reporting if needed, or keep simple count
         print("\n--- Batch Processing Summary ---")
-        print(f"Total files processed: {len(results)}")
+        print(f"Total files attempted: {len(results)}")
         print(f"Successful detections: {len(successful)}")
         print(f"Failed detections: {len(failed)}")
-        # reporting.print_batch_summary(results) # Old reporting might expect Beats object
         if failed:
             print("\nFailed files:")
-            # Unpack all three elements, but only use fname
-            for fname, _, _ in failed:
+            for fname, _ in failed:
                 print(f"  - {fname}")
 
 

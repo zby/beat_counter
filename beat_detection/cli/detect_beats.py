@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from beat_detection.core.factory import get_beat_detector
+from beat_detection.core.factory import extract_beats
 from beat_detection.core.beats import Beats
 
 def parse_args() -> argparse.Namespace:
@@ -98,42 +98,45 @@ def main() -> None:  # noqa: D401 – simple imperative main
         logging.error("Audio file not found: %s", audio_path)
         sys.exit(1)
 
-    # Get detector from factory – uses project defaults unless user overrides
-    detector = get_beat_detector(
-        algorithm=args.algorithm,
-        min_bpm=args.min_bpm,
-        max_bpm=args.max_bpm,
-    )
+    # Prepare arguments for extract_beats
+    detector_kwargs = {
+        "min_bpm": args.min_bpm,
+        "max_bpm": args.max_bpm,
+    }
+    beats_constructor_args = {
+        "beats_per_bar": args.beats_per_bar,
+        "tolerance_percent": args.tolerance,
+        "min_measures": args.min_measures,
+    }
+    
+    # Determine output path (needed before calling extract_beats)
+    output_path_str: Optional[str] = None
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path_str = str(output_path)
 
     try:
-        # Get simplified RawBeats object (timestamps and counts only)
-        raw_beats = detector.detect(str(audio_path))
-        
-        # Create Beats object with optional beats_per_bar override
-        beats = Beats(
-            raw_beats=raw_beats,
-            beats_per_bar=args.beats_per_bar,
-            tolerance_percent=args.tolerance,
-            min_measures=args.min_measures,
+        logging.info(f"Starting beat detection for {audio_path} using {args.algorithm}...")
+        # Call extract_beats which handles detector creation, detection, Beats creation, and saving
+        beats_obj = extract_beats(
+            audio_file_path=str(audio_path),
+            output_path=output_path_str,
+            algorithm=args.algorithm,
+            beats_args=beats_constructor_args,
+            **detector_kwargs
         )
-        
+
+        # Get the actual path used for saving (could be default)
+        final_output_path = Path(output_path_str if output_path_str else str(audio_path.with_suffix(".beats")))
+
         logging.info(
-            f"Detected beats for {audio_path} with effective beats_per_bar={beats.beats_per_bar}"
+            f"Successfully processed {audio_path}. Effective beats_per_bar: {beats_obj.beats_per_bar}. Beats saved to {final_output_path}."
         )
+
     except Exception as exc:  # fail fast but print cause
         logging.exception("Beat detection failed for %s: %s", audio_path, exc)
         sys.exit(1)
-
-    # Output handling
-    if args.output:
-        out_path = Path(args.output)
-    else:
-        out_path = audio_path.with_suffix(".beats")
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Save the raw_beats object
-    raw_beats.save_to_file(out_path)
-    logging.info("Saved raw beats to %s", out_path)
 
 
 if __name__ == "__main__":

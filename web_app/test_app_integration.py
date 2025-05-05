@@ -48,7 +48,7 @@ from web_app.storage import FileMetadataStorage  # Import the class for type hin
 from web_app.auth import UserManager
 
 # Import RawBeats
-from beat_detection.core.beats import RawBeats
+from beat_detection.core.beats import RawBeats, Beats
 
 # --- Test Fixtures ---
 
@@ -201,33 +201,55 @@ def generated_sample_audio() -> Dict[str, Any]:
 
 # --- Mocking Fixture ---
 @pytest.fixture
-def mock_beat_detector():
-    """Mocks the get_beat_detector factory call within the celery task."""
-    # Define the data the mock detector's detect method will return
-    mock_timestamps = np.array([0.15, 0.55, 0.95, 1.35]) # Example timestamps
-    mock_counts = np.array([1, 2, 3, 4])
-
-    # Create a simplified RawBeats object (no beats_per_bar)
-    mock_raw_beats_obj = RawBeats(
+def mock_extract_beats():
+    """Mocks the extract_beats call within the celery task."""
+    # Define realistic sample beat data
+    mock_timestamps = np.array([0.15, 0.55, 0.95, 1.35]) # Gives 150 BPM
+    mock_counts = np.array([1, 2, 3, 4]) # Implies 4 beats per bar
+    
+    # Create a real RawBeats object
+    real_raw_beats_obj = RawBeats(
         timestamps=mock_timestamps,
         beat_counts=mock_counts
-        # No beats_per_bar here
     )
-
-    patch_target = "web_app.celery_app.get_beat_detector" # Patch the factory
+    
+    # Create a real Beats object using default analysis params
+    # (matching defaults in celery_app.detect_beats_task and test_upload_valid_audio checks)
     try:
-        with patch(patch_target) as mock_get_detector:
-            # Mock the detector instance that the factory would return
-            mock_detector_instance = MagicMock()
-            # Configure the detect method on the instance to return the simplified RawBeats
-            mock_detector_instance.detect.return_value = mock_raw_beats_obj
-            # Configure the factory mock to return our mock instance
-            mock_get_detector.return_value = mock_detector_instance
+        real_beats_obj = Beats(
+            raw_beats=real_raw_beats_obj,
+            beats_per_bar=None, # Let it infer from counts (should be 4)
+            tolerance_percent=10.0,
+            min_measures=1
+        )
+        # Verify inferred values match test expectations
+        assert real_beats_obj.beats_per_bar == 4
+        assert np.isclose(real_beats_obj.overall_stats.tempo_bpm, 150.0)
+    except Exception as e:
+        pytest.fail(f"Failed to create real Beats object in mock fixture: {e}")
 
-            print(
-                f"Mocking '{patch_target}' - Factory will return a mock detector instance."
-            )
-            yield mock_get_detector # Yield the factory mock itself
+    # Patch extract_beats directly
+    patch_target = "web_app.celery_app.extract_beats"
+    try:
+        with patch(patch_target) as mock_extract_beats_func:
+            # Configure the mock function to return our real Beats object
+            mock_extract_beats_func.return_value = real_beats_obj
+            
+            # Side effect to simulate saving the REAL RawBeats object
+            def side_effect_save(*args, **kwargs):
+                output_path_arg = kwargs.get('output_path')
+                if output_path_arg:
+                    save_path = pathlib.Path(output_path_arg)
+                    save_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Save the REAL RawBeats data
+                    real_raw_beats_obj.save_to_file(save_path)
+                    print(f"Mock extract_beats side effect: Saved REAL RawBeats file to {save_path}")
+                return real_beats_obj # Still return the real Beats object
+
+            mock_extract_beats_func.side_effect = side_effect_save
+
+            print(f"Mocking '{patch_target}' - Function will return a REAL Beats object and save REAL RawBeats.")
+            yield mock_extract_beats_func # Yield the mock function itself
     except ModuleNotFoundError:
         pytest.fail(f"Failed to patch '{patch_target}'. Is the import path correct?")
     except Exception as e:
@@ -295,7 +317,7 @@ def test_upload_valid_audio(
     test_client: TestClient,
     test_storage: FileMetadataStorage,
     generated_sample_audio: Dict[str, Any],
-    mock_beat_detector,  # IMPORTANT: Ensure fixture is included
+    mock_extract_beats,
 ):
     """Test uploading a valid audio file (uses mock beat detector)."""
     filename = generated_sample_audio["filename"]
@@ -388,7 +410,7 @@ def uploaded_file_id(
     test_client: TestClient,
     test_storage: FileMetadataStorage,
     generated_sample_audio: Dict[str, Any],
-    mock_beat_detector,  # IMPORTANT: Ensure fixture is included
+    mock_extract_beats,
 ) -> str:
     """Fixture to upload a generated file (with mocked detection) and return its ID."""
     filename = f"workflow_{generated_sample_audio['filename']}"
@@ -445,7 +467,7 @@ def test_confirm_analysis_success(
     mock_generate_video_delay,  # Mock object from patch
     test_client: TestClient,
     test_storage: FileMetadataStorage,
-    uploaded_file_id: str,  # This fixture implicitly uses mock_beat_detector
+    uploaded_file_id: str,  # This fixture implicitly uses mock_extract_beats
 ):
     """Test confirming analysis triggers video generation task (mocked delay)."""
     file_id = uploaded_file_id  # Fixture ensures state is ANALYZED
@@ -492,7 +514,7 @@ def test_confirm_analysis_not_ready(
     test_client: TestClient,
     test_storage: FileMetadataStorage,
     generated_sample_audio: Dict[str, Any],
-    mock_beat_detector,
+    mock_extract_beats,
 ):
     """Test confirming analysis when beat detection hasn't 'run' (no beats file)."""
     filename = "not_ready_" + generated_sample_audio["filename"]
@@ -679,7 +701,7 @@ def test_status_analyzing_failure_with_error(
     test_client: TestClient,
     test_storage: FileMetadataStorage,
     generated_sample_audio: Dict[str, Any],
-    mock_beat_detector,
+    mock_extract_beats,
 ):
     """Test status endpoint includes error information when ANALYZING_FAILURE."""
     # Setup a file in ANALYZING state first
@@ -689,7 +711,7 @@ def test_status_analyzing_failure_with_error(
     file_obj.seek(0)
     files = {"file": (filename, file_obj, mime_type)}
 
-    # Upload the file - this will use the mock_beat_detector fixture
+    # Upload the file - this will use the mock_extract_beats fixture
     response = test_client.post("/upload", files=files, follow_redirects=False)
     # Upload should now succeed (303)
     assert response.status_code == 303, f"Upload failed unexpectedly: {response.text}"

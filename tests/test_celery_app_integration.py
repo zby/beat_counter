@@ -103,7 +103,7 @@ def sample_beats_file(sample_audio_file, temp_storage_integration):
     print(f"\nGenerating beats for {audio_path} using 'madmom' detector...")
     try:
         detector: BeatDetector = get_beat_detector("madmom") # Use madmom for consistency or choose another
-        raw_beats: RawBeats = detector.detect(str(audio_path))
+        raw_beats: RawBeats = detector.detect_beats(str(audio_path)) # NEW
         assert raw_beats is not None, "Beat detection did not return a RawBeats object."
         assert len(raw_beats.timestamps) > 0, "Beat detection returned no timestamps."
         print(f"\nDetected {len(raw_beats.timestamps)} beats.")
@@ -177,10 +177,6 @@ def test_detect_beats_task_integration_success(
     tolerance_percent = 15.0
     min_measures = 2
 
-    # Simple dummy progress callback for the test
-    def dummy_progress_callback(stage: str, value: float):
-        print(f"[Test Progress] Stage: {stage}, Value: {value:.2f}")
-
     # Ensure the audio file actually exists where storage expects it
     assert audio_path.exists(), f"Test setup failed: Audio file {audio_path} not found."
     metadata_before = storage.get_metadata(file_id)
@@ -200,7 +196,6 @@ def test_detect_beats_task_integration_success(
         beats_per_bar=beats_per_bar,
         tolerance_percent=tolerance_percent,
         min_measures=min_measures,
-        update_progress=dummy_progress_callback,
     )
 
     # --- Assert ---

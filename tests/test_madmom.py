@@ -41,7 +41,7 @@ def test_madmom_detect_save_load_reconstruct():
 
     # --- 1. Detect beats & 2. Infer beats_per_bar --- 
     detector: BeatDetector = get_beat_detector("madmom")
-    raw_beats = detector.detect(str(TEST_AUDIO_FILE))
+    raw_beats = detector.detect_beats(str(TEST_AUDIO_FILE))
 
     assert raw_beats is not None, "Simplified RawBeats object was not created by madmom."
     assert raw_beats.timestamps.shape[0] > 0, "No raw beats were detected by madmom."
