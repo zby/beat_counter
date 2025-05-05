@@ -20,14 +20,12 @@ from typing import Optional, Union, Tuple, List
 import sys
 
 from beat_detection.core.video import (
-    BeatVideoGenerator,
+    generate_single_video_from_files,  # Use the new function
     DEFAULT_VIDEO_RESOLUTION,
     DEFAULT_VIDEO_WIDTH,
     DEFAULT_VIDEO_HEIGHT,
     DEFAULT_FPS,
 )
-from beat_detection.core.beats import Beats, RawBeats
-
 
 # ---------------------------------------------------------------------------
 # CLI helpers
@@ -103,78 +101,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def generate_counter_video(
-    audio_file: pathlib.Path,
-    beats_file: pathlib.Path,
-    tolerance_percent: float,
-    min_measures: int,
-    output_file: pathlib.Path | None = None,
-    resolution=DEFAULT_VIDEO_RESOLUTION,
-    fps: int = 30,
-    sample_beats: int | None = None,
-    verbose: bool = True,
-):
-    """
-    Process an audio file and its corresponding raw beats file to generate a beat visualization video.
-
-    This function loads raw beat data, reconstructs the full Beats object using
-    the provided parameters, and then generates the video.
-    """
-    audio_path = audio_file
-    beats_path = beats_file
-
-    if not audio_path.is_file():
-        raise FileNotFoundError(f"Audio file not found: {audio_path}")
-    if not beats_path.is_file():
-        raise FileNotFoundError(f"Beats file not found: {beats_path}.")
-
-    # Load Raw Beats Data
-    try:
-        raw_beats = RawBeats.load_from_file(beats_path)
-        if verbose:
-            print(f"Loaded raw beats data from {beats_path} with {len(raw_beats.timestamps)} beats")
-    except Exception as e:
-        raise RuntimeError(f"Failed to load raw beats from {beats_path}: {e}") from e
-
-    # Reconstruct Beats object using parameters from raw_beats and function args
-    try:
-        # Create Beats object from RawBeats, inferring beats_per_bar if not provided
-        beats = Beats(
-            raw_beats=raw_beats,
-            beats_per_bar=None,  # Let Beats infer beats_per_bar from the pattern
-            tolerance_percent=tolerance_percent,
-            min_measures=min_measures
-        )
-        if verbose:
-            print(f"Reconstructed Beats object using bpb={beats.beats_per_bar}, tol={tolerance_percent}, min_meas={min_measures}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to reconstruct Beats object: {e}") from e
-
-    # Determine output video path
-    if output_file is None:
-        # Default behavior: save next to audio file
-        output_path = audio_path.with_name(f"{audio_path.stem}_counter.mp4")
-    else:
-        # Use provided output file path
-        output_path = output_file
-        # Ensure parent directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if verbose:
-        print(f"Generating video for {audio_path} using reconstructed beats")
-
-    # Create generator
-    video_gen = BeatVideoGenerator(resolution=resolution, fps=fps)
-
-    # Generate video using the reconstructed Beats object
-    video_gen.generate_video(audio_path, beats, output_path, sample_beats=sample_beats)
-
-    if verbose:
-        print(f"Saved video to {output_path}")
-
-    return True
-
-
 def main():
     """Main entry point for the CLI."""
     args = parse_args()
@@ -187,18 +113,20 @@ def main():
     beats_path = audio_path.with_suffix(".beats")
 
     # ------------------------------------------------------------------
-    # Process the single audio file
+    # Process the single audio file - use the centralized function
     # ------------------------------------------------------------------
     try:
-        generate_counter_video(
+        output_file = pathlib.Path(args.output_file) if args.output_file else None
+        
+        generate_single_video_from_files(
             audio_file=audio_path,
             beats_file=beats_path,
-            tolerance_percent=args.tolerance_percent,
-            min_measures=args.min_measures,
-            output_file=pathlib.Path(args.output_file) if args.output_file else None,
+            output_file=output_file,
             resolution=resolution,
             fps=args.fps,
             sample_beats=args.sample,
+            tolerance_percent=args.tolerance_percent,
+            min_measures=args.min_measures,
             verbose=not args.quiet,
         )
     except FileNotFoundError as e:

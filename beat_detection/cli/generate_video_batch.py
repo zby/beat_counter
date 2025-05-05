@@ -20,18 +20,14 @@ import pathlib
 from typing import Tuple, List
 
 from beat_detection.core.video import (
-    BeatVideoGenerator,
+    generate_batch_videos,  # New centralized batch function
     DEFAULT_VIDEO_WIDTH,
     DEFAULT_VIDEO_HEIGHT,
     DEFAULT_FPS,
 )
-from beat_detection.utils.file_utils import find_audio_files
 
 # Re-use the parsing function from single-file script for resolution
 from beat_detection.cli.generate_video import parse_resolution
-
-# Reuse the single-file processing logic
-from beat_detection.cli.generate_video import generate_counter_video
 
 
 def parse_args() -> argparse.Namespace:
@@ -115,72 +111,41 @@ def main() -> None:
 
     output_dir = pathlib.Path(args.output_dir) if args.output_dir else None
 
-    audio_files = find_audio_files(input_dir)
-    if not audio_files:
-        logging.warning("No audio files found in %s", input_dir)
-        sys.exit(0)
+    try:
+        # Call the centralized batch function instead of looping here
+        results = generate_batch_videos(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            resolution=args.resolution,
+            fps=args.fps,
+            sample_beats=args.sample,
+            tolerance_percent=args.tolerance_percent,
+            min_measures=args.min_measures,
+            verbose=not args.quiet,
+            no_progress=False,  # Enable progress bar by default
+        )
 
-    if not args.quiet:
-        print(f"Found {len(audio_files)} audio files in {input_dir}")
+        # --- Summary --- (Simplified from original)
+        successful_count = sum(1 for _, success, _ in results if success)
+        failed_count = len(results) - successful_count
 
-    results: List[Tuple[str, bool]] = []
-
-    for audio_file in audio_files:
         if not args.quiet:
-            print(f"\nProcessing: {audio_file}")
+            print("\n" + "=" * 80)
+            print("BATCH VIDEO GENERATION SUMMARY")
+            print("=" * 80)
+            print(f"Total files processed: {len(results)}")
+            print(f"Successful: {successful_count}")
+            print(f"Failed/Skipped: {failed_count}")
+            if failed_count > 0:
+                print("\nFiles that failed or were skipped:")
+                for filename, success, _ in results:
+                    if not success:
+                        print(f"- {filename}")
+            print("=" * 80 + "\n")
 
-        try:
-            # Determine the beats file path
-            beats_file = audio_file.with_suffix(".beats")
-            if not beats_file.exists():
-                 raise FileNotFoundError(f"Beats file not found: {beats_file}")
-
-            # Determine the specific output file path for this audio file
-            if output_dir:
-                # Ensure output dir exists
-                output_dir.mkdir(parents=True, exist_ok=True)
-                single_output_file = output_dir / f"{audio_file.stem}_counter.mp4"
-            else:
-                single_output_file = None
-
-            # Call the single-file processing function with the specific file path AND NEW PARAMS
-            success = generate_counter_video(
-                audio_file=audio_file,
-                beats_file=beats_file, # Pass inferred beats file
-                tolerance_percent=args.tolerance_percent, # Pass CLI arg
-                min_measures=args.min_measures,       # Pass CLI arg
-                output_file=single_output_file,
-                resolution=args.resolution,
-                fps=args.fps,
-                sample_beats=args.sample,
-                verbose=not args.quiet,
-            )
-            results.append((audio_file.name, success))
-        except FileNotFoundError as e:
-            if not args.quiet:
-                logging.warning("Skipping %s: %s", audio_file.name, e)
-            results.append((audio_file.name, False))
-        except Exception as e:
-            logging.exception("Error processing %s: %s", audio_file.name, e)
-            results.append((audio_file.name, False))
-
-    # --- Summary --- (Optional)
-    successful_count = sum(1 for _, success in results if success)
-    failed_count = len(results) - successful_count
-
-    if not args.quiet:
-        print("\n" + "=" * 80)
-        print("BATCH VIDEO GENERATION SUMMARY")
-        print("=" * 80)
-        print(f"Total files processed: {len(results)}")
-        print(f"Successful: {successful_count}")
-        print(f"Failed/Skipped: {failed_count}")
-        if failed_count > 0:
-            print("\nFiles that failed or were skipped:")
-            for filename, success in results:
-                if not success:
-                    print(f"- {filename}")
-        print("=" * 80 + "\n")
+    except Exception as e:
+        print(f"Error during batch processing: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
