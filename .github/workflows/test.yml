@@ -45,13 +45,41 @@ jobs:
         # List the configuration files to verify
         ls -la etc/
         
+    - name: Run diagnostic checks
+      run: |
+        source .venv/bin/activate
+        echo "=== Python version ==="
+        python --version
+        
+        echo "=== List of installed packages ==="
+        uv pip list
+        
+        echo "=== Dependency verification ==="
+        echo "Checking core dependencies..."
+        python -c "import numpy; print(f'NumPy version: {numpy.__version__}')"
+        python -c "import madmom; print(f'madmom version: {madmom.__version__}')"
+        
+        echo "Checking web app dependencies..."
+        python -c "import fastapi; print(f'FastAPI version: {fastapi.__version__}')"
+        python -c "import httpx; print(f'httpx version: {httpx.__version__}')" || echo "httpx is missing - needed for web app tests"
+        
+        echo "Checking beat detection dependencies..."
+        python -c "import torch; print(f'PyTorch version: {torch.__version__}')" || echo "PyTorch is missing - needed for beat_this detector"
+        if python -c "import beat_this" 2>/dev/null; then
+          echo "beat_this module is available"
+        else
+          echo "beat_this module is missing - needed for beat_this detector tests"
+        fi
+        
+        echo "=== Test paths verification ==="
+        ls -la tests/
+        ls -la beat_detection/core/ | grep test
+       
     - name: Run tests
       run: |
         source .venv/bin/activate
-        # Verify that complex dependencies are available
-        python -c "import madmom; import numpy; print(f'madmom version: {madmom.__version__}')" || true
-        # Then run tests, skipping those that require torch if it's not available
-        pytest -v --override-ini="addopts=" -xvs || true  # Run all tests including slow ones, but don't fail if some tests fail
+        # Run all tests with more verbosity
+        pytest -v --override-ini="addopts=" -xvs
 
     - name: Tag successful main branch builds
       if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
