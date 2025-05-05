@@ -75,6 +75,13 @@ def parse_args() -> argparse.Namespace:
         default=2,
         help="Minimum number of consistent measures required for regular section detection.",
     )
+    
+    # beat_this specific options
+    parser.add_argument(
+        "--use-dbn",
+        action="store_true",
+        help="Enable Dynamic Bayesian Network for the beat_this detector.",
+    )
 
     return parser.parse_args()
 
@@ -96,6 +103,11 @@ def main() -> None:  # noqa: D401 – simple imperative main
         "min_bpm": args.min_bpm,
         "max_bpm": args.max_bpm,
     }
+    
+    # Add DBN argument for beat_this detector
+    if args.algorithm == "beat_this":
+        detector_kwargs["use_dbn"] = args.use_dbn
+    
     beats_constructor_args = {
         "beats_per_bar": args.beats_per_bar,
         "tolerance_percent": args.tolerance,

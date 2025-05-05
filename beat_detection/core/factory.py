@@ -155,14 +155,14 @@ def extract_beats(
         detector = get_beat_detector(algorithm=algorithm, **kwargs)
         raw_beats = detector.detect_beats(audio_file_path)
 
+        # Save raw beats to the output file
+        raw_beats.save_to_file(final_output_path)
+
         # Create Beats object to validate raw_beats structure and infer parameters
         beats_obj = Beats(
             raw_beats, # Positional argument
             **(beats_args or {}), # Ensure beats_args is a dict
             )
-
-        # Save raw beats to the output file
-        raw_beats.save_to_file(final_output_path)
 
         logging.info(
             f"Successfully processed {audio_file_path}. Effective beats_per_bar: {beats_obj.beats_per_bar}. Beats saved to {final_output_path}."
