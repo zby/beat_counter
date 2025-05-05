@@ -8,13 +8,7 @@ import inspect
 
 from beat_detection.core.factory import get_beat_detector, DETECTOR_REGISTRY, BeatDetector
 from beat_detection.core.madmom_detector import MadmomBeatDetector
-# Import BeatThisDetector conditionally or mock it if necessary
-try:
-    from beat_detection.core.beat_this_detector import BeatThisDetector
-    _BEAT_THIS_AVAILABLE = True
-except ImportError:
-    BeatThisDetector = MagicMock() # Use MagicMock if BeatThisDetector is not available
-    _BEAT_THIS_AVAILABLE = False
+from beat_detection.core.beat_this_detector import BeatThisDetector
 
 # Define a simple MockDetector for testing patching
 class MockDetector(BeatDetector):
@@ -41,12 +35,9 @@ def test_get_beat_detector_madmom():
     assert isinstance(detector, MadmomBeatDetector)
 
 
-# Conditionally run test if BeatThisDetector is available
-@pytest.mark.skipif(not _BEAT_THIS_AVAILABLE, reason="BeatThisDetector not installed or found")
 def test_get_beat_detector_beat_this():
     """Test getting a BeatThisDetector."""
     detector = get_beat_detector("beat_this")
-    # Check if it's the real one or the MagicMock we assigned if import failed
     assert isinstance(detector, BeatThisDetector)
 
 
@@ -67,11 +58,8 @@ def test_detector_registry():
     """Test that the detector registry contains the expected detectors."""
     assert "madmom" in DETECTOR_REGISTRY
     assert DETECTOR_REGISTRY["madmom"] == MadmomBeatDetector
-    if _BEAT_THIS_AVAILABLE:
-        assert "beat_this" in DETECTOR_REGISTRY
-        assert DETECTOR_REGISTRY["beat_this"] == BeatThisDetector
-    else:
-        assert "beat_this" not in DETECTOR_REGISTRY
+    assert "beat_this" in DETECTOR_REGISTRY
+    assert DETECTOR_REGISTRY["beat_this"] == BeatThisDetector
 
 
 # Test that get_beat_detector uses the DETECTOR_REGISTRY

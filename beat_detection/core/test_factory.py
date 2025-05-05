@@ -25,24 +25,10 @@ def test_get_beat_detector_madmom():
     assert isinstance(detector, MadmomBeatDetector)
 
 
-# Create a patch at module level to mock the BeatThisDetector before it's imported
-@patch('beat_detection.core.beat_this_detector.BeatThisDetector')
-def test_get_beat_detector_beat_this(mock_detector):
+def test_get_beat_detector_beat_this():
     """Test getting a BeatThisDetector."""
-    # Configure the mock to return a MagicMock instance when instantiated
-    mock_instance = MagicMock()
-    mock_detector.return_value = mock_instance
-    
-    # Reload the factory module to use our mock
-    import beat_detection.core.factory
-    importlib.reload(beat_detection.core.factory)
-    
-    # Call the factory function
-    detector = beat_detection.core.factory.get_beat_detector("beat_this")
-    
-    # Verify the mock was called
-    assert mock_detector.called
-    assert detector is mock_instance
+    detector = get_beat_detector("beat_this")
+    assert isinstance(detector, BeatThisDetector)
 
 
 def test_get_beat_detector_invalid():
@@ -63,8 +49,7 @@ def test_detector_registry():
     assert "madmom" in DETECTOR_REGISTRY
     assert "beat_this" in DETECTOR_REGISTRY
     assert DETECTOR_REGISTRY["madmom"] == MadmomBeatDetector
-    # We don't directly import BeatThisDetector to avoid ImportError
-    assert DETECTOR_REGISTRY["beat_this"].__name__ == "BeatThisDetector"
+    assert DETECTOR_REGISTRY["beat_this"] == BeatThisDetector
 
 
 # --- Tests for extract_beats ---
