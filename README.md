@@ -20,14 +20,14 @@ First, install [uv](https://github.com/astral-sh/uv), a fast Python package inst
 
 ```bash
 # Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+pip install -U uv
 ```
 
 ### System Requirements
 
 ```bash
 # Install ffmpeg with additional codecs (required for video generation and M4A support)
-sudo apt-get install ffmpeg libavcodec-extra58  # On Ubuntu/Debian
+sudo apt-get install ffmpeg  # On Ubuntu/Debian
 # OR
 brew install ffmpeg  # On macOS
 ```
@@ -36,10 +36,8 @@ The application supports the following audio formats:
 - MP3
 - WAV
 - FLAC
-- M4A (requires libavcodec-extra58 package)
+- M4A
 - OGG
-
-Note: For M4A support on Ubuntu/Debian, you need to install the `libavcodec-extra58` package which provides additional codecs including AAC encoding support.
 
 ### Setting up a virtual environment
 
@@ -57,6 +55,12 @@ uv pip install .
 
 # For development, install with dev dependencies
 uv pip install ".[dev]"
+
+# For installing with beat_this_algo support
+uv pip install ".[beat_this_algo]"
+
+# For development with beat_this_algo support
+uv pip install ".[dev,beat_this_algo]"
 ```
 
 ## Running the Application
@@ -69,16 +73,12 @@ python -m web_app.app
 
 ### Configuration
 
-The application uses a config directory structure for storing configuration files:
+The application uses configuration files for storing settings:
 
 ```bash
 # Copy example configuration files
-cp web_app/config/config.json.example web_app/config/config.json
-cp web_app/config/users.json.example web_app/config/users.json
-
-# Edit the configuration files with your settings
-nano web_app/config/config.json  # Application settings
-nano web_app/config/users.json   # User credentials
+cp etc/config.json.example etc/config.json
+cp etc/users.json.example etc/users.json
 ```
 
 The configuration files contain:
