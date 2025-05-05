@@ -85,9 +85,10 @@ def mock_extract_dependencies():
 
     # Use autospec=True for better mocking based on the class signature
     with patch('beat_detection.core.factory.get_beat_detector', return_value=mock_detector_instance) as mock_get_detector, \
-         patch('beat_detection.core.factory.Beats', spec=Beats, autospec=True) as mock_beats_class:
+         patch('beat_detection.core.factory.Beats', autospec=True) as mock_beats_class:
 
         mock_beats_instance = MagicMock(spec=Beats) # Use spec here as well
+        mock_beats_instance.beats_per_bar = 4 # Add the missing attribute
         mock_beats_class.return_value = mock_beats_instance
 
         yield {
@@ -103,9 +104,9 @@ def test_extract_beats_default_output(mock_extract_dependencies, tmp_path, mock_
     """Test extract_beats with the default output path."""
     # Get mocks from fixture
     mock_get_detector = mock_extract_dependencies["mock_get_detector"]
+    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_detector_instance = mock_extract_dependencies["mock_detector_instance"]
     mock_raw_beats = mock_extract_dependencies["mock_raw_beats"]
-    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_beats_instance = mock_extract_dependencies["mock_beats_instance"]
 
     # Set specific mock behavior if needed (already done in fixture for detect_beats)
@@ -139,9 +140,9 @@ def test_extract_beats_specified_output(mock_extract_dependencies, tmp_path, moc
     """Test extract_beats with a specified output path."""
     # Get mocks from fixture
     mock_get_detector = mock_extract_dependencies["mock_get_detector"]
+    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_detector_instance = mock_extract_dependencies["mock_detector_instance"]
     mock_raw_beats = mock_extract_dependencies["mock_raw_beats"]
-    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_beats_instance = mock_extract_dependencies["mock_beats_instance"]
 
     # Set specific mock behavior
@@ -177,9 +178,9 @@ def test_extract_beats_passes_kwargs_to_detector(mock_extract_dependencies, tmp_
     """Test that extra kwargs are passed to get_beat_detector."""
     # Get mocks from fixture
     mock_get_detector = mock_extract_dependencies["mock_get_detector"]
+    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_detector_instance = mock_extract_dependencies["mock_detector_instance"]
     mock_raw_beats = mock_extract_dependencies["mock_raw_beats"]
-    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_beats_instance = mock_extract_dependencies["mock_beats_instance"]
 
     # Set specific mock behavior
