@@ -106,7 +106,7 @@ jobs:
         python -c "import sys; print(f'sys.path: {sys.path}')"
         
         echo "=== Running dedicated diagnostic test ==="
-        python -m pytest tests/test_beat_this_diagnostic.py -v
+        pytest -m slow -v -s tests/test_beat_this_diagnostic.py -v
         
     - name: Run tests
       run: |

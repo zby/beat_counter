@@ -46,13 +46,8 @@ def test_beat_this_diagnostic():
         # --- Look for alternative test files ---
         mp3_files = list(Path(os.getcwd()).glob("**/*.mp3"))
         print_diagnostic(f"Found MP3 files in workspace: {mp3_files}")
+        print_diagnostic(f"Using alternative audio file: {TEST_AUDIO_FILE}")
         
-        # Use first MP3 file if test file doesn't exist
-        if not TEST_AUDIO_FILE.is_file() and mp3_files:
-            alt_audio_file = mp3_files[0]
-            print_diagnostic(f"Using alternative audio file: {alt_audio_file}")
-            TEST_AUDIO_FILE = alt_audio_file
-
         # --- Setup ---
         # Ensure the output directory exists
         BEAT_THIS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
