@@ -11,7 +11,7 @@ from beat_detection.core.beats import RawBeats
 class BeatDetector(Protocol):
     """Protocol for beat detection algorithms."""
 
-    def detect(self, audio_path: str | Path) -> RawBeats:
+    def detect_beats(self, audio_path: str | Path) -> RawBeats:
         """
         Detects beats in an audio file and returns raw beat information.
 
