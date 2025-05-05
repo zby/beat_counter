@@ -33,6 +33,7 @@ dependencies = [
     "fsspec>=2025.3.2",
     "aiohttp>=3.11.18",
     "requests>=2.32.3",
+    "torch>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -42,7 +43,8 @@ dev = [
     "black>=21.5b2",
     "flake8>=3.9.2",
     "isort>=5.9.1",
-    "pre-commit>=3.3.3"
+    "pre-commit>=3.3.3",
+    "httpx>=0.24.0",
 ]
 beat_this_algo = [
     "beat_this @ git+https://github.com/CPJKU/beat_this@main#egg=beat_this"
