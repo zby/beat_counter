@@ -36,6 +36,15 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y ffmpeg
         
+    - name: Setup configuration files
+      run: |
+        # Copy example configuration files to their actual locations
+        cp etc/config.json.example etc/config.json
+        cp etc/users.json.example etc/users.json
+        
+        # List the configuration files to verify
+        ls -la etc/
+        
     - name: Run tests
       run: |
         source .venv/bin/activate
