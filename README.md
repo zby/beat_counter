@@ -31,10 +31,8 @@ sudo apt-get install ffmpeg  # On Ubuntu/Debian
 # OR
 brew install ffmpeg  # On macOS
 
-# Install Python development headers (required for compiling madmom's C extensions)
-sudo apt-get install python3-dev  # On Ubuntu/Debian
-# OR
-brew install python  # On macOS (includes development headers)
+# If you encounter build errors with madmom, you might need Python development headers
+# sudo apt-get install python3-dev  # On Ubuntu/Debian
 ```
 
 The application supports the following audio formats:
