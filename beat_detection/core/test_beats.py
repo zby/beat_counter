@@ -7,7 +7,7 @@ import pytest
 from typing import Optional
 
 from beat_detection.core.beats import Beats, BeatStatistics, BeatCalculationError, RawBeats
-from beat_detection.tests.conftest import assert_raises
+from conftest import assert_raises
 
 
 # Helper function to create RawBeats for testing

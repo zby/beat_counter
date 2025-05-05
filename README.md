@@ -185,6 +185,116 @@ For detailed deployment instructions, see the [Deployment Guide](DEPLOYMENT.md).
 - Pillow - Python Imaging Library for image processing
 - MoviePy - Video editing library for Python
 
+## Testing
+
+The project uses pytest for testing. Tests are located in the `tests/` and `beat_detection/tests/` directories.
+
+### Running Tests
+
+```bash
+# Run all tests (excluding slow tests by default)
+pytest
+
+# Run all tests including slow tests
+pytest --override-ini="addopts="
+
+# Run only slow tests
+pytest -m "slow"
+
+# Run specific test modules or directories
+pytest tests/test_beat_this.py  # This will include slow tests from the specified file
+pytest tests/  # This will include slow tests from the tests directory
+```
+
+> **Note**: Tests in the top-level `tests/` directory are automatically marked as `slow` and are skipped by default in local development. In CI environments (GitHub Actions), all tests are run including slow tests.
+
+### GPU vs CPU Testing
+
+By default, the tests will use GPU if available for beat detection algorithms that support hardware acceleration (such as beat_this).
+
+#### Force CPU Usage
+
+For CI/CD environments without GPUs (such as GitHub Actions) or to replicate CI failures locally, you can force CPU usage by setting the `BEAT_DETECTION_FORCE_CPU` environment variable:
+
+```bash
+# Run all tests on CPU regardless of GPU availability
+BEAT_DETECTION_FORCE_CPU=1 python -m pytest
+
+# Run specific tests on CPU
+BEAT_DETECTION_FORCE_CPU=1 python -m pytest tests/test_beat_this.py
+```
+
+This ensures consistent test behavior across different environments. The application automatically detects this environment variable and forces CPU usage for all detector initializations.
+
+## Development Workflow
+
+This project follows GitHub Flow for collaboration and development. The workflow is automated using GitHub Actions to ensure code quality and stability.
+
+### Branching Strategy
+
+- The `main` branch represents the stable, deployable state of the application
+- All new work is done in short-lived feature branches created from `main`
+
+### Local Development
+
+1. Create a feature branch from `main`:
+   ```bash
+   git checkout main
+   git pull
+   git checkout -b feature/your-feature-name
+   ```
+
+2. (Optional) Install pre-commit hooks for local quality checks:
+   ```bash
+   # Install pre-commit
+   uv pip install pre-commit
+   
+   # Install the hooks
+   pre-commit install
+   ```
+
+3. Work on your feature, committing frequently to save progress
+   - These commits do not need to pass all tests immediately
+   - The pre-commit hooks (if installed) will run fast tests before each commit
+
+4. When ready to integrate, push your branch and create a Pull Request:
+   ```bash
+   git push -u origin feature/your-feature-name
+   ```
+
+### Continuous Integration
+
+When a Pull Request is opened, GitHub Actions will automatically:
+
+1. Set up the Python environment
+2. Install all dependencies using `uv`
+3. Run the full test suite using pytest
+4. Report results as status checks on the PR
+
+The workflow configuration is located in `.github/workflows/test.yml`.
+
+### Merging to Main
+
+1. A Pull Request must have the following to be merged:
+   - Approval from at least one reviewer
+   - All required status checks must pass (including the test suite)
+
+2. Once the PR is merged to `main`:
+   - The GitHub Actions workflow will run again on the `main` branch
+   - If successful, it will automatically create a Git tag with the format `tests-passed-YYYYMMDDHHMMSS`
+   - These tags mark commits where all tests are confirmed to pass
+
+### Branch Protection
+
+The `main` branch is protected with the following rules:
+
+- Pull requests are required for all changes
+- At least one approval is required
+- The GitHub Actions test workflow must pass before merging
+- Force pushes are disabled
+
+This ensures that the `main` branch always represents a stable state where all tests pass.
+
 ## License
 
 MIT

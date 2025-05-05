@@ -41,7 +41,8 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "black>=21.5b2",
     "flake8>=3.9.2",
-    "isort>=5.9.1"
+    "isort>=5.9.1",
+    "pre-commit>=3.3.3"
 ]
 beat_this_algo = [
     "beat_this @ git+https://github.com/CPJKU/beat_this@main#egg=beat_this"
@@ -66,9 +67,15 @@ profile = "black"
 line_length = 88
 
 [tool.pytest.ini_options]
-testpaths = ["web_app", "beat_detection"]
+testpaths = ["web_app", "beat_detection", "tests"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (skipped in pre-commit hooks)",
+    "integration: marks tests that require external resources",
+]
+pythonpath = ["."]
+addopts = "-m 'not slow'"  # Skip slow tests by default
 
 [dependency-groups]
 dev = [

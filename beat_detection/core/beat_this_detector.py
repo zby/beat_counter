@@ -8,6 +8,7 @@ allowed to raise naturally to keep failures obvious.
 """
 
 from pathlib import Path
+import os
 
 import numpy as np
 import torch
@@ -29,9 +30,14 @@ class BeatThisDetector:
     ) -> None:
         """Prepare the underlying Beat-This model once at construction time."""
 
-        # Select GPU if available unless the caller overrides the *device* string
+        # Check if we need to force CPU usage via environment variable
+        force_cpu = os.environ.get('BEAT_DETECTION_FORCE_CPU') == '1'
+        
+        # Select GPU if available unless the caller overrides the *device* string or force_cpu is set
         resolved_device = (
-            torch.device("cuda:0") if device is None and torch.cuda.is_available() else torch.device(device or "cpu")
+            torch.device("cpu") if force_cpu or device == "cpu" 
+            else torch.device("cuda:0") if device is None and torch.cuda.is_available() 
+            else torch.device(device or "cpu")
         )
 
         # Convenience wrapper provided by Beat-This!
