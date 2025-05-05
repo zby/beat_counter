@@ -113,12 +113,3 @@ jobs:
         source .venv/bin/activate
         # Run all tests with more verbosity
         pytest -v --override-ini="addopts=" -xvs
-
-    - name: Tag successful main branch builds
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        TAG_NAME="tests-passed-$(date +'%Y%m%d%H%M%S')"
-        git tag $TAG_NAME
-        git push origin $TAG_NAME 
