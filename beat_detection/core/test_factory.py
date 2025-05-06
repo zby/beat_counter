@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 import os
 import importlib  # Import importlib at the top
+import numpy as np
 
 from beat_detection.core.factory import get_beat_detector, DETECTOR_REGISTRY, extract_beats # Import extract_beats
 from beat_detection.core.beat_this_detector import BeatThisDetector
@@ -61,79 +62,88 @@ def mock_audio_file(tmp_path):
     audio_path.touch()
     return str(audio_path)
 
+# Helper function to create test RawBeats objects
+def create_test_raw_beats(timestamps=None, beat_counts=None) -> RawBeats:
+    """Creates a RawBeats object with provided data or default test data."""
+    if timestamps is None or beat_counts is None:
+        # Create a sequence of 20 beats with regular 0.5s intervals
+        # Use a 4/4 time signature pattern (1,2,3,4,1,2,3,4,...)
+        num_beats = 20
+        interval = 0.5
+        beats_per_bar = 4
+        
+        timestamps = np.arange(num_beats) * interval
+        beat_counts = np.array([(i % beats_per_bar) + 1 for i in range(num_beats)])
+    else:
+        timestamps = np.array(timestamps, dtype=float)
+        beat_counts = np.array(beat_counts, dtype=int)
+        
+    return RawBeats(
+        timestamps=timestamps,
+        beat_counts=beat_counts
+    )
+
 @pytest.fixture
 def mock_extract_dependencies():
-    """Fixture to mock dependencies for extract_beats tests."""
+    """Fixture to prepare dependencies for extract_beats tests using real RawBeats."""
     mock_detector_instance = MagicMock()
-    mock_raw_beats = MagicMock(spec=RawBeats)
-    mock_detector_instance.detect_beats.return_value = mock_raw_beats
+    
+    # Create a real RawBeats object with enough beats to pass validation
+    raw_beats = create_test_raw_beats()  # Use the default 20 beats
+    
+    mock_detector_instance.detect_beats.return_value = raw_beats
 
-    # Use autospec=True for better mocking based on the class signature
+    # Only patch the get_beat_detector function and RawBeats.save_to_file method
     with patch('beat_detection.core.factory.get_beat_detector', return_value=mock_detector_instance) as mock_get_detector, \
-         patch('beat_detection.core.factory.Beats', autospec=True) as mock_beats_class:
-
-        mock_beats_instance = MagicMock(spec=Beats) # Use spec here as well
-        mock_beats_instance.beats_per_bar = 4 # Add the missing attribute
-        mock_beats_class.return_value = mock_beats_instance
-
+         patch.object(RawBeats, 'save_to_file') as mock_save_to_file:
+        
+        # Use the real Beats class, no need to mock it
         yield {
             "mock_get_detector": mock_get_detector,
             "mock_detector_instance": mock_detector_instance,
-            "mock_raw_beats": mock_raw_beats,
-            "mock_beats_class": mock_beats_class,
-            "mock_beats_instance": mock_beats_instance
+            "raw_beats": raw_beats,
+            "mock_save_to_file": mock_save_to_file
         }
 
 
 def test_extract_beats_default_output(mock_extract_dependencies, tmp_path, mock_audio_file):
     """Test extract_beats with the default output path."""
-    # Get mocks from fixture
+    # Get dependencies from fixture
     mock_get_detector = mock_extract_dependencies["mock_get_detector"]
-    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_detector_instance = mock_extract_dependencies["mock_detector_instance"]
-    mock_raw_beats = mock_extract_dependencies["mock_raw_beats"]
-    mock_beats_instance = mock_extract_dependencies["mock_beats_instance"]
+    raw_beats = mock_extract_dependencies["raw_beats"]
+    mock_save_to_file = mock_extract_dependencies["mock_save_to_file"]
 
-    # Set specific mock behavior if needed (already done in fixture for detect_beats)
-    mock_raw_beats.beats = [1.0, 2.0, 3.0]
-
-    # Call extract_beats
-    # Pass empty beats_args for now
-    result = extract_beats(mock_audio_file, algorithm="mock_alg", beats_args={})
+    # Call extract_beats with min_measures=1 to reduce validation requirements
+    result = extract_beats(mock_audio_file, algorithm="mock_alg", beats_args={"min_measures": 1})
 
     # Assertions
-    mock_beats_class.assert_called_once_with(mock_raw_beats, **{})
-    assert result is mock_beats_instance
+    assert isinstance(result, Beats)
+    assert result.beats_per_bar == 4  # From our test data
+    assert result.min_measures == 1   # From our beats_args
 
-    # Assert that save_to_file was called on the RAW beats object
-    mock_raw_beats.save_to_file.assert_called_once()
-    saved_path = mock_raw_beats.save_to_file.call_args[0][0]
+    # Assert that save_to_file was called on the RawBeats object
+    mock_save_to_file.assert_called_once()
+    saved_path = mock_save_to_file.call_args[0][0]
     expected_output_path = tmp_path / "test_audio.beats"
     assert str(saved_path) == str(expected_output_path)
 
+    # Verify detector interactions
     mock_get_detector.assert_called_once_with(algorithm="mock_alg")
     mock_detector_instance.detect_beats.assert_called_once_with(mock_audio_file)
-
-    # Check file content (optional, as save_to_file is mocked)
-    # assert expected_output_path.exists()
-    # with open(expected_output_path, 'r') as f:
-    #     content = f.read()
-    #     assert content == "1.000000\n2.000000\n3.000000\n"
 
 
 def test_extract_beats_specified_output(mock_extract_dependencies, tmp_path, mock_audio_file):
     """Test extract_beats with a specified output path."""
-    # Get mocks from fixture
+    # Get dependencies from fixture
     mock_get_detector = mock_extract_dependencies["mock_get_detector"]
-    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_detector_instance = mock_extract_dependencies["mock_detector_instance"]
-    mock_raw_beats = mock_extract_dependencies["mock_raw_beats"]
-    mock_beats_instance = mock_extract_dependencies["mock_beats_instance"]
+    raw_beats = mock_extract_dependencies["raw_beats"]
+    mock_save_to_file = mock_extract_dependencies["mock_save_to_file"]
 
-    # Set specific mock behavior
-    mock_raw_beats.beats = [0.5, 1.5]
+    # Set up test
     specified_output_path = tmp_path / "custom_output.txt"
-    beats_arguments = {"tolerance_percent": 5.0} # Example beats_args
+    beats_arguments = {"tolerance_percent": 5.0, "min_measures": 1}  # Add min_measures=1
 
     # Call extract_beats
     result = extract_beats(
@@ -144,43 +154,43 @@ def test_extract_beats_specified_output(mock_extract_dependencies, tmp_path, moc
     )
 
     # Assertions
-    mock_beats_class.assert_called_once_with(mock_raw_beats, **beats_arguments)
-    assert result is mock_beats_instance
+    assert isinstance(result, Beats)
+    assert result.tolerance_percent == 5.0  # From beats_arguments
+    assert result.min_measures == 1         # From beats_arguments
 
-    # Assert save_to_file called on raw_beats mock with specified path
-    mock_raw_beats.save_to_file.assert_called_once_with(str(specified_output_path))
+    # Assert save_to_file called with specified path
+    mock_save_to_file.assert_called_once_with(str(specified_output_path))
 
     # Assert detector calls
-    mock_get_detector.assert_called_once_with(algorithm="mock_alg") # Check only algorithm kwarg passed
+    mock_get_detector.assert_called_once_with(algorithm="mock_alg")
     mock_detector_instance.detect_beats.assert_called_once_with(mock_audio_file)
-
-    # Check that default path was NOT created (save_to_file is mocked, so file isn't actually written)
-    # default_output_path = tmp_path / "test_audio.beats"
-    # assert not default_output_path.exists()
 
 
 def test_extract_beats_passes_kwargs_to_detector(mock_extract_dependencies, tmp_path, mock_audio_file):
     """Test that extra kwargs are passed to get_beat_detector."""
-    # Get mocks from fixture
+    # Get dependencies from fixture
     mock_get_detector = mock_extract_dependencies["mock_get_detector"]
-    mock_beats_class = mock_extract_dependencies["mock_beats_class"]
     mock_detector_instance = mock_extract_dependencies["mock_detector_instance"]
-    mock_raw_beats = mock_extract_dependencies["mock_raw_beats"]
-    mock_beats_instance = mock_extract_dependencies["mock_beats_instance"]
+    raw_beats = mock_extract_dependencies["raw_beats"]
+    mock_save_to_file = mock_extract_dependencies["mock_save_to_file"]
 
-    # Set specific mock behavior
-    mock_raw_beats.beats = [1.0]
+    # Set specific test parameters
     detector_kwargs = {"fps": 100, "extra_arg": "test"}
 
-    # Call extract_beats
-    result = extract_beats(mock_audio_file, algorithm="mock_alg", beats_args={}, **detector_kwargs)
+    # Call extract_beats with min_measures=1
+    result = extract_beats(
+        mock_audio_file, 
+        algorithm="mock_alg", 
+        beats_args={"min_measures": 1}, 
+        **detector_kwargs
+    )
 
     # Assertions
-    mock_beats_class.assert_called_once_with(mock_raw_beats, **{})
-    assert result is mock_beats_instance
+    assert isinstance(result, Beats)
+    assert result.min_measures == 1  # From beats_args
 
-    # Assert save_to_file was called on raw_beats object
-    mock_raw_beats.save_to_file.assert_called_once()
+    # Assert save_to_file was called
+    mock_save_to_file.assert_called_once()
 
     # Assert that kwargs were passed to get_beat_detector
     mock_get_detector.assert_called_once_with(algorithm="mock_alg", **detector_kwargs)

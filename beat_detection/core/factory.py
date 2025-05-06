@@ -149,6 +149,9 @@ def extract_beats(
         # Ensure the parent directory exists if an explicit path was provided
         Path(final_output_path).parent.mkdir(parents=True, exist_ok=True)
 
+    # Determine the stats output path
+    stats_output_path = os.path.splitext(final_output_path)[0] + "._beat_stats"
+
     logging.info(f"Starting beat detection for {audio_file_path} using {algorithm}...")
 
     try:
@@ -163,9 +166,21 @@ def extract_beats(
             raw_beats, # Positional argument
             **(beats_args or {}), # Ensure beats_args is a dict
             )
+        
+        # Save beat statistics to ._beat_stats file
+        beat_stats = beats_obj.to_dict()
+        # Remove the beat_list key to avoid duplicating the raw beat data
+        if "beat_list" in beat_stats:
+            del beat_stats["beat_list"]
+        
+        # Write the stats to the ._beat_stats file
+        with open(stats_output_path, 'w') as f:
+            import json
+            json.dump(beat_stats, f, indent=2)
 
         logging.info(
-            f"Successfully processed {audio_file_path}. Effective beats_per_bar: {beats_obj.beats_per_bar}. Beats saved to {final_output_path}."
+            f"Successfully processed {audio_file_path}. Effective beats_per_bar: {beats_obj.beats_per_bar}. "
+            f"Beats saved to {final_output_path}. Statistics saved to {stats_output_path}."
         )
         return beats_obj
 
