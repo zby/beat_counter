@@ -255,6 +255,28 @@ This guide catalogs the world's most prominent dance genres, providing technical
   * **Basic Pattern:** Swing-outs, Charleston variations, kicks
   * **Step Execution:** All beats are danced with frequent improvisation and variations
 
+### Rock and Roll
+
+* **Music Characteristics:**
+  * **Beats per Bar:** 4/4 time signature
+  * **Tempo:** Fast (140-180 BPM)
+  * **Feel:** Energetic rhythm with accent on offbeats, swinging feel
+
+* **Dance Styles:**
+  * **Standard Rock and Roll**
+    * **Step Counting:** "1,2,3,4,5,6" (6-count basic)
+    * **Sequence:** 1.5 bars (6 beats)
+    * **Technique:** Acrobatic kicks, bouncy movement, energetic partnering
+    * **Basic Pattern:** Triple step, triple step, rock step
+    * **Step Execution:** All beats are danced with high energy and bounce
+
+  * **Acrobatic Rock and Roll**
+    * **Step Counting:** "1,2,3,4,5,6" (6-count basic)
+    * **Sequence:** 1.5 bars (6 beats)
+    * **Technique:** Advanced acrobatics, lifts, and aerials with basic footwork
+    * **Basic Pattern:** Basic rock step with elaborate acrobatic figures
+    * **Step Execution:** All beats are danced with emphasis on spectacular acrobatic elements
+
 ## Latin Social Dance Genres
 
 ### Salsa
@@ -490,3 +512,63 @@ This guide catalogs the world's most prominent dance genres, providing technical
   * **Technique:** Fluid, use of floor, emotional expression
   * **Basic Pattern:** No standard pattern, highly variable
   * **Step Execution:** Interpretive, can work with or against musical structure
+
+## Traditional European Dance Genres
+
+### Mazurka
+
+* **Music Characteristics:**
+  * **Beats per Bar:** 3/4 time signature
+  * **Tempo:** Moderate (120-160 BPM)
+  * **Feel:** Accented second beat, lively Polish folk rhythm
+
+* **Dance Styles:**
+  * **Traditional Polish Mazurka**
+    * **Step Counting:** "1,2,3" with emphasis on 2
+    * **Sequence:** 1 bar (3 beats)
+    * **Technique:** Characterful, proud posture, emphatic heel clicks
+    * **Basic Pattern:** Three-step pattern with hop or accent on second beat
+    * **Step Execution:** All beats are danced with emphasis on second beat
+
+  * **Ballroom Mazurka**
+    * **Step Counting:** "1,2,3" with emphasis on 2
+    * **Sequence:** 1 bar (3 beats)
+    * **Technique:** More refined version of the folk dance
+    * **Basic Pattern:** Three-step pattern with less pronounced accents
+    * **Step Execution:** All beats are danced with subtle emphasis on second beat
+
+### Polonaise
+
+* **Music Characteristics:**
+  * **Beats per Bar:** 3/4 time signature
+  * **Tempo:** Moderate (60-72 BPM)
+  * **Feel:** Stately, ceremonial, processional
+
+* **Dance Style:**
+  * **Step Counting:** "1,2,3" with emphasis on 1
+  * **Sequence:** 1 bar (3 beats)
+  * **Technique:** Noble posture, elegant walking steps
+  * **Basic Pattern:** Walking step on first beat, followed by two smaller steps
+  * **Step Execution:** All beats are danced with dignified, processional quality
+
+### Polka
+
+* **Music Characteristics:**
+  * **Beats per Bar:** 2/4 time signature
+  * **Tempo:** Fast (108-120 BPM)
+  * **Feel:** Lively, bouncy, central European folk rhythm
+
+* **Dance Styles:**
+  * **Traditional Polka**
+    * **Step Counting:** "1&2,3&4" or "hop-step-close-step"
+    * **Sequence:** 2 bars (4 beats)
+    * **Technique:** Energetic hopping step with turning patterns
+    * **Basic Pattern:** Hop-step-close-step repeated
+    * **Step Execution:** All beats are danced with bouncy, energetic quality
+
+  * **American Style Polka**
+    * **Step Counting:** "1&2,3&4"
+    * **Sequence:** 2 bars (4 beats)
+    * **Technique:** Similar to traditional but with regional variations
+    * **Basic Pattern:** Basic polka step with different regional styling
+    * **Step Execution:** All beats are danced with high energy
