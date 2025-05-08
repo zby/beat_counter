@@ -56,7 +56,7 @@ def get_git_info() -> Dict[str, str]:
         raise RuntimeError(error_msg)
 
 
-def save_reproducibility_info(output_dir: Path, git_info: Dict[str, str], config_file: Path) -> None:
+def save_reproducibility_info(output_dir: Path, git_info: Dict[str, str], config_file: Path, config: Dict[str, Any]) -> None:
     """
     Save reproducibility information to the experiment directory.
     
@@ -68,6 +68,8 @@ def save_reproducibility_info(output_dir: Path, git_info: Dict[str, str], config
         Dictionary containing Git commit hash and diff.
     config_file : Path
         Path to the experiment configuration file.
+    config : Dict[str, Any]
+        The configuration dictionary that will be saved (possibly modified from original).
     """
     # Save Git commit hash
     (output_dir / "git_commit.txt").write_text(git_info["commit_hash"])
@@ -75,12 +77,14 @@ def save_reproducibility_info(output_dir: Path, git_info: Dict[str, str], config
     # Save Git diff
     (output_dir / "git_diff.patch").write_text(git_info["diff"])
     
-    # Copy the configuration file
-    shutil.copy(config_file, output_dir / "config_used.yaml")
+    # Save the configuration
+    with open(output_dir / "config_used.yaml", 'w') as f:
+        yaml.dump(config, f)
 
 
 def run_experiment(config_file: Path, input_dir: Optional[Path] = None, 
-                  output_base_dir: Optional[Path] = None, force_overwrite: bool = False) -> None:
+                  output_base_dir: Optional[Path] = None, force_overwrite: bool = False,
+                  experiment_name: Optional[str] = None) -> None:
     """
     Run an experiment according to the provided configuration.
     
@@ -94,6 +98,8 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
         Path to the base directory where experiment results will be stored. Overrides config value.
     force_overwrite : bool
         If True, overwrite existing experiment directory. Overrides config value.
+    experiment_name : Optional[str]
+        New name for the experiment. Overrides config value.
         
     Raises
     ------
@@ -109,7 +115,11 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
     except Exception as e:
         raise ValueError(f"Failed to load configuration file: {e}")
     
-    # Extract experiment name
+    # Extract experiment name with override precedence
+    if experiment_name:
+        # Override experiment name if provided
+        config["experiment_name"] = experiment_name
+    
     experiment_name = config.get("experiment_name")
     if not experiment_name:
         raise ValueError("Configuration must include 'experiment_name'")
@@ -129,6 +139,11 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
     final_input_dir = input_dir if input_dir is not None else config_input_dir
     final_output_base_dir = output_base_dir if output_base_dir is not None else config_output_base_dir
     final_force_overwrite = force_overwrite or config_force_overwrite
+    
+    # Update config with final values for reproducibility
+    config["input_dir"] = str(final_input_dir)
+    config["output_base_dir"] = str(final_output_base_dir)
+    config["force_overwrite"] = final_force_overwrite
     
     # Validate required settings
     if not config.get("beat_settings"):
@@ -158,7 +173,7 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
     
     # 4. Save reproducibility information
     git_info = get_git_info()
-    save_reproducibility_info(root_output_dir, git_info, config_file)
+    save_reproducibility_info(root_output_dir, git_info, config_file, config)
     
     # 5. Copy input data to experiment directory
     logging.info(f"Copying input data from {original_root_input_audio_dir} to {experiment_data_dir}")
@@ -221,19 +236,22 @@ def main():
     parser.add_argument("--output-base-dir", help="Path to base directory for experiment results")
     parser.add_argument("--force-overwrite", action="store_true", 
                         help="Overwrite existing experiment directory if it exists")
+    parser.add_argument("--experiment-name", help="Override the experiment name from the config file")
     
     args = parser.parse_args()
     
     # Convert string paths to Path objects if provided
     input_dir = Path(args.input_dir) if args.input_dir else None
     output_base_dir = Path(args.output_base_dir) if args.output_base_dir else None
+    config_file = Path(args.config_file)
     
     try:
         run_experiment(
-            config_file=Path(args.config_file),
+            config_file=config_file,
             input_dir=input_dir,
             output_base_dir=output_base_dir,
-            force_overwrite=args.force_overwrite
+            force_overwrite=args.force_overwrite,
+            experiment_name=args.experiment_name
         )
     except Exception as e:
         logging.error(f"Experiment failed: {e}")
