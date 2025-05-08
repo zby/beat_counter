@@ -1,0 +1,23 @@
+experiment_name: "madmom_default_run1"
+experiment_description: "Baseline beat detection with standard video."
+
+# Optional overrides for directory settings
+# input_dir: "data/my_custom_genres"
+# output_base_dir: "data/experiments"
+# force_overwrite: false
+
+beat_settings:
+  algorithm: "madmom"
+  detector_kwargs:
+    min_bpm: 60
+    max_bpm: 180
+  beats_args:
+    # any args for Beats constructor if needed
+    # e.g., beats_per_bar_hint: 4 (if auto-detection is not desired)
+
+video_settings:
+  resolution: [1280, 720]  # width, height
+  fps: 60
+  sample_beats: null  # or an integer for quick previews
+  tolerance_percent: 10.0
+  min_measures: 5 
