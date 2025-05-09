@@ -125,6 +125,78 @@ def _compare_two_files(file1_path: Path, file2_path: Path, tolerance: float, lim
     return 1 if are_different else 0
 
 
+def _compare_directories(path1: Path, path2: Path, tolerance: float, summarize: bool, verbose: bool, limit: int, output_path: Path):
+    """
+    Lightweight directory comparison helper.
+    """
+    exp1_dir = path1
+    exp2_dir = path2
+
+    print(f"Comparing experiment directories: {exp1_dir.name} vs {exp2_dir.name}")
+
+    # Collect file sets using the existing utility
+    exp1_only, exp2_only, different_files = compare_beats_files(
+        exp1_dir, exp2_dir, max_diff_sec=tolerance
+    )
+
+    # --- Summary Section ----------------------------------------------------
+    print(f"Files only in {exp1_dir.name}: {len(exp1_only)}")
+    print(f"Files only in {exp2_dir.name}: {len(exp2_only)}")
+    print(f"Files with differences: {len(different_files)}")
+
+    # Early-exit behaviour for --summarize -----------------------------------
+    if summarize and not verbose:
+        return 1 if (exp1_only or exp2_only or different_files) else 0
+
+    # --- Non-summarised listings -------------------------------------------
+    if exp1_only:
+        print(f"\nFiles only in {exp1_dir.name}:")
+        for rel_path in exp1_only:
+            print(f"  {rel_path}")
+
+    if exp2_only:
+        print(f"\nFiles only in {exp2_dir.name}:")
+        for rel_path in exp2_only:
+            print(f"  {rel_path}")
+
+    if different_files:
+        print(f"\nFiles with differences:")
+        for rel_path, _ in different_files:
+            print(f"  {rel_path}")
+
+    # --- Verbose section: full diff for each differing file -----------------
+    if verbose and different_files:
+        print("\nDetailed differences (verbose):")
+        for rel_path, _ in different_files:
+            print("\n" + "=" * 80)
+            print(f"Diff for {rel_path}")
+            _compare_two_files(
+                exp1_dir / rel_path,
+                exp2_dir / rel_path,
+                tolerance,
+                limit,
+                None,
+            )
+
+    # --- Optional JSON output ----------------------------------------------
+    if output_path:
+        # We only care about paths; strip differences content for brevity
+        results = {
+            "experiment1_path": str(exp1_dir),
+            "experiment2_path": str(exp2_dir),
+            "tolerance_seconds": tolerance,
+            "only_in_path1": exp1_only,
+            "only_in_path2": exp2_only,
+            "different_files": [p for p, _ in different_files],
+        }
+        with open(output_path, "w") as fp:
+            json.dump(results, fp, indent=2)
+        print(f"\nResults summary saved to {output_path}")
+
+    # Non-zero exit if anything differs -------------------------------------
+    return 1 if (exp1_only or exp2_only or different_files) else 0
+
+
 def main():
     """Main entry point for the script."""
     # Configure logging
@@ -182,237 +254,17 @@ def main():
 
         # Mode 2: Comparing two directories
         elif path1.is_dir() and path2.is_dir():
-            exp1_dir = path1
-            exp2_dir = path2
-            print(f"Comparing experiment directories: {exp1_dir.name} vs {exp2_dir.name}")
-            
-            exp1_only, exp2_only, different_files = compare_beats_files(
-                exp1_dir, exp2_dir, 
-                max_diff_sec=args.tolerance
+            # Delegate directory logic to a helper for compactness
+            return _compare_directories(
+                path1,
+                path2,
+                tolerance=args.tolerance,
+                summarize=args.summarize,
+                verbose=args.verbose,
+                limit=args.limit,
+                output_path=Path(args.output) if args.output else None,
             )
-            
-            # Print summary
-            print(f"Files only in {exp1_dir.name}: {len(exp1_only)}")
-            print(f"Files only in {exp2_dir.name}: {len(exp2_only)}")
-            print(f"Files with differences: {len(different_files)}")
-            
-            if args.summarize and not args.verbose:
-                 if exp1_only or exp2_only or different_files:
-                    return 1 # Differences exist
-                 else:
-                    return 0 # No differences
 
-            # Print details
-            if exp1_only:
-                print(f"\nFiles only in {exp1_dir.name}:")
-                for file in exp1_only:
-                    print(f"  {file}")
-                    
-            if exp2_only:
-                print(f"\nFiles only in {exp2_dir.name}:")
-                for file in exp2_only:
-                    print(f"  {file}")
-                    
-            if different_files:
-                print(f"\nFiles with differences:")
-                for file, differences in different_files:
-                    file_summary = []
-                    
-                    if 'timestamps' in differences:
-                        ts_diff = differences['timestamps']
-                        # Standard diff interpretation
-                        count_diff = ts_diff.get('count_diff', 0)
-                        if count_diff == 0 and ts_diff.get('values_differ', False): # Assuming a 'values_differ' flag
-                            file_summary.append("same number of timestamps but values differ")
-                        elif count_diff != 0 and 'matching' not in ts_diff:
-                            # Only add this if we don't have more detailed matching info
-                            direction = "more" if count_diff > 0 else "fewer" # count_diff > 0 means file1 has more
-                            file_summary.append(f"{abs(count_diff)} {direction} timestamps in {exp1_dir.name}")
-                        elif ts_diff.get('values_differ', False): # If count_diff is 0 but values differ
-                            file_summary.append("timestamps values differ")
-
-                        # Extract matching information if available from the smart matching
-                        if 'matching' in ts_diff:
-                            match_info = ts_diff['matching']
-                            match_count = match_info.get('matched_count', 0)
-                            # Clarify that these are timestamps that match within the tolerance threshold
-                            file_summary.append(f"{match_count} timestamps matched within tolerance")
-                            
-                            # Add info about unmatched timestamps, but avoid redundancy
-                            unmatched1 = match_info.get('unmatched_count1', 0)
-                            unmatched2 = match_info.get('unmatched_count2', 0)
-                            if unmatched1 > 0:
-                                file_summary.append(f"{unmatched1} timestamps only in {exp1_dir.name}")
-                            if unmatched2 > 0:
-                                file_summary.append(f"{unmatched2} timestamps only in {exp2_dir.name}")
-                            # Remove the count_diff information since it's redundant with unmatched counts
-                            # (unmatched2 - unmatched1 = count_diff)
-
-                    if 'beat_counts' in differences:
-                        bc_diff = differences['beat_counts']
-                        count_diff = bc_diff.get('count_diff', 0)
-                        if count_diff == 0 and bc_diff.get('values_differ', False):
-                             file_summary.append("same number of beat_counts but values differ")
-                        elif count_diff != 0:
-                            direction = "more" if count_diff > 0 else "fewer"
-                            file_summary.append(f"{abs(count_diff)} {direction} beat_counts in {exp1_dir.name}")
-                        elif bc_diff.get('values_differ', False):
-                            file_summary.append("beat_counts values differ")
-                    
-                    if 'text_diff' in differences:
-                        file_summary.append("text content differs")
-                    
-                    if 'error' in differences:
-                        file_summary.append(f"error: {differences['error']}")
-                    
-                    # If we don't have a summary yet, but we're in verbose mode, we'll get detailed info below
-                    # For non-verbose mode, generate a more specific summary by re-running the comparison
-                    if not file_summary and not args.verbose:
-                        try:
-                            exp1_full_path = exp1_dir / file
-                            exp2_full_path = exp2_dir / file
-
-                            # Quickly load and compare to get exact/proximate match counts
-                            with open(exp1_full_path, 'r') as f1_content_file:
-                                content1 = json.load(f1_content_file)
-                            with open(exp2_full_path, 'r') as f2_content_file:
-                                content2 = json.load(f2_content_file)
-
-                            timestamps1_v = content1.get('timestamps', []) 
-                            beat_counts1_v = content1.get('beat_counts', [])
-                            timestamps2_v = content2.get('timestamps', [])
-                            beat_counts2_v = content2.get('beat_counts', [])
-
-                            detailed_comp = compare_beats_data(
-                                timestamps1_v, beat_counts1_v,
-                                timestamps2_v, beat_counts2_v,
-                                match_threshold=args.tolerance
-                            )
-                            
-                            # Extract exact and proximate match counts
-                            stats = detailed_comp.get("summary_stats", {})
-                            exact_matches = stats.get("exact_matches", 0)
-                            proximate_matches = stats.get("proximate_matches", 0)
-                            unique_to_file1 = stats.get("unique_to_file1", 0)
-                            unique_to_file2 = stats.get("unique_to_file2", 0)
-                            
-                            # Add match information, avoiding redundancy
-                            total_matches = exact_matches + proximate_matches
-                            if total_matches > 0:
-                                if exact_matches > 0 and proximate_matches > 0:
-                                    file_summary.append(f"{exact_matches} exact + {proximate_matches} proximate matches")
-                                elif exact_matches > 0:
-                                    file_summary.append(f"{exact_matches} exact matches")
-                                elif proximate_matches > 0:
-                                    file_summary.append(f"{proximate_matches} proximate matches")
-                            
-                            # Add unique timestamps information
-                            if unique_to_file1 > 0:
-                                file_summary.append(f"{unique_to_file1} timestamps only in {exp1_dir.name}")
-                            if unique_to_file2 > 0:
-                                file_summary.append(f"{unique_to_file2} timestamps only in {exp2_dir.name}")
-                            
-                            # Also check the beat counts status
-                            beat_summary = detailed_comp.get("beat_counts_summary", {})
-                            if beat_summary.get("status") == "length_mismatch":
-                                bc_len1 = beat_summary.get("details", {}).get("len1", 0)
-                                bc_len2 = beat_summary.get("details", {}).get("len2", 0)
-                                if bc_len1 != bc_len2:
-                                    diff = abs(bc_len1 - bc_len2)
-                                    which_greater = f"{exp1_dir.name}" if bc_len1 > bc_len2 else f"{exp2_dir.name}"
-                                    file_summary.append(f"{diff} more beat counts in {which_greater}")
-                            elif beat_summary.get("status") == "content_mismatch":
-                                file_summary.append("beat counts have same length but different content")
-                                
-                        except Exception as e:
-                            # If there's any issue, fall back to generic message
-                            file_summary.append("differences found")
-                    
-                    print(f"  {file}: {', '.join(file_summary) if file_summary else 'differences found (reasons unknown)'}")
-                    
-                    if args.verbose:
-                        if 'error' in differences:
-                            print(f"    Error processing file {file}: {differences['error']}\n")
-                        else: 
-                            try:
-                                exp1_full_path = exp1_dir / file
-                                exp2_full_path = exp2_dir / file
-
-                                # This detailed comparison should ideally come from compare_beats_files
-                                # or be regenerated consistently.
-                                # For now, re-calculating as per original script logic for verbose mode.
-                                with open(exp1_full_path, 'r') as f1_content_file:
-                                    content1 = json.load(f1_content_file)
-                                with open(exp2_full_path, 'r') as f2_content_file:
-                                    content2 = json.load(f2_content_file)
-
-                                timestamps1_v = content1.get('timestamps', []) 
-                                beat_counts1_v = content1.get('beat_counts', [])
-                                timestamps2_v = content2.get('timestamps', [])
-                                beat_counts2_v = content2.get('beat_counts', [])
-
-                                detailed_comp = compare_beats_data(
-                                    timestamps1_v, beat_counts1_v,
-                                    timestamps2_v, beat_counts2_v,
-                                    match_threshold=args.tolerance
-                                )
-
-                                report_file1_name = f"{exp1_dir.name}/{file}"
-                                report_file2_name = f"{exp2_dir.name}/{file}"
-                                
-                                report_options_verbose = {
-                                    "file1_name": report_file1_name,
-                                    "file2_name": report_file2_name,
-                                }
-                                if args.limit is not None:
-                                    report_options_verbose["limit"] = args.limit
-
-                                formatted_report_verbose = format_comparison_output(
-                                    detailed_comp,
-                                    num_context_lines=2,
-                                    **report_options_verbose
-                                )
-                                
-                                for report_line in formatted_report_verbose.splitlines():
-                                    print(f"    {report_line}")
-                                print("")
-
-                            except Exception as e:
-                                print(f"    Failed to generate detailed comparison for {file}: {e}")
-                                print(f"    Raw differences from initial scan for {file}:")
-                                raw_diff_output = json.dumps(differences, indent=2)
-                                for line in raw_diff_output.splitlines():
-                                    print(f"      {line}")
-                                print("")
-            
-            if args.output:
-                output_path = Path(args.output)
-                # Ensure 'differences' in different_files is serializable
-                serializable_diff_files = []
-                for f, d in different_files:
-                    # Basic check, can be more sophisticated if d contains non-serializable types
-                    try:
-                        json.dumps(d) # Test serializability
-                        serializable_diff_files.append({"file": f, "differences": d})
-                    except TypeError:
-                        serializable_diff_files.append({"file": f, "differences": str(d)}) # Fallback to string
-
-                results = {
-                    "experiment1_path": str(exp1_dir),
-                    "experiment2_path": str(exp2_dir),
-                    "tolerance_seconds": args.tolerance,
-                    "only_in_path1": exp1_only,
-                    "only_in_path2": exp2_only,
-                    "different_files_summary": serializable_diff_files
-                }
-                
-                with open(output_path, 'w') as f:
-                    json.dump(results, f, indent=2)
-                
-                print(f"\nResults summary saved to {output_path}")
-            
-            return 0 if not (exp1_only or exp2_only or different_files) else 1
-            
         else:
             # Paths are mixed (one file, one directory) or invalid type
             print("Error: Both paths must be files or both paths must be directories.", file=sys.stderr)
