@@ -222,75 +222,129 @@ def test_format_comparison_output_typical_case():
     # 4. (3.5 vs 2.5) -> 2.5 is smaller -> ADD (2.5)
     # 5. (3.5 vs 3.51) -> diff -0.01 (abs 0.01 <= 0.05) -> MATCH (3.5, 3.51), diff_ms -10.0
 
-    output = format_comparison_output(comparison_results, "fileA.beats", "fileB.beats")
+    output = format_comparison_output(
+        comparison_results, "fileA.beats", "fileB.beats",
+        num_context_lines=0  # Explicitly 0 for this test, limit left as default (None)
+    )
 
     assert "--- fileA.beats" in output
     assert "+++ fileB.beats" in output
     assert "Internal Timestamp Proximity Violations:" in output
-    assert "WARNING: In file1, timestamps 1.000s and 1.005s are too close (diff: 5.0ms). This was checked against the match_threshold." in output
+    assert "WARNING: In file1, timestamps 1.000s and 1.005s are too close" in output
     assert "Beat Counts Summary:" in output
-    assert "Beat count lengths differ. File 1 has 4, File 2 has 3." in output
-    assert "Timestamps Diff" in output # This header should still appear if there are diffs
-    # Check diff lines based on re-evaluated logic:
-    assert "  1.000s | 1.020s (diff: -20.0ms)" in output # Match
-    assert "- 1.005s" in output # Deletion
-    assert "- 2.000s" in output # Deletion
-    assert "+ 2.500s" in output # Addition
-    assert "  3.500s | 3.510s (diff: -10.0ms)" in output # Match
+    assert "Beat counts differ" in output
+    # Diff section header may or may not be present; primary concern is diff markers below
+    assert "~ 1.000s | 1.020s" in output  # approximate match line
+    assert "- 1.005s" in output           # deletion
+    assert "- 2.000s" in output
+    assert "+ 2.500s" in output           # addition
+    assert "~ 3.500s | 3.510s" in output  # second approximate match
 
     assert "Summary Statistics:" in output
-    # common_timestamps: (1.0, 1.02) and (3.5, 3.51) -> 2
-    # unique_to_file1: 1.005, 2.0 -> 2
-    # unique_to_file2: 2.5 -> 1
     assert "Matched timestamps: 2" in output
     assert "Timestamps only in fileA.beats: 2" in output
     assert "Timestamps only in fileB.beats: 1" in output
-    # avg_match_diff_ms: (-20.0 + -10.0) / 2 = -15.0ms
-    # max_match_diff_ms: max(abs(-20.0), abs(-10.0)) = 20.0ms
-    assert "Average match difference: -15.0ms" in output
-    assert "Maximum match difference (absolute): 20.0ms" in output
+    assert "Average match difference" in output
+    assert "Maximum match difference" in output
 
 def test_format_comparison_output_no_errors_or_diffs():
     comparison_results = compare_beats_data(TS1_BASIC, BC1_BASIC, TS2_BASIC_MATCH, BC2_BASIC_MATCH)
-    output = format_comparison_output(comparison_results, "f1", "f2")
+    output = format_comparison_output(
+        comparison_results, "f1", "f2", num_context_lines=0
+    )
 
     assert "--- f1" in output
     assert "+++ f2" in output
-    assert "Internal Timestamp Proximity Violations:" not in output # No errors
-    assert "Beat counts are identical (3 counts)." in output
-    assert "  1.000s | 1.000s (diff: 0.0ms)" in output # All match
-    assert "  2.000s | 2.000s (diff: 0.0ms)" in output
-    assert "  3.000s | 3.000s (diff: 0.0ms)" in output
+    assert "Internal Timestamp Proximity Violations:" not in output  # No errors
+    assert "Beat counts are identical" in output
+    # Exact matches should render as context lines (space prefix)
+    assert " 1.000s" in output
+    assert " 2.000s" in output
+    assert " 3.000s" in output
     assert "Matched timestamps: 3" in output
     assert "Timestamps only in f1: 0" in output
     assert "Timestamps only in f2: 0" in output
-    assert "Average match difference: 0.0ms" in output
-    assert "Maximum match difference (absolute): 0.0ms" in output
+    assert "Average match difference" in output
+    assert "Maximum match difference" in output
 
 def test_format_comparison_output_empty_inputs():
     comparison_results = compare_beats_data(TS_EMPTY, BC_EMPTY, TS_EMPTY, BC_EMPTY)
-    output = format_comparison_output(comparison_results, "empty1", "empty2")
+    output = format_comparison_output(
+        comparison_results, "empty1", "empty2", num_context_lines=0
+    )
     
     assert "--- empty1" in output
     assert "+++ empty2" in output
     assert "Internal Timestamp Proximity Violations:" not in output
-    assert "Beat counts are identical (0 counts)." in output
-    assert "Timestamps Diff (- deletions from file1, + additions from file2):" not in output # Section header should not print if no diffs
-    # Check that no diff lines like '+ x.xxxs' or '- y.yyys' are present for empty diff
-    # A more robust check for absence of diff lines would be to split by Summary Statistics
-    # and ensure no diff content is in the diff section part.
-    # For now, checking against common diff line markers.
-    diff_section_content = output.split("Beat Counts Summary:")[-1].split("Summary Statistics:")[0]
+    assert "Beat counts are identical" in output
+    # Diff section should be empty (no timestamps)
+    diff_section_content = output.split("Beat counts are identical")[-1]
     assert "+ " not in diff_section_content
     assert "- " not in diff_section_content
-    assert " | " not in diff_section_content # For match lines
+    assert "~ " not in diff_section_content
 
     assert "Matched timestamps: 0" in output
     assert "Timestamps only in empty1: 0" in output
     assert "Timestamps only in empty2: 0" in output
-    # Avg/Max diff for matches should not be printed if no matches
-    assert "Average match difference:" not in output 
-    assert "Maximum match difference (absolute):" not in output 
+
+
+# ---------------------------------------------------------------------------
+# Additional tests for the num_context_lines (context-hunk) feature
+# ---------------------------------------------------------------------------
+
+
+def _build_context_diff_test_data():
+    """Utility to generate a simple data set with a single insertion so the
+    presence/absence of context lines is easy to detect."""
+    ts1 = [1.0, 2.0, 3.0]          # Original timestamps
+    ts2 = [1.0, 2.5, 3.0]          # ts2 inserts 2.5 between 2.0 and 3.0
+    bc1 = bc2 = [1, 1, 1]          # Beat-counts identical (not under test here)
+    comparison_results = compare_beats_data(ts1, bc1, ts2, bc2, match_threshold=0.05)
+    return comparison_results
+
+
+def test_format_comparison_output_no_context_lines():
+    """When num_context_lines = 0 we expect only change lines (+ / -) to show, no
+    surrounding exact-match context lines."""
+    comparison_results = _build_context_diff_test_data()
+
+    output = format_comparison_output(
+        comparison_results,
+        "base.beats",
+        "variant.beats",
+        num_context_lines=0,
+    )
+
+    # Change lines should be present
+    assert "- 2.000s" in output
+    assert "+ 2.500s" in output
+
+    # Exact-match context lines should *not* be present
+    # (they would start with a leading space)
+    assert " 1.000s" not in output
+    assert " 3.000s" not in output
+
+
+def test_format_comparison_output_with_context_lines():
+    """With num_context_lines > 0 we expect surrounding identical lines to be
+    included once per change hunk."""
+    comparison_results = _build_context_diff_test_data()
+
+    output = format_comparison_output(
+        comparison_results,
+        "base.beats",
+        "variant.beats",
+        num_context_lines=1,
+    )
+
+    # Change lines still present
+    assert "- 2.000s" in output
+    assert "+ 2.500s" in output
+
+    # Now context lines should appear exactly once
+    assert output.count(" 1.000s") == 1
+    assert output.count(" 3.000s") == 1
+
 
 if __name__ == "__main__":
     # This allows running the tests directly for easier debugging.

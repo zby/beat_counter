@@ -19,37 +19,40 @@ def _determine_if_details_indicate_difference(comparison_details: dict) -> bool:
     """
     Determines if the comparison_details from compare_beats_data indicate any difference.
     This is a helper to set the exit code.
-    A more robust check might involve inspecting specific fields for non-empty diff lists
-    or mismatch counts. For now, we'll assume that if any primary diff category
-    (e.g., timestamps or beat_counts) reports issues, it's a difference.
-    This function needs to be adapted based on the actual structure of comparison_details.
     """
-    # Placeholder: This needs to align with the actual structure of comparison_details
-    # For example, if compare_beats_data returns a top-level 'differences_found': True/False
-    # or if specific lists of differences are populated.
-    # Assuming a hypothetical structure for demonstration:
-    if comparison_details.get('timestamps_diff', {}).get('status') == 'different':
+    # Check beat counts
+    beat_summary = comparison_details.get("beat_counts_summary", {})
+    if beat_summary.get("status") != "match":
         return True
-    if comparison_details.get('beat_counts_diff', {}).get('status') == 'different':
-        return True
-    # A more detailed check:
-    ts_diff = comparison_details.get('timestamps_diff', {})
-    bc_diff = comparison_details.get('beat_counts_diff', {})
 
-    if ts_diff.get('only_in_1') or ts_diff.get('only_in_2') or ts_diff.get('mismatched_pairs'):
-        return True
-    if bc_diff.get('only_in_1') or bc_diff.get('only_in_2') or bc_diff.get('mismatched_pairs'):
+    # Check timestamps differences based on summary_stats
+    summary_stats = comparison_details.get("summary_stats", {})
+    if summary_stats.get("unique_to_file1", 0) > 0 or \
+       summary_stats.get("unique_to_file2", 0) > 0:
         return True
     
-    # If format_comparison_output produces a very simple "no differences" string,
-    # we could use that, but inspecting data is better.
-    # This is a fallback simple check, assuming no specific "status" or detailed diff lists.
-    # A truly empty or minimal details dict might mean no difference.
-    # This is a weak check and should be improved based on compare_beats_data's actual output.
-    if not comparison_details or (not ts_diff and not bc_diff): # if totally empty
-        return False
-    # If any sub-dict has content, assume difference for now if more specific checks aren't available
-    return bool(ts_diff or bc_diff)
+    # The unique_to_file1/2 checks should cover mismatches where counts are the same
+    # but timestamps don't align. If all timestamps match, unique counts will be 0.
+    # If counts are the same but timestamps differ such that some are unique to one file
+    # and some to another (offsetting each other in total count), unique_to_file1/2
+    # will capture this.
+
+    # If timestamps perfectly align but values differ slightly (within match_threshold),
+    # they are still 'match' type in timestamps_diff. The 'max_match_diff_ms'
+    # in summary_stats would show this, but typically we consider these "matching"
+    # for the purpose of "are the files different in terms of beat presence/absence".
+    # If a stricter definition of "different" is needed (e.g., any numeric diff in matched pairs),
+    # one might check summary_stats["max_match_diff_ms"] != 0.
+    # For now, focus on structural differences (presence/absence of beats).
+
+    # Check for internal proximity errors
+    # These are warnings about data quality within a single file, but for the purpose
+    # of this script, they don't make the *two files* different from each other.
+    # If desired, uncomment the following to consider proximity errors as a difference:
+    # if comparison_details.get("internal_proximity_errors"): # Non-empty list is true
+    #     return True
+        
+    return False
 
 
 def main():
@@ -109,20 +112,16 @@ def main():
                 match_threshold=args.tolerance
             )
             
-            # format_comparison_output might need a limit argument
-            # For now, assuming it doesn't or handles it internally if relevant
-            # If format_comparison_output can take limit, pass args.limit
-            # e.g. format_comparison_output(..., limit=args.limit)
             report_options = {
                 "file1_name": str(path1),
-                "file2_name": str(path2)
+                "file2_name": str(path2),
             }
             if args.limit is not None:
                 report_options["limit"] = args.limit
 
-
             formatted_report = format_comparison_output(
                 comparison_details,
+                num_context_lines=2,
                 **report_options
             )
             
@@ -250,13 +249,14 @@ def main():
                                 
                                 report_options_verbose = {
                                     "file1_name": report_file1_name,
-                                    "file2_name": report_file2_name
+                                    "file2_name": report_file2_name,
                                 }
                                 if args.limit is not None:
                                     report_options_verbose["limit"] = args.limit
 
                                 formatted_report_verbose = format_comparison_output(
                                     detailed_comp,
+                                    num_context_lines=2,
                                     **report_options_verbose
                                 )
                                 

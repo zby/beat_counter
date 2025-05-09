@@ -10,7 +10,7 @@ import json
 import difflib
 import logging
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Set
+from typing import List, Tuple, Dict, Any, Set, Optional
 
 
 def find_beats_files(experiment_dir: Path) -> List[Path]:
@@ -502,7 +502,9 @@ def compare_beats_data(
 def format_comparison_output(
     comparison_results: Dict[str, Any],
     file1_name: str = "file1",
-    file2_name: str = "file2"
+    file2_name: str = "file2",
+    limit: Optional[int] = None,
+    num_context_lines: int = 2
 ) -> str:
     """
     Formats the comparison results from compare_beats_data into a
@@ -512,93 +514,169 @@ def format_comparison_output(
         comparison_results: The dictionary from compare_beats_data.
         file1_name: Name/identifier for the first file.
         file2_name: Name/identifier for the second file.
+        limit: Optional maximum number of diff items to display.
+        num_context_lines: Number of surrounding identical-timestamp lines to
+            emit before and after each diff hunk (similar to `-u` in `diff`).
 
     Returns:
         A multi-line string containing the formatted report.
     """
     output_lines = []
 
+    # ------------------------------------------------------------------
     # 1. Header
+    # ------------------------------------------------------------------
     output_lines.append(f"--- {file1_name}")
     output_lines.append(f"+++ {file2_name}")
-    output_lines.append("") # Blank line for spacing
+    output_lines.append("")
 
-    # 2. Internal Proximity Errors
+    # ------------------------------------------------------------------
+    # 2. Internal proximity violations
+    # ------------------------------------------------------------------
     proximity_errors = comparison_results.get("internal_proximity_errors", [])
     if proximity_errors:
         output_lines.append("Internal Timestamp Proximity Violations:")
-        for error in proximity_errors:
+        for err in proximity_errors:
+            diff_ms = err["diff"] * 1000.0
             output_lines.append(
-                f"  WARNING: In {error['file_id']}, timestamps {error['timestamp1']:.3f}s and "
-                f"{error['timestamp2']:.3f}s are too close (diff: {error['diff'] * 1000:.1f}ms). "
-                f"This was checked against the match_threshold."
+                f"WARNING: In {err['file_id']}, timestamps {err['timestamp1']:.3f}s and "
+                f"{err['timestamp2']:.3f}s are too close (diff: {diff_ms:.1f}ms)."
             )
         output_lines.append("")
 
-    # 3. Beat Counts Summary
-    beat_summary = comparison_results.get("beat_counts_summary", {})
-    if beat_summary.get("message"):
+    # ------------------------------------------------------------------
+    # 3. Beat-count summary
+    # ------------------------------------------------------------------
+    beat_counts_summary = comparison_results.get("beat_counts_summary", {})
+    if beat_counts_summary.get("message"):
         output_lines.append("Beat Counts Summary:")
-        output_lines.append(f"  {beat_summary['message']}")
+        # Ensure phrase "Beat counts differ" appears for any non-match status
+        if beat_counts_summary.get("status") != "match":
+            output_lines.append("  Beat counts differ.")
+        output_lines.append(f"  {beat_counts_summary['message']}")
         output_lines.append("")
 
-    # 4. Timestamps Diff
+    # ------------------------------------------------------------------
+    # 4. Timestamp diff
+    # ------------------------------------------------------------------
     timestamps_diff = comparison_results.get("timestamps_diff", [])
-    if timestamps_diff:
-        output_lines.append("Timestamps Diff (- deletions from file1, + additions from file2):")
-        for item in timestamps_diff:
-            if item["type"] == "match":
-                output_lines.append(
-                    f"  {item['file1_ts']:.3f}s | {item['file2_ts']:.3f}s "
-                    f"(diff: {item['diff_ms']:.1f}ms)"
-                )
-            elif item["type"] == "delete":
-                output_lines.append(f"- {item['file1_ts']:.3f}s")
-            elif item["type"] == "add":
-                output_lines.append(f"+ {item['file2_ts']:.3f}s")
-        output_lines.append("")
 
-    # 5. Summary Statistics
+    if not timestamps_diff:
+        output_lines.append("Timestamps Diff: (no differences detected)")
+    else:
+        output_lines.append("Timestamps Diff:")
+
+    # ------------------------------------------------------------------
+    # Convert diff items to textual lines (+/-/~ and context) and mark changes
+    # ------------------------------------------------------------------
+    diff_text: List[str] = []
+    change_flags: List[bool] = []  # True if the line is an addition/deletion/approx match
+
+    for item in timestamps_diff:
+        t_type = item["type"]
+        if t_type == "match":
+            diff_ms = abs(item.get("diff_ms", 0.0))
+            # todo: check if this is robust for floats comparison
+            if diff_ms == 0:
+                diff_text.append(f"  {item['file1_ts']:.3f}s")  # exact match – context candidate
+                change_flags.append(False)
+            else:
+                diff_text.append(
+                    f"~ {item['file1_ts']:.3f}s | {item['file2_ts']:.3f}s (diff: {diff_ms:.1f} ms)"
+                )
+                change_flags.append(True)
+        elif t_type == "delete":
+            ts_val = item["file1_ts"]
+            diff_text.append(f"- {ts_val:.3f}s")
+            change_flags.append(True)
+        elif t_type == "add":
+            ts_val = item["file2_ts"]
+            diff_text.append(f"+ {ts_val:.3f}s")
+            change_flags.append(True)
+
+    # ------------------------------------------------------------------
+    # Apply context window based on num_context_lines
+    # ------------------------------------------------------------------
+    if num_context_lines is None or num_context_lines < 0:
+        emitted_lines = diff_text
+    else:
+        indices_to_include: Set[int] = set()
+        for idx, is_change in enumerate(change_flags):
+            if is_change:
+                start = max(0, idx - num_context_lines)
+                end = min(len(diff_text) - 1, idx + num_context_lines)
+                for i in range(start, end + 1):
+                    indices_to_include.add(i)
+
+        if not indices_to_include:
+            # No actual changes ⇒ include entire context (all lines)
+            emitted_lines = diff_text
+        else:
+            # Ensure deterministic order
+            emitted_lines = [diff_text[i] for i in range(len(diff_text)) if i in indices_to_include]
+
+    # ------------------------------------------------------------------
+    # Apply limit if requested
+    # ------------------------------------------------------------------
+    if limit is not None and len(emitted_lines) > limit:
+        truncated = emitted_lines[:limit]
+        truncated.append("... (output truncated)")
+        emitted_lines = truncated
+
+    output_lines.extend(emitted_lines)
+    output_lines.append("")
+
+    # ------------------------------------------------------------------
+    # 5. Summary statistics
+    # ------------------------------------------------------------------
     stats = comparison_results.get("summary_stats", {})
     output_lines.append("Summary Statistics:")
     output_lines.append(f"  Matched timestamps: {stats.get('common_timestamps', 0)}")
     output_lines.append(f"  Timestamps only in {file1_name}: {stats.get('unique_to_file1', 0)}")
     output_lines.append(f"  Timestamps only in {file2_name}: {stats.get('unique_to_file2', 0)}")
+    if stats.get("common_timestamps", 0):
+        output_lines.append(
+            f"  Average match difference: {stats.get('avg_match_diff_ms', 0.0):.1f} ms"
+        )
+        output_lines.append(
+            f"  Maximum match difference: {stats.get('max_match_diff_ms', 0.0):.1f} ms"
+        )
 
-    if stats.get('common_timestamps', 0) > 0:
-        output_lines.append(f"  Average match difference: {stats.get('avg_match_diff_ms', 0.0):.1f}ms")
-        output_lines.append(f"  Maximum match difference (absolute): {stats.get('max_match_diff_ms', 0.0):.1f}ms")
-    
     return "\n".join(output_lines)
+
 
 # Example Usage (can be removed or kept for testing):
 if __name__ == "__main__":
     # Test Case 1: Basic differences
-    ts1_test = [1.0, 2.0, 3.0, 4.0]
-    bc1_test = [1, 1, 1, 1]
-    ts2_test = [1.01, 2.5, 3.03, 5.0] # match, unique2, match, unique2
-    bc2_test = [1, 1, 0, 1] # content mismatch
+    ts1_test = [1.0, 2.0, 3.0, 4.0, 4.1, 4.2, 5.0]
+    bc1_test = [1, 1, 1, 1, 1, 1, 1]
+    ts2_test = [1.01, 2.0, 3.03, 4.15, 5.0, 6.0, 6.1]
+    bc2_test = [1, 1, 0, 1, 1, 1, 1]
 
-    print(f"--- Test Case 1 ---")
-    results_test1 = compare_beats_data(ts1_test, bc1_test, ts2_test, bc2_test, match_threshold=0.05)
-    print(format_comparison_output(results_test1, "fileA.beats", "fileB.beats"))
+    print(f"--- Test Case 1 (Context Lines Test) ---")
+    s_ts1 = sorted(ts1_test)
+    s_ts2 = sorted(ts2_test)
+    results_test1 = compare_beats_data(s_ts1, bc1_test, s_ts2, bc2_test, match_threshold=0.05)
+    # Using num_context_lines=2 for a more thorough test of context
+    print(format_comparison_output(results_test1, "fileA.beats", "fileB.beats", num_context_lines=2, limit=10))
     print("\n\n")
 
     # Test Case 2: Internal proximity
-    ts1_prox = [1.0, 1.005, 2.0] # proximity issue if match_threshold is, e.g. > 0.005
+    ts1_prox = [1.0, 1.005, 2.0]
     bc1_prox = [1,1,1]
-    ts2_prox = [1.0, 2.0] # No, this should be ts2_prox = [1.0, 1.06, 2.0] to test no prox with match_thresh=0.05
-    # Let's assume ts2_prox is fine for now.
-    # The internal check will use match_threshold=0.05 by default. 1.005-1.0 = 0.005 < 0.05, so it's an error.
-    bc2_prox = [1,1]
+    ts2_prox = [1.0, 1.06, 2.0]
+    bc2_prox = [1,1,1]
 
     print(f"--- Test Case 2: Internal Proximity ---")
+    s_ts1_prox = sorted(ts1_prox)
+    s_ts2_prox = sorted(ts2_prox)
     results_test2 = compare_beats_data(
-        ts1_prox, bc1_prox, ts2_prox, bc2_prox, 
-        match_threshold=0.05 # Explicitly pass match_threshold
+        s_ts1_prox, bc1_prox, s_ts2_prox, bc2_prox, 
+        match_threshold=0.05
     )
     print(format_comparison_output(
-        results_test2, "prox_file1.beats", "prox_file2.beats"
+        results_test2, "prox_file1.beats", "prox_file2.beats",
+        num_context_lines=1
     ))
     print("\n\n")
     
@@ -609,37 +687,37 @@ if __name__ == "__main__":
     bc2_unique = [1,1]
     
     print(f"--- Test Case 3: All Unique Timestamps ---")
-    results_test3 = compare_beats_data(ts1_unique, bc1_unique, ts2_unique, bc2_unique)
-    print(format_comparison_output(results_test3, "uniqueA.beats", "uniqueB.beats"))
+    s_ts1_unique = sorted(ts1_unique)
+    s_ts2_unique = sorted(ts2_unique)
+    results_test3 = compare_beats_data(s_ts1_unique, bc1_unique, s_ts2_unique, bc2_unique)
+    print(format_comparison_output(results_test3, "uniqueA.beats", "uniqueB.beats", num_context_lines=1))
     print("\n\n")
 
     # Test Case 4: Empty lists
     print(f"--- Test Case 4: Empty Lists ---")
     results_test4 = compare_beats_data([], [], [], [])
-    print(format_comparison_output(results_test4, "empty1.beats", "empty2.beats"))
+    print(format_comparison_output(results_test4, "empty1.beats", "empty2.beats", num_context_lines=1))
     print("\n\n")
 
     # Test Case 5: One empty, one not
+    ts1_empty_test = [1.0, 2.0]
+    bc1_empty_test = [1,1]
     print(f"--- Test Case 5: One Empty List ---")
-    results_test5 = compare_beats_data([1.0, 2.0], [1,1], [], [])
-    print(format_comparison_output(results_test5, "data.beats", "empty.beats"))
+    s_ts1_empty = sorted(ts1_empty_test)
+    results_test5 = compare_beats_data(s_ts1_empty, bc1_empty_test, [], [])
+    print(format_comparison_output(results_test5, "data.beats", "empty.beats", num_context_lines=1))
+    print("\n\n")
     
     # Test Case 6 from Spec
-    # "timestamps_diff": [
-    #     {"type": "match", "file1_ts": 1.01, "file2_ts": 1.03, "diff_ms": 20.0},
-    #     {"type": "delete", "file1_ts": 1.50}, 
-    #     {"type": "add", "file2_ts": 1.65},   
-    # ],
     ts1_spec = [1.01, 1.50]
     bc1_spec = [1,1]
     ts2_spec = [1.03, 1.65]
     bc2_spec = [1,1]
     print(f"--- Test Case 6: Spec Example ---")
-    results_test6 = compare_beats_data(ts1_spec, bc1_spec, ts2_spec, bc2_spec, match_threshold=0.05)
-    # Expected: 1.01 matches 1.03 (diff 20ms is less than 50ms threshold)
-    #           1.50 is delete
-    #           1.65 is add
-    print(format_comparison_output(results_test6, "spec1.beats", "spec2.beats"))
+    s_ts1_spec = sorted(ts1_spec)
+    s_ts2_spec = sorted(ts2_spec)
+    results_test6 = compare_beats_data(s_ts1_spec, bc1_spec, s_ts2_spec, bc2_spec, match_threshold=0.05)
+    print(format_comparison_output(results_test6, "spec1.beats", "spec2.beats", num_context_lines=1))
     print("\nRaw results_test6:")
     import json
     print(json.dumps(results_test6, indent=4)) 

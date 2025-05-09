@@ -113,7 +113,9 @@ This function will take the output from `compare_beats_data` and generate a huma
 def format_comparison_output(
     comparison_results: dict,
     file1_name: str = "file1",
-    file2_name: str = "file2"
+    file2_name: str = "file2",
+    limit: int | None = None,          # maximum number of diff lines to print (None ⇒ no limit)
+    num_context_lines: int = 3,        # unchanged lines to show before/after each diff hunk
 ) -> str:
     # ... implementation ...
 ```
@@ -122,6 +124,8 @@ def format_comparison_output(
 - `comparison_results`: The dictionary returned by `compare_beats_data`.
 - `file1_name`: A string name/identifier for the first file (e.g., its path).
 - `file2_name`: A string name/identifier for the second file.
+- `limit`: Optional integer limiting the total number of *diff* lines (after context expansion). If `None`, everything is printed.
+- `num_context_lines`: How many surrounding identical-timestamp lines to show around each diff hunk, similar to the `-U`/`--unified` option of `diff`.
 
 **Processing:**
 
@@ -133,21 +137,20 @@ def format_comparison_output(
 2.  **Internal Proximity Errors:**
     - If any errors exist in `comparison_results["internal_proximity_errors"]`:
         - Print a section header (e.g., "Internal Timestamp Proximity Violations:").
-        - For each error: `WARNING: In {error['file_id']}, timestamps {error['timestamp1']:.3f}s and {error['timestamp2']:.3f}s are too close (diff: {error['diff'] * 1000:.1f}ms). Threshold for this check is the match_threshold: {match_threshold * 1000:.1f}ms.`
+        - For each error: `WARNING: In {error['file_id']}, timestamps {error['timestamp1']:.3f}s and {error['timestamp2']:.3f}s are too close (diff: {error['diff'] * 1000:.1f}ms). Threshold for this check is {match_threshold * 1000:.1f}ms.`
 
 3.  **Beat Counts Summary:**
     - Print the `comparison_results["beat_counts_summary"]["message"]`.
 
 4.  **Timestamps Diff:**
-    - Iterate through `comparison_results["timestamps_diff"]`.
-    - This should resemble `diff -u` output:
-        - For `{"type": "match", "file1_ts": ts1, "file2_ts": ts2, "diff_ms": d}`:
-          `  {ts1}s | {ts2}s (diff: {d}ms)` (Space prefix for common lines)
-        - For `{"type": "delete", "file1_ts": ts1}`:
-          `- {ts1}s`
-        - For `{"type": "add", "file2_ts": ts2}`:
-          `+ {ts2}s`
-    - Consider adding context lines (unchanged lines around a diff) if the diff algorithm supports it and it's desired, though for simple timestamp lists, this might be overkill. The primary goal is to show aligned, added, or deleted timestamps.
+    - Iterate through `comparison_results["timestamps_diff"]` to build unified diff *hunks*.
+    - Each output line is prefixed with a single-character marker:
+        - `+`  → timestamp exists **only** in *file2* (addition).
+        - `-`  → timestamp exists **only** in *file1* (deletion).
+        - `~`  → timestamps are within `match_threshold` but not identical ("approximate match").
+        - ` `  → timestamps are *exactly* identical and are emitted as **context** lines.
+    - For each group of adjacent non-context changes, include up to `num_context_lines` preceding and following identical lines.
+    - If `limit` is not `None`, truncate the diff output once that many lines (including context) have been produced. Append a final line like `... (output truncated)` to signal the omission.
 
 5.  **Summary Statistics:**
     - Print a summary section:
@@ -160,6 +163,37 @@ def format_comparison_output(
 
 **Outputs:**
 - A single multi-line string containing the formatted comparison report.
+
+**Example Diff (with `num_context_lines = 2` and `limit = None`):**
+```diff
+--- song_A.beats
++++ song_B.beats
+Internal Timestamp Proximity Violations:
+WARNING: In file2, timestamps 12.000s and 12.030s are too close (diff: 30.0 ms). Threshold is 50.0 ms.
+
+Beat counts differ. File 1 has 128 beats, File 2 has 130 beats.
+
+@@ 11.00 – 13.50 @@
+  11.000s
+~ 11.500s | 11.520s (diff: 20.0 ms)
+- 12.750s
++ 12.900s
+  13.000s
+  13.250s
+
+@@ 45.00 – 47.00 @@
+  45.000s
+- 45.250s
+~ 45.500s | 45.540s (diff: 40.0 ms)
++ 45.800s
+  46.000s
+
+Matched timestamps: 120
+Timestamps only in song_A.beats: 5
+Timestamps only in song_B.beats: 7
+Average match difference: 18.4 ms
+Maximum match difference: 45.0 ms
+```
 
 ## 4. Fail-Fast Considerations
 
