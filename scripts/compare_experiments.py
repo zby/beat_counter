@@ -55,6 +55,76 @@ def _determine_if_details_indicate_difference(comparison_details: dict) -> bool:
     return False
 
 
+def _compare_two_files(file1_path: Path, file2_path: Path, tolerance: float, limit: int = None, output_path: Path = None) -> int:
+    """
+    Compare two individual beat files and return the exit code.
+    
+    Args:
+        file1_path: Path to the first file to compare
+        file2_path: Path to the second file to compare
+        tolerance: Maximum time difference (in seconds) to consider two timestamps as matching
+        limit: Optional limit for the number of array entries shown in detailed reports
+        output_path: Optional path to save comparison results as JSON
+        
+    Returns:
+        int: Exit code (0 if no differences, 1 if differences found or errors occurred)
+    """
+    try:
+        with open(file1_path, 'r') as f1, open(file2_path, 'r') as f2:
+            data1 = json.load(f1)
+            data2 = json.load(f2)
+    except FileNotFoundError as e:
+        print(f"Error loading files: {e}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}", file=sys.stderr)
+        return 1
+
+    timestamps1 = data1.get('timestamps', [])
+    beat_counts1 = data1.get('beat_counts', [])
+    timestamps2 = data2.get('timestamps', [])
+    beat_counts2 = data2.get('beat_counts', [])
+
+    comparison_details = compare_beats_data(
+        timestamps1, beat_counts1,
+        timestamps2, beat_counts2,
+        match_threshold=tolerance
+    )
+    
+    report_options = {
+        "file1_name": str(file1_path),
+        "file2_name": str(file2_path),
+    }
+    if limit is not None:
+        report_options["limit"] = limit
+
+    formatted_report = format_comparison_output(
+        comparison_details,
+        num_context_lines=2,
+        **report_options
+    )
+    
+    print("\nComparison Report:")
+    for report_line in formatted_report.splitlines():
+        print(f"  {report_line}")
+    print("")
+
+    if output_path:
+        results = {
+            "file1": str(file1_path),
+            "file2": str(file2_path),
+            "tolerance_seconds": tolerance,
+            "comparison_details": comparison_details 
+        }
+        with open(output_path, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"Comparison details saved to {output_path}")
+
+    # Determine exit code based on whether differences were found
+    are_different = _determine_if_details_indicate_difference(comparison_details)
+    return 1 if are_different else 0
+
+
 def main():
     """Main entry point for the script."""
     # Configure logging
@@ -63,6 +133,7 @@ def main():
     parser = argparse.ArgumentParser(description="Compare results from two beat detection experiments (directories) or two .beats files.")
     parser.add_argument("path1", help="Path to the first experiment directory or .beats file")
     parser.add_argument("path2", help="Path to the second experiment directory or .beats file")
+    parser.add_argument("selected_file", nargs="?", help="When comparing directories, only compare this specific file")
     parser.add_argument("--output", help="Path to save comparison results as JSON")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show detailed differences (primarily for directory mode)")
     parser.add_argument("--summarize", "-s", action="store_true", help="Show summary statistics only (directory mode)")
@@ -88,64 +159,26 @@ def main():
             print(f"Comparing files: {path1.name} vs {path2.name}")
             if args.summarize:
                 print("Warning: --summarize is ignored when comparing individual files.", file=sys.stderr)
-
-
-            try:
-                with open(path1, 'r') as f1, open(path2, 'r') as f2:
-                    data1 = json.load(f1)
-                    data2 = json.load(f2)
-            except FileNotFoundError as e:
-                print(f"Error loading files: {e}", file=sys.stderr)
-                return 1
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON: {e}", file=sys.stderr)
-                return 1
-
-            timestamps1 = data1.get('timestamps', [])
-            beat_counts1 = data1.get('beat_counts', [])
-            timestamps2 = data2.get('timestamps', [])
-            beat_counts2 = data2.get('beat_counts', [])
-
-            comparison_details = compare_beats_data(
-                timestamps1, beat_counts1,
-                timestamps2, beat_counts2,
-                match_threshold=args.tolerance
-            )
             
-            report_options = {
-                "file1_name": str(path1),
-                "file2_name": str(path2),
-            }
-            if args.limit is not None:
-                report_options["limit"] = args.limit
-
-            formatted_report = format_comparison_output(
-                comparison_details,
-                num_context_lines=2,
-                **report_options
-            )
+            output_path = Path(args.output) if args.output else None
+            return _compare_two_files(path1, path2, args.tolerance, args.limit, output_path)
             
-            print("\nComparison Report:")
-            for report_line in formatted_report.splitlines():
-                print(f"  {report_line}")
-            print("")
-
-            if args.output:
-                output_path = Path(args.output)
-                results = {
-                    "file1": str(path1),
-                    "file2": str(path2),
-                    "tolerance_seconds": args.tolerance,
-                    "comparison_details": comparison_details 
-                }
-                with open(output_path, 'w') as f:
-                    json.dump(results, f, indent=2)
-                print(f"Comparison details saved to {output_path}")
-
-            # Determine exit code based on whether differences were found
-            # This relies on a helper or clear convention from compare_beats_data output
-            are_different = _determine_if_details_indicate_difference(comparison_details)
-            return 1 if are_different else 0
+        # Mode 3: Comparing a specific file from two directories
+        elif path1.is_dir() and path2.is_dir() and args.selected_file:
+            file1_path = path1 / args.selected_file
+            file2_path = path2 / args.selected_file
+            
+            if not file1_path.exists():
+                print(f"Error: File does not exist: {file1_path}", file=sys.stderr)
+                return 1
+            if not file2_path.exists():
+                print(f"Error: File does not exist: {file2_path}", file=sys.stderr)
+                return 1
+                
+            print(f"Comparing file '{args.selected_file}' from directories: {path1.name} vs {path2.name}")
+            
+            output_path = Path(args.output) if args.output else None
+            return _compare_two_files(file1_path, file2_path, args.tolerance, args.limit, output_path)
 
         # Mode 2: Comparing two directories
         elif path1.is_dir() and path2.is_dir():
