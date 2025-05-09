@@ -26,7 +26,7 @@ class BeatThisDetector:
         checkpoint: str = "final0",
         device: str | None = None,
         use_float16: bool = False,
-        use_dbn: bool = False,
+        use_dbn: bool = True,
     ) -> None:
         """Prepare the underlying Beat-This model once at construction time."""
 
