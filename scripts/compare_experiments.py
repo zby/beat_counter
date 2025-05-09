@@ -224,12 +224,29 @@ def main():
                         count_diff = ts_diff.get('count_diff', 0)
                         if count_diff == 0 and ts_diff.get('values_differ', False): # Assuming a 'values_differ' flag
                             file_summary.append("same number of timestamps but values differ")
-                        elif count_diff != 0 :
+                        elif count_diff != 0 and 'matching' not in ts_diff:
+                            # Only add this if we don't have more detailed matching info
                             direction = "more" if count_diff > 0 else "fewer" # count_diff > 0 means file1 has more
                             file_summary.append(f"{abs(count_diff)} {direction} timestamps in {exp1_dir.name}")
                         elif ts_diff.get('values_differ', False): # If count_diff is 0 but values differ
                             file_summary.append("timestamps values differ")
 
+                        # Extract matching information if available from the smart matching
+                        if 'matching' in ts_diff:
+                            match_info = ts_diff['matching']
+                            match_count = match_info.get('matched_count', 0)
+                            # Clarify that these are timestamps that match within the tolerance threshold
+                            file_summary.append(f"{match_count} timestamps matched within tolerance")
+                            
+                            # Add info about unmatched timestamps, but avoid redundancy
+                            unmatched1 = match_info.get('unmatched_count1', 0)
+                            unmatched2 = match_info.get('unmatched_count2', 0)
+                            if unmatched1 > 0:
+                                file_summary.append(f"{unmatched1} timestamps only in {exp1_dir.name}")
+                            if unmatched2 > 0:
+                                file_summary.append(f"{unmatched2} timestamps only in {exp2_dir.name}")
+                            # Remove the count_diff information since it's redundant with unmatched counts
+                            # (unmatched2 - unmatched1 = count_diff)
 
                     if 'beat_counts' in differences:
                         bc_diff = differences['beat_counts']
@@ -248,7 +265,70 @@ def main():
                     if 'error' in differences:
                         file_summary.append(f"error: {differences['error']}")
                     
-                    print(f"  {file}: {', '.join(file_summary) if file_summary else 'differences found (no specific summary)'}")
+                    # If we don't have a summary yet, but we're in verbose mode, we'll get detailed info below
+                    # For non-verbose mode, generate a more specific summary by re-running the comparison
+                    if not file_summary and not args.verbose:
+                        try:
+                            exp1_full_path = exp1_dir / file
+                            exp2_full_path = exp2_dir / file
+
+                            # Quickly load and compare to get exact/proximate match counts
+                            with open(exp1_full_path, 'r') as f1_content_file:
+                                content1 = json.load(f1_content_file)
+                            with open(exp2_full_path, 'r') as f2_content_file:
+                                content2 = json.load(f2_content_file)
+
+                            timestamps1_v = content1.get('timestamps', []) 
+                            beat_counts1_v = content1.get('beat_counts', [])
+                            timestamps2_v = content2.get('timestamps', [])
+                            beat_counts2_v = content2.get('beat_counts', [])
+
+                            detailed_comp = compare_beats_data(
+                                timestamps1_v, beat_counts1_v,
+                                timestamps2_v, beat_counts2_v,
+                                match_threshold=args.tolerance
+                            )
+                            
+                            # Extract exact and proximate match counts
+                            stats = detailed_comp.get("summary_stats", {})
+                            exact_matches = stats.get("exact_matches", 0)
+                            proximate_matches = stats.get("proximate_matches", 0)
+                            unique_to_file1 = stats.get("unique_to_file1", 0)
+                            unique_to_file2 = stats.get("unique_to_file2", 0)
+                            
+                            # Add match information, avoiding redundancy
+                            total_matches = exact_matches + proximate_matches
+                            if total_matches > 0:
+                                if exact_matches > 0 and proximate_matches > 0:
+                                    file_summary.append(f"{exact_matches} exact + {proximate_matches} proximate matches")
+                                elif exact_matches > 0:
+                                    file_summary.append(f"{exact_matches} exact matches")
+                                elif proximate_matches > 0:
+                                    file_summary.append(f"{proximate_matches} proximate matches")
+                            
+                            # Add unique timestamps information
+                            if unique_to_file1 > 0:
+                                file_summary.append(f"{unique_to_file1} timestamps only in {exp1_dir.name}")
+                            if unique_to_file2 > 0:
+                                file_summary.append(f"{unique_to_file2} timestamps only in {exp2_dir.name}")
+                            
+                            # Also check the beat counts status
+                            beat_summary = detailed_comp.get("beat_counts_summary", {})
+                            if beat_summary.get("status") == "length_mismatch":
+                                bc_len1 = beat_summary.get("details", {}).get("len1", 0)
+                                bc_len2 = beat_summary.get("details", {}).get("len2", 0)
+                                if bc_len1 != bc_len2:
+                                    diff = abs(bc_len1 - bc_len2)
+                                    which_greater = f"{exp1_dir.name}" if bc_len1 > bc_len2 else f"{exp2_dir.name}"
+                                    file_summary.append(f"{diff} more beat counts in {which_greater}")
+                            elif beat_summary.get("status") == "content_mismatch":
+                                file_summary.append("beat counts have same length but different content")
+                                
+                        except Exception as e:
+                            # If there's any issue, fall back to generic message
+                            file_summary.append("differences found")
+                    
+                    print(f"  {file}: {', '.join(file_summary) if file_summary else 'differences found (reasons unknown)'}")
                     
                     if args.verbose:
                         if 'error' in differences:

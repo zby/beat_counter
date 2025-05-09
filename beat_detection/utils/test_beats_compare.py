@@ -109,7 +109,7 @@ def test_compare_beats_data_beat_counts(
     "ts1, bc1, ts2, bc2, match_thresh, expected_diff_len, expected_common, expected_unique1, expected_unique2, expected_first_diff_item",
     [
         # Identical timestamps
-        (TS1_BASIC, BC1_BASIC, TS2_BASIC_MATCH, BC2_BASIC_MATCH, 0.05, 3, 3, 0, 0, {"type": "match", "file1_ts": 1.0, "file2_ts": 1.0}),
+        (TS1_BASIC, BC1_BASIC, TS2_BASIC_MATCH, BC2_BASIC_MATCH, 0.05, 3, 3, 0, 0, {"type": "exact_match", "file1_ts": 1.0, "file2_ts": 1.0}),
         # Completely different
         ([1.0, 2.0], [1,1], [3.0, 4.0], [1,1], 0.05, 4, 0, 2, 2, {"type": "delete", "file1_ts": 1.0}),
         # Only in ts1 (deletions)
@@ -117,14 +117,14 @@ def test_compare_beats_data_beat_counts(
         # Only in ts2 (additions)
         (TS_EMPTY, BC_EMPTY, [1.0, 2.0], [1,1], 0.05, 2, 0, 0, 2, {"type": "add", "file2_ts": 1.0}),
         # Mixed: ts1 = [1.0, 2.0, 3.5], ts2 = [1.02, 2.5, 3.51]. match_thresh = 0.05
-        # Diff: match(1.0, 1.02), delete(2.0), add(2.5), match(3.5, 3.51) -> 4 items
+        # Diff: approx_match(1.0, 1.02), delete(2.0), add(2.5), approx_match(3.5, 3.51) -> 4 items
         ([1.0, 2.0, 3.5], [1,1,1], [1.02, 2.5, 3.51], [1,1,1], 0.05, 4, 2, 1, 1,
-         {"type": "match", "file1_ts": 1.0, "file2_ts": 1.02}
+         {"type": "approx_match", "file1_ts": 1.0, "file2_ts": 1.02}
         ),
-         # Simpler Mixed: ts1=[1,3], ts2=[1,2,3,4] -> match(1), add(2), match(3), add(4)
-        ([1.0, 3.0], [1,1], [1.0, 2.0, 3.0, 4.0], [1,1,1,1], 0.05, 4, 2, 0, 2, {"type": "match", "file1_ts": 1.0}),
-        # Edge case: Clear match, diff 0.04 < threshold 0.05
-        ([1.0], [1], [1.04], [1], 0.05, 1, 1, 0, 0, {"type": "match", "file1_ts": 1.0, "file2_ts": 1.04}),
+         # Simpler Mixed: ts1=[1,3], ts2=[1,2,3,4] -> exact_match(1), add(2), exact_match(3), add(4)
+        ([1.0, 3.0], [1,1], [1.0, 2.0, 3.0, 4.0], [1,1,1,1], 0.05, 4, 2, 0, 2, {"type": "exact_match", "file1_ts": 1.0}),
+        # Edge case: Approx match, diff 0.04 < threshold 0.05
+        ([1.0], [1], [1.04], [1], 0.05, 1, 1, 0, 0, {"type": "approx_match", "file1_ts": 1.0, "file2_ts": 1.04}),
         # Edge case: just outside match_threshold (1.0 vs 1.051, thresh 0.05 -> delete 1.0, add 1.051)
         ([1.0], [1], [1.051], [1], 0.05, 2, 0, 1, 1, {"type": "delete", "file1_ts": 1.0}),
         # Empty lists
@@ -139,7 +139,7 @@ def test_compare_beats_data_timestamps_diff(
     stats = result["summary_stats"]
 
     assert len(diff) == expected_diff_len
-    assert stats["common_timestamps"] == expected_common
+    assert stats["exact_matches"] + stats["proximate_matches"] == expected_common
     assert stats["unique_to_file1"] == expected_unique1
     assert stats["unique_to_file2"] == expected_unique2
 
@@ -158,7 +158,7 @@ def test_compare_beats_data_timestamps_diff(
 def test_compare_beats_data_timestamps_diff_complex_mixed():
     ts1 = [1.0, 2.0, 3.5]
     bc1 = [1,1,1]
-    ts2 = [1.02, 2.5, 3.51] # match(1.0,1.02), delete(2.0), add(2.5), match(3.5,3.51)
+    ts2 = [1.02, 2.5, 3.51] # approx_match(1.0,1.02), delete(2.0), add(2.5), approx_match(3.5,3.51)
     bc2 = [1,1,1]
     match_thresh = 0.05
 
@@ -167,15 +167,16 @@ def test_compare_beats_data_timestamps_diff_complex_mixed():
     stats = result["summary_stats"]
 
     assert len(diff) == 4
-    assert stats["common_timestamps"] == 2
+    assert stats["exact_matches"] == 0
+    assert stats["proximate_matches"] == 2
     assert stats["unique_to_file1"] == 1 # 2.0
     assert stats["unique_to_file2"] == 1 # 2.5
 
     expected_diff_sequence = [
-        {"type": "match", "file1_ts": 1.0, "file2_ts": 1.02, "diff_ms": pytest.approx(-20.0, abs=1e-1)},
+        {"type": "approx_match", "file1_ts": 1.0, "file2_ts": 1.02, "diff_ms": pytest.approx(-20.0, abs=1e-1)},
         {"type": "delete", "file1_ts": 2.0},
         {"type": "add", "file2_ts": 2.5},
-        {"type": "match", "file1_ts": 3.5, "file2_ts": 3.51, "diff_ms": pytest.approx(-10.0, abs=1e-1)}
+        {"type": "approx_match", "file1_ts": 3.5, "file2_ts": 3.51, "diff_ms": pytest.approx(-10.0, abs=1e-1)}
     ]
 
     for i, expected_item in enumerate(expected_diff_sequence):
@@ -208,19 +209,19 @@ def test_format_comparison_output_typical_case():
     # Expected proximity: (1.0, 1.005) in file1, diff=0.005. match_threshold=0.05. 0.005 < 0.05 is an error.
     # Expected bc: length mismatch (4 vs 3)
     # Expected ts_diff:
-    #   match (1.005, 1.02) - note: 1.0 is now part of proximity error, so 1.005 is first sorted unique for diff
+    #   approx_match (1.005, 1.02) - note: 1.0 is now part of proximity error, so 1.005 is first sorted unique for diff
     #   delete (2.0)
     #   add (2.5)
-    #   match (3.5, 3.51)
+    #   approx_match (3.5, 3.51)
     # It's important to remember ts lists are sorted *within* compare_beats_data before diffing
     # So ts1 for diffing is [1.0, 1.005, 2.0, 3.5]
     # ts2 for diffing is [1.02, 2.5, 3.51]
     # Diff logic re-evaluation:
-    # 1. (1.0 vs 1.02) -> diff -0.02 (abs 0.02 <= 0.05) -> MATCH (1.0, 1.02), diff_ms -20.0
+    # 1. (1.0 vs 1.02) -> diff -0.02 (abs 0.02 <= 0.05) -> APPROX_MATCH (1.0, 1.02), diff_ms -20.0
     # 2. (1.005 vs 2.5) -> 1.005 is smaller -> DELETE (1.005)
     # 3. (2.0 vs 2.5) -> 2.0 is smaller -> DELETE (2.0)
     # 4. (3.5 vs 2.5) -> 2.5 is smaller -> ADD (2.5)
-    # 5. (3.5 vs 3.51) -> diff -0.01 (abs 0.01 <= 0.05) -> MATCH (3.5, 3.51), diff_ms -10.0
+    # 5. (3.5 vs 3.51) -> diff -0.01 (abs 0.01 <= 0.05) -> APPROX_MATCH (3.5, 3.51), diff_ms -10.0
 
     output = format_comparison_output(
         comparison_results, "fileA.beats", "fileB.beats",
@@ -235,13 +236,18 @@ def test_format_comparison_output_typical_case():
     assert "Beat counts differ" in output
     # Diff section header may or may not be present; primary concern is diff markers below
     assert "~ 1.000s | 1.020s" in output  # approximate match line
+    assert "[PROXIMATE]" in output  # new label for approximate matches
     assert "- 1.005s" in output           # deletion
+    assert "[ONLY IN fileA.beats]" in output  # new label for deletions
     assert "- 2.000s" in output
     assert "+ 2.500s" in output           # addition
+    assert "[ONLY IN fileB.beats]" in output  # new label for additions
     assert "~ 3.500s | 3.510s" in output  # second approximate match
 
     assert "Summary Statistics:" in output
-    assert "Matched timestamps: 2" in output
+    assert "Exact matches: 0" in output
+    assert "Proximate matches: 2" in output
+    assert "Total matches: 2" in output  # new total matches line
     assert "Timestamps only in fileA.beats: 2" in output
     assert "Timestamps only in fileB.beats: 1" in output
     assert "Average match difference" in output
@@ -259,13 +265,16 @@ def test_format_comparison_output_no_errors_or_diffs():
     assert "Beat counts are identical" in output
     # Exact matches should render as context lines (space prefix)
     assert " 1.000s" in output
+    assert "[EXACT]" in output  # new label for exact matches
     assert " 2.000s" in output
     assert " 3.000s" in output
-    assert "Matched timestamps: 3" in output
+    assert "Exact matches: 3" in output
+    assert "Proximate matches: 0" in output
+    assert "Total matches: 3" in output  # new total matches line
     assert "Timestamps only in f1: 0" in output
     assert "Timestamps only in f2: 0" in output
-    assert "Average match difference" in output
-    assert "Maximum match difference" in output
+    assert "Average match difference" not in output  # No difference for exact matches
+    assert "Maximum match difference" not in output  # No difference for exact matches
 
 def test_format_comparison_output_empty_inputs():
     comparison_results = compare_beats_data(TS_EMPTY, BC_EMPTY, TS_EMPTY, BC_EMPTY)
@@ -283,9 +292,36 @@ def test_format_comparison_output_empty_inputs():
     assert "- " not in diff_section_content
     assert "~ " not in diff_section_content
 
-    assert "Matched timestamps: 0" in output
+    assert "Exact matches: 0" in output
+    assert "Proximate matches: 0" in output
+    assert "Total matches: 0" in output  # new total matches line
     assert "Timestamps only in empty1: 0" in output
     assert "Timestamps only in empty2: 0" in output
+
+# Test for the new verbose parameter
+def test_format_comparison_output_verbose():
+    ts1 = [1.0, 2.0]
+    bc1 = [1, 1]
+    ts2 = [1.0, 3.0]  # 1.0 exact match, 2.0 deletion, 3.0 addition
+    bc2 = [1, 1]
+    
+    comparison_results = compare_beats_data(ts1, bc1, ts2, bc2)
+    output = format_comparison_output(
+        comparison_results, "verbose1", "verbose2", 
+        num_context_lines=0, verbose=True
+    )
+    
+    assert "Raw Timestamp Diff Data:" in output
+    assert "Item 1:" in output
+    assert "'type': 'exact_match'" in output
+    assert "'file1_ts': 1.0" in output
+    
+    # Check non-verbose mode for comparison
+    non_verbose_output = format_comparison_output(
+        comparison_results, "verbose1", "verbose2", 
+        num_context_lines=0, verbose=False
+    )
+    assert "Raw Timestamp Diff Data:" not in non_verbose_output
 
 
 # ---------------------------------------------------------------------------

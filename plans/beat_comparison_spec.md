@@ -65,7 +65,8 @@ def compare_beats_data(
     - Iterate through sorted `timestamps1` (pointer `i`) and `timestamps2` (pointer `j`):
         - If `i` reaches end of `timestamps1`, remaining `timestamps2[j:]` are additions.
         - If `j` reaches end of `timestamps2`, remaining `timestamps1[i:]` are deletions.
-        - If `abs(timestamps1[i] - timestamps2[j]) <= match_threshold`: This is a match. Record as `(type: "match", ts1: timestamps1[i], ts2: timestamps2[j], diff: timestamps1[i] - timestamps2[j])`. Increment `i` and `j`.
+        - If `timestamps1[i] == timestamps2[j]`: This is an exact match. Record as `(type: "exact_match", ts1: timestamps1[i], ts2: timestamps2[j], diff: 0.0)`. Increment `i` and `j`.
+        - If `0 < abs(timestamps1[i] - timestamps2[j]) <= match_threshold`: This is a proximate match. Record as `(type: "approx_match", ts1: timestamps1[i], ts2: timestamps2[j], diff: timestamps1[i] - timestamps2[j])`. Increment `i` and `j`.
         - If `timestamps1[i] < timestamps2[j] - match_threshold`: `timestamps1[i]` is unique to file 1 (a "deletion" relative to file 2). Record as `(type: "delete", ts: timestamps1[i])`. Increment `i`.
         - If `timestamps2[j] < timestamps1[i] - match_threshold`: `timestamps2[j]` is unique to file 2 (an "addition" relative to file 1). Record as `(type: "add", ts: timestamps2[j])`. Increment `j`.
         - If timestamps are close but not within `match_threshold` (e.g., `timestamps1[i] < timestamps2[j]` but `timestamps1[i] > timestamps2[j] - some_larger_context_window`), this might indicate a shifted block. For V1, we'll stick to the simpler cases above. A more advanced diff could be considered later.
@@ -89,13 +90,15 @@ A dictionary containing the comparison results, structured for easy formatting:
     },
     "timestamps_diff": [
         // Example entries:
-        {"type": "match", "file1_ts": 1.01, "file2_ts": 1.03, "diff_ms": 20.0},
+        {"type": "exact_match", "file1_ts": 1.01, "file2_ts": 1.01, "diff_ms": 0.0},
+        {"type": "approx_match", "file1_ts": 1.01, "file2_ts": 1.03, "diff_ms": 20.0},
         {"type": "delete", "file1_ts": 1.50}, // Timestamp only in file1
         {"type": "add", "file2_ts": 1.65},    // Timestamp only in file2
         // ... more diff entries ...
     ],
     "summary_stats": {
-        "common_timestamps": 0,
+        "exact_matches": 0,
+        "proximate_matches": 0,
         "unique_to_file1": 0,
         "unique_to_file2": 0,
         "max_match_diff_ms": 0.0,
@@ -148,16 +151,17 @@ def format_comparison_output(
         - `+`  → timestamp exists **only** in *file2* (addition).
         - `-`  → timestamp exists **only** in *file1* (deletion).
         - `~`  → timestamps are within `match_threshold` but not identical ("approximate match").
-        - ` `  → timestamps are *exactly* identical and are emitted as **context** lines.
+        - ` `  → timestamps are *exactly* identical (exact match) and are emitted as **context** lines.
     - For each group of adjacent non-context changes, include up to `num_context_lines` preceding and following identical lines.
     - If `limit` is not `None`, truncate the diff output once that many lines (including context) have been produced. Append a final line like `... (output truncated)` to signal the omission.
 
 5.  **Summary Statistics:**
     - Print a summary section:
-        - `Matched timestamps: {summary_stats['common_timestamps']}`
+        - `Exact matches: {summary_stats['exact_matches']}`
+        - `Proximate matches: {summary_stats['proximate_matches']}`
         - `Timestamps only in {file1_name}: {summary_stats['unique_to_file1']}`
         - `Timestamps only in {file2_name}: {summary_stats['unique_to_file2']}`
-        - If matched timestamps > 0:
+        - If proximate matches > 0:
             - `Average match difference: {summary_stats['avg_match_diff_ms']:.1f}ms`
             - `Maximum match difference: {summary_stats['max_match_diff_ms']:.1f}ms`
 
@@ -188,7 +192,8 @@ Beat counts differ. File 1 has 128 beats, File 2 has 130 beats.
 + 45.800s
   46.000s
 
-Matched timestamps: 120
+Exact matches: 118
+Proximate matches: 2
 Timestamps only in song_A.beats: 5
 Timestamps only in song_B.beats: 7
 Average match difference: 18.4 ms

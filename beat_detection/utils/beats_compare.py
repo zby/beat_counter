@@ -387,7 +387,8 @@ def compare_beats_data(
         "beat_counts_summary": {},
         "timestamps_diff": [],
         "summary_stats": {
-            "common_timestamps": 0,
+            "exact_matches": 0,
+            "proximate_matches": 0,
             "unique_to_file1": 0,
             "unique_to_file2": 0,
             "max_match_diff_ms": 0.0,
@@ -454,16 +455,28 @@ def compare_beats_data(
             ts2_val = sorted_ts2[ptr2]
             diff = ts1_val - ts2_val
 
-            if abs(diff) <= match_threshold:
+            # Check for exact match first
+            if ts1_val == ts2_val:
+                diff_list.append({
+                    "type": "exact_match",
+                    "file1_ts": ts1_val,
+                    "file2_ts": ts2_val,
+                    "diff_ms": 0.0
+                })
+                results["summary_stats"]["exact_matches"] += 1
+                ptr1 += 1
+                ptr2 += 1
+            # Then check for approximate match within threshold
+            elif abs(diff) <= match_threshold:
                 diff_ms = diff * 1000
                 diff_list.append({
-                    "type": "match",
+                    "type": "approx_match",
                     "file1_ts": ts1_val,
                     "file2_ts": ts2_val,
                     "diff_ms": diff_ms
                 })
                 match_diffs_ms.append(diff_ms)
-                results["summary_stats"]["common_timestamps"] += 1
+                results["summary_stats"]["proximate_matches"] += 1
                 ptr1 += 1
                 ptr2 += 1
             elif ts1_val < ts2_val: # (and diff is > match_threshold, or ts1_val < ts2_val - match_threshold)
@@ -489,8 +502,8 @@ def compare_beats_data(
             
     results["timestamps_diff"] = diff_list
 
-    # Calculate summary statistics for matches
-    if results["summary_stats"]["common_timestamps"] > 0 and match_diffs_ms:
+    # Calculate summary statistics for approximate matches
+    if results["summary_stats"]["proximate_matches"] > 0 and match_diffs_ms:
         results["summary_stats"]["avg_match_diff_ms"] = sum(match_diffs_ms) / len(match_diffs_ms)
         # Use abs for max_match_diff_ms to report largest deviation magnitude
         abs_match_diffs_ms = [abs(d) for d in match_diffs_ms]
@@ -504,7 +517,8 @@ def format_comparison_output(
     file1_name: str = "file1",
     file2_name: str = "file2",
     limit: Optional[int] = None,
-    num_context_lines: int = 2
+    num_context_lines: int = 2,
+    verbose: bool = False
 ) -> str:
     """
     Formats the comparison results from compare_beats_data into a
@@ -517,6 +531,7 @@ def format_comparison_output(
         limit: Optional maximum number of diff items to display.
         num_context_lines: Number of surrounding identical-timestamp lines to
             emit before and after each diff hunk (similar to `-u` in `diff`).
+        verbose: Whether to include additional debugging information.
 
     Returns:
         A multi-line string containing the formatted report.
@@ -574,24 +589,22 @@ def format_comparison_output(
 
     for item in timestamps_diff:
         t_type = item["type"]
-        if t_type == "match":
+        if t_type == "exact_match":
+            diff_text.append(f"  {item['file1_ts']:.3f}s [EXACT]")  # exact match – context candidate
+            change_flags.append(False)
+        elif t_type == "approx_match":
             diff_ms = abs(item.get("diff_ms", 0.0))
-            # todo: check if this is robust for floats comparison
-            if diff_ms == 0:
-                diff_text.append(f"  {item['file1_ts']:.3f}s")  # exact match – context candidate
-                change_flags.append(False)
-            else:
-                diff_text.append(
-                    f"~ {item['file1_ts']:.3f}s | {item['file2_ts']:.3f}s (diff: {diff_ms:.1f} ms)"
-                )
-                change_flags.append(True)
+            diff_text.append(
+                f"~ {item['file1_ts']:.3f}s | {item['file2_ts']:.3f}s (diff: {diff_ms:.1f} ms) [PROXIMATE]"
+            )
+            change_flags.append(True)
         elif t_type == "delete":
             ts_val = item["file1_ts"]
-            diff_text.append(f"- {ts_val:.3f}s")
+            diff_text.append(f"- {ts_val:.3f}s [ONLY IN {file1_name}]")
             change_flags.append(True)
         elif t_type == "add":
             ts_val = item["file2_ts"]
-            diff_text.append(f"+ {ts_val:.3f}s")
+            diff_text.append(f"+ {ts_val:.3f}s [ONLY IN {file2_name}]")
             change_flags.append(True)
 
     # ------------------------------------------------------------------
@@ -631,17 +644,27 @@ def format_comparison_output(
     # ------------------------------------------------------------------
     stats = comparison_results.get("summary_stats", {})
     output_lines.append("Summary Statistics:")
-    output_lines.append(f"  Matched timestamps: {stats.get('common_timestamps', 0)}")
+    output_lines.append(f"  Exact matches: {stats.get('exact_matches', 0)}")
+    output_lines.append(f"  Proximate matches: {stats.get('proximate_matches', 0)}")
+    output_lines.append(f"  Total matches: {stats.get('exact_matches', 0) + stats.get('proximate_matches', 0)}")
     output_lines.append(f"  Timestamps only in {file1_name}: {stats.get('unique_to_file1', 0)}")
     output_lines.append(f"  Timestamps only in {file2_name}: {stats.get('unique_to_file2', 0)}")
-    if stats.get("common_timestamps", 0):
+    if stats.get("proximate_matches", 0):
         output_lines.append(
             f"  Average match difference: {stats.get('avg_match_diff_ms', 0.0):.1f} ms"
         )
         output_lines.append(
             f"  Maximum match difference: {stats.get('max_match_diff_ms', 0.0):.1f} ms"
         )
-
+    
+    # ------------------------------------------------------------------
+    # 6. Add raw data (if verbose)
+    # ------------------------------------------------------------------
+    if verbose:
+        output_lines.append("\nRaw Timestamp Diff Data:")
+        for i, item in enumerate(timestamps_diff):
+            output_lines.append(f"  Item {i+1}: {item}")
+    
     return "\n".join(output_lines)
 
 
