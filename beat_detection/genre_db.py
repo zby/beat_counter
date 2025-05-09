@@ -187,6 +187,6 @@ class GenreDB:
         if "max_bpm" not in result:
             result["max_bpm"] = bpm_max
         if "beats_per_bar" not in result:  # beats_per_bar is also relevant for detector
-            result["beats_per_bar"] = genre_defaults["beats_per_bar"]
+            result["beats_per_bar"] = [genre_defaults["beats_per_bar"]]
             
         return result 

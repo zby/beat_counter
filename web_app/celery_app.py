@@ -19,6 +19,7 @@ from beat_detection.core.factory import get_beat_detector, extract_beats
 from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.core.beats import Beats, BeatCalculationError, RawBeats
 from beat_detection.core.detector_protocol import BeatDetector
+from beat_detection.genre_db import GenreDB, parse_genre_from_path
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -92,6 +93,8 @@ def _perform_beat_detection(
     tolerance_percent: float,
     min_measures: int,
     beats_per_bar: Optional[int], # Optional override
+    genre: Optional[str] = None,  # Optional genre for defaults
+    use_genre_defaults: bool = False  # Whether to try to detect genre from path
 ) -> None:
     """Performs beat detection using extract_beats, saves Beats object, and updates metadata."""
 
@@ -99,7 +102,7 @@ def _perform_beat_detection(
     beats_file_path = storage.get_beats_file_path(file_id)
     output_path_str = str(beats_file_path)
 
-    # Prepare arguments
+    # Prepare base arguments
     detector_kwargs = {
         "min_bpm": min_bpm,
         "max_bpm": max_bpm,
@@ -109,6 +112,30 @@ def _perform_beat_detection(
         "tolerance_percent": tolerance_percent,
         "min_measures": min_measures,
     }
+
+    # Check for genre-based defaults
+    detected_genre = None
+    if genre or use_genre_defaults:
+        genre_db = GenreDB()  # Instantiate genre database
+        
+        # Use explicit genre if provided
+        if genre:
+            detected_genre = genre
+            logger.info(f"Using provided genre '{genre}' for file_id {file_id}")
+        # Otherwise try to detect from path if enabled
+        elif use_genre_defaults:
+            try:
+                detected_genre = parse_genre_from_path(audio_path_str)
+                logger.info(f"Detected genre '{detected_genre}' from path for file_id {file_id}")
+            except ValueError:
+                logger.info(f"No genre detected in path for file_id {file_id}")
+        
+        # Apply genre defaults if we have a genre
+        if detected_genre:
+            # Apply genre defaults to detector kwargs and beats args
+            detector_kwargs = genre_db.detector_kwargs_for_genre(detected_genre, existing=detector_kwargs)
+            beats_constructor_args = genre_db.beats_kwargs_for_genre(detected_genre, existing=beats_constructor_args)
+            logger.info(f"Applied genre defaults for '{detected_genre}' to file_id {file_id}")
 
     try:
         # Call extract_beats - handles detection, Beats creation, and saving
@@ -146,6 +173,8 @@ def _perform_beat_detection(
                 "beats_per_bar_override": beats_per_bar,
                 "tolerance_percent": tolerance_percent,
                 "min_measures": min_measures,
+                "detected_genre": detected_genre,  # Add genre to metadata if detected
+                "genre_provided": genre,  # Add provided genre to metadata
             }
         }
         # Update the central metadata store
@@ -174,6 +203,8 @@ def detect_beats_task(
     tolerance_percent: float = 10.0,
     min_measures: int = 1,
     beats_per_bar: int = None,
+    genre: str = None,  # Optional explicit genre
+    use_genre_defaults: bool = False,  # Whether to detect genre from path
 ) -> None:
     """
     Celery task wrapper for beat detection.
@@ -181,6 +212,10 @@ def detect_beats_task(
     and error handling.
 
     Parameters are passed to the core beat detection function.
+
+    The task supports genre-based defaults in two ways:
+    1. Explicit genre parameter
+    2. Auto-detection from path when use_genre_defaults=True
 
     Returns:
     --------
@@ -208,6 +243,8 @@ def detect_beats_task(
             tolerance_percent=tolerance_percent,
             min_measures=min_measures,
             beats_per_bar=beats_per_bar,
+            genre=genre,
+            use_genre_defaults=use_genre_defaults,
         )
         return
 

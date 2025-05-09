@@ -124,10 +124,12 @@ class TestGenreDB:
         # Basic case - no existing dict
         result = genre_db_from_content.beats_kwargs_for_genre("House")
         assert result == {"beats_per_bar": 4}
+        assert isinstance(result["beats_per_bar"], int), "beats_per_bar should be an integer"
         
         # With empty existing dict
         result = genre_db_from_content.beats_kwargs_for_genre("House", existing={})
         assert result == {"beats_per_bar": 4}
+        assert isinstance(result["beats_per_bar"], int), "beats_per_bar should be an integer"
         
         # With existing dict containing other keys
         result = genre_db_from_content.beats_kwargs_for_genre(
@@ -135,23 +137,33 @@ class TestGenreDB:
             existing={"some_other_key": "value"}
         )
         assert result == {"some_other_key": "value", "beats_per_bar": 4}
+        assert isinstance(result["beats_per_bar"], int), "beats_per_bar should be an integer"
         
         # With existing dict containing beats_per_bar (should not override)
         result = genre_db_from_content.beats_kwargs_for_genre(
             "House", 
-            existing={"beats_per_bar": 3}  # Different value
+            existing={"beats_per_bar": 3}  # Different value as integer
         )
         assert result == {"beats_per_bar": 3}  # Original value preserved
+        
+        # With existing dict containing beats_per_bar as a list (should still not override)
+        result = genre_db_from_content.beats_kwargs_for_genre(
+            "House", 
+            existing={"beats_per_bar": [3]}  # Different value as a list
+        )
+        assert result == {"beats_per_bar": [3]}  # Original value preserved in its original form
     
     def test_detector_kwargs_for_genre(self, genre_db_from_content):
         """detector_kwargs_for_genre should return correct parameters."""
         # Basic case - no existing dict
         result = genre_db_from_content.detector_kwargs_for_genre("Dubstep")
-        assert result == {"min_bpm": 140, "max_bpm": 150, "beats_per_bar": 4}
+        assert result == {"min_bpm": 140, "max_bpm": 150, "beats_per_bar": [4]}
+        assert isinstance(result["beats_per_bar"], list), "beats_per_bar should be a list"
         
         # With empty existing dict
         result = genre_db_from_content.detector_kwargs_for_genre("Dubstep", existing={})
-        assert result == {"min_bpm": 140, "max_bpm": 150, "beats_per_bar": 4}
+        assert result == {"min_bpm": 140, "max_bpm": 150, "beats_per_bar": [4]}
+        assert isinstance(result["beats_per_bar"], list), "beats_per_bar should be a list"
         
         # With existing dict containing other keys
         result = genre_db_from_content.detector_kwargs_for_genre(
@@ -162,9 +174,10 @@ class TestGenreDB:
             "some_other_key": "value",
             "min_bpm": 140,
             "max_bpm": 150,
-            "beats_per_bar": 4
+            "beats_per_bar": [4]
         }
         assert result == expected
+        assert isinstance(result["beats_per_bar"], list), "beats_per_bar should be a list"
         
         # With existing dict containing some overlapping keys (should not override)
         result = genre_db_from_content.detector_kwargs_for_genre(
@@ -177,7 +190,7 @@ class TestGenreDB:
         expected = {
             "min_bpm": 135,  # Original value preserved
             "max_bpm": 150,  # Added from genre
-            "beats_per_bar": 4,  # Added from genre
+            "beats_per_bar": [4],  # Added from genre
             "other_param": True  # Preserved
         }
         assert result == expected
@@ -188,14 +201,14 @@ class TestGenreDB:
             existing={
                 "min_bpm": 135,
                 "max_bpm": 160,
-                "beats_per_bar": 6,
+                "beats_per_bar": [6],
                 "other_param": True
             }
         )
         expected = {
             "min_bpm": 135,
             "max_bpm": 160,
-            "beats_per_bar": 6,
+            "beats_per_bar": [6],
             "other_param": True
         }
         assert result == expected  # All original values preserved 
