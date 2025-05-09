@@ -125,7 +125,7 @@ def _compare_two_files(file1_path: Path, file2_path: Path, tolerance: float, lim
     return 1 if are_different else 0
 
 
-def _compare_directories(path1: Path, path2: Path, tolerance: float, summarize: bool, verbose: bool, limit: int, output_path: Path):
+def _compare_directories(path1: Path, path2: Path, tolerance: float, summarize: bool, verbose: bool, limit: int, use_percentages: bool, output_path: Path):
     """
     Lightweight directory comparison helper.
     """
@@ -161,8 +161,9 @@ def _compare_directories(path1: Path, path2: Path, tolerance: float, summarize: 
 
     if different_files:
         print(f"\nFiles with differences:")
-        for rel_path, _ in different_files:
-            print(f"  {rel_path}")
+        for rel_path, diff in different_files:
+            summary = _summarize_diff(diff, exp1_dir.name, exp2_dir.name, use_percentages=use_percentages)
+            print(f"  {rel_path}: {summary}")
 
     # --- Verbose section: full diff for each differing file -----------------
     if verbose and different_files:
@@ -197,6 +198,58 @@ def _compare_directories(path1: Path, path2: Path, tolerance: float, summarize: 
     return 1 if (exp1_only or exp2_only or different_files) else 0
 
 
+def _summarize_diff(differences: dict, exp1_label: str, exp2_label: str, *, use_percentages: bool = False) -> str:
+    """Return a concise human-readable summary string for a single file diff.
+
+    When use_percentages=True, numeric counts are converted to percentages based on the
+    larger of the two array lengths involved.
+    """
+    def _fmt(value: int, denom: int) -> str:
+        if not use_percentages or denom == 0:
+            return str(value)
+        return f"{(value/denom*100):.1f}%"
+
+    parts = []
+
+    # --- timestamps -------------------------------------------------------
+    ts_diff = differences.get("timestamps")
+    has_ts_diff = ts_diff is not None
+    if has_ts_diff:
+        count_diff = ts_diff.get("count_diff", 0)
+
+        # Count approximate matches (diff_ms != 0)
+        match_info = ts_diff.get("matching", {})
+        matches_list = match_info.get("matches", [])
+        approx_matches = sum(1 for m in matches_list if abs(m.get("diff_ms", 0)) > 0.001)
+
+        denom_ts = max(ts_diff.get("first_count", 0), ts_diff.get("second_count", 0))
+
+        if count_diff:
+            direction = "more" if count_diff > 0 else "fewer"
+            parts.append(f"{_fmt(abs(count_diff), denom_ts)} {direction} timestamps in {exp1_label}")
+
+        if approx_matches:
+            parts.append(f"{_fmt(approx_matches, denom_ts)} approx matches")
+
+    # --- beat counts ------------------------------------------------------
+    bc_diff = differences.get("beat_counts")
+    # Only include beat-count info when there is no timestamp difference
+    if bc_diff is not None and not has_ts_diff:
+        count_diff = bc_diff.get("count_diff", 0)
+        denom_bc = max(bc_diff.get("first_count", 0), bc_diff.get("second_count", 0))
+        if count_diff:
+            direction = "more" if count_diff > 0 else "fewer"
+            parts.append(f"{_fmt(abs(count_diff), denom_bc)} {direction} beat counts in {exp1_label}")
+        else:
+            parts.append("beat count values differ")
+
+    # Fallback
+    if not parts:
+        parts.append("differences found")
+
+    return ", ".join(parts)
+
+
 def main():
     """Main entry point for the script."""
     # Configure logging
@@ -212,6 +265,8 @@ def main():
     parser.add_argument("--limit", "-l", type=int, default=None, help="Limit the number of array entries shown in detailed reports")
     parser.add_argument("--tolerance", "-t", type=float, default=0.1, 
                       help="Maximum time difference (in seconds) to consider two timestamps as matching")
+    # By default we display percentages; use --absolute to revert to absolute counts
+    parser.add_argument("--absolute", "-a", action="store_true", help="Show absolute numbers instead of percentages in directory summaries (default is percentage)")
     
     args = parser.parse_args()
     
@@ -262,6 +317,7 @@ def main():
                 summarize=args.summarize,
                 verbose=args.verbose,
                 limit=args.limit,
+                use_percentages=not args.absolute,
                 output_path=Path(args.output) if args.output else None,
             )
 
