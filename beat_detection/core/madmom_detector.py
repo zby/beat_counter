@@ -5,73 +5,106 @@ Madmom-specific beat detection implementation.
 import numpy as np
 import warnings
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, List, Tuple, Union
 
 from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatProcessor
 
-from beat_detection.utils.constants import SUPPORTED_BEATS_PER_BAR
 from beat_detection.core.beats import RawBeats, BeatCalculationError
 from beat_detection.core.detector_protocol import BeatDetector # Import the protocol
 
+import beat_detection.utils.constants as constants
 
 class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @runtime_checkable
     """Detect beats and downbeats in audio files using Madmom."""
 
     def __init__(
         self,
-        min_bpm: int = 60,
-        max_bpm: int = 240,
-        fps: int = 100,
+        beats_per_bar: Optional[Union[List[int], Tuple[int, ...]]] = constants.SUPPORTED_BEATS_PER_BAR,
+        min_bpm: Optional[int] = None,
+        max_bpm: Optional[int] = None,
+        fps: Optional[int] = constants.FPS,
     ):
         """
         Initialize the MadmomBeatDetector.
 
         Parameters:
         ----------
-        min_bpm : int
-            Minimum tempo to consider (default: 60).
-        max_bpm : int
-            Maximum tempo to consider (default: 240).
-        fps : int
-            Frames per second expected for the activation functions (default: 100).
+        beats_per_bar : Optional[Union[List[int], Tuple[int, ...]]], optional
+            A list or tuple of integers representing the number of beats per bar
+            to guide the downbeat tracker (e.g., [3, 4]).
+            Defaults to SUPPORTED_BEATS_PER_BAR (typically [3, 4]).
+            If None, Madmom's processor throws an error.
+        min_bpm : Optional[int], optional
+            Minimum tempo to consider. If None, Madmom's default is used.
+        max_bpm : Optional[int], optional
+            Maximum tempo to consider. If None, Madmom's default is used.
+        fps : Optional[int], optional
+            Frames per second for activation functions. If None, Madmom's default is used.
 
         Raises:
         -------
         BeatCalculationError
-            If BPM parameters are invalid.
+            If provided parameters are invalid.
         """
-        # --- Input Validation (Moved to __init__ for fail-fast) ---
-        if not isinstance(min_bpm, int) or min_bpm <= 0:
-            raise BeatCalculationError(
-                f"Invalid min_bpm: {min_bpm}. Must be a positive integer."
-            )
-        if not isinstance(max_bpm, int) or max_bpm <= min_bpm:
-            raise BeatCalculationError(
-                f"Invalid max_bpm: {max_bpm}. Must be > min_bpm ({min_bpm})."
-            )
-        if not isinstance(fps, int) or fps <= 0:
-            raise BeatCalculationError(
-                f"Invalid fps: {fps}. Must be a positive integer."
-            )
+        # --- Input Validation (Applied only if values are provided or for defaults) ---
+        if beats_per_bar is not None: # This includes the default SUPPORTED_BEATS_PER_BAR
+            if not isinstance(beats_per_bar, (list, tuple)):
+                raise BeatCalculationError(
+                    f"Invalid beats_per_bar: {beats_per_bar}. Must be a list or tuple of integers if provided."
+                )
+            if not beats_per_bar: # Check for empty list/tuple
+                 raise BeatCalculationError(
+                    f"Invalid beats_per_bar: {beats_per_bar}. Cannot be an empty list/tuple."
+                )
+            for bpb_val in beats_per_bar:
+                if not isinstance(bpb_val, int) or bpb_val <= 0:
+                    raise BeatCalculationError(
+                        f"Invalid value in beats_per_bar: {bpb_val}. All values must be positive integers."
+                    )
+        # If beats_per_bar is explicitly None, Madmom might use a very broad default for its processor
+        # or potentially error if the processor strictly requires it. 
+        # Our default is SUPPORTED_BEATS_PER_BAR, so this condition is met unless a caller explicitly passes None.
+
+        if min_bpm is not None:
+            if not isinstance(min_bpm, int) or min_bpm <= 0:
+                raise BeatCalculationError(
+                    f"Invalid min_bpm: {min_bpm}. Must be a positive integer if provided."
+                )
+        if max_bpm is not None:
+            if not isinstance(max_bpm, int) or max_bpm <= 0:
+                 raise BeatCalculationError(
+                    f"Invalid max_bpm: {max_bpm}. Must be a positive integer if provided."
+                )
+        if min_bpm is not None and max_bpm is not None:
+            if max_bpm <= min_bpm:
+                raise BeatCalculationError(
+                    f"Invalid max_bpm: {max_bpm}. Must be > min_bpm ({min_bpm}) if both are provided."
+                )
+        if fps is not None:
+            if not isinstance(fps, int) or fps <= 0:
+                raise BeatCalculationError(
+                    f"Invalid fps: {fps}. Must be a positive integer if provided."
+                )
         # --- End Validation ---
 
+        self.beats_per_bar = beats_per_bar
         self.min_bpm = min_bpm
         self.max_bpm = max_bpm
         self.fps = fps
 
-        # Initialize processors
-        try:
-            self.downbeat_processor = RNNDownBeatProcessor()
-            # Initialize downbeat tracker
-            self.downbeat_tracker = DBNDownBeatTrackingProcessor(
-                beats_per_bar=SUPPORTED_BEATS_PER_BAR,  # Let madmom choose based on activation
-                min_bpm=float(self.min_bpm),
-                max_bpm=float(self.max_bpm),
-                fps=float(self.fps),
-            )
-        except Exception as e:
-            # Catch potential madmom initialization errors (though validation should prevent most)
-            raise BeatCalculationError(f"Failed to initialize Madmom processors: {e}") from e
+        self.downbeat_processor = RNNDownBeatProcessor()
+
+        dbn_kwargs = { 'beats_per_bar': self.beats_per_bar }
+        
+        if self.min_bpm is not None:
+            dbn_kwargs['min_bpm'] = float(self.min_bpm)
+        if self.max_bpm is not None:
+            dbn_kwargs['max_bpm'] = float(self.max_bpm)
+        if self.fps is not None:
+            dbn_kwargs['fps'] = int(self.fps)
+
+        self.downbeat_tracker = DBNDownBeatTrackingProcessor(**dbn_kwargs)
+
 
     def detect_beats(self, audio_path: str | Path) -> RawBeats:
         """
@@ -140,7 +173,7 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
             # Detect beat activations
             downbeat_activations = self.downbeat_processor(audio_file_path)
 
-            # Pass activations to the DBNBeatTrackingProcessor
+            # Pass activations to the DBNDownBeatTrackingProcessor
             raw_downbeats = self.downbeat_tracker(downbeat_activations)
 
         except Exception as e:
@@ -152,37 +185,48 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
                 "Madmom DBNDownBeatTrackingProcessor returned no beats."
             )
 
-        # Determine beats_per_bar from the max beat number reported by madmom
-        try:
-            # --- Shape Validation ---
-            # Check number of dimensions first
-            if raw_downbeats.ndim != 2:
-                raise BeatCalculationError(
-                    f"Madmom output array has unexpected shape (ndim != 2): {raw_downbeats.shape}"
-                )
-            # Then check number of columns
-            if raw_downbeats.shape[1] < 2:
-                raise BeatCalculationError(
-                    f"Madmom output array has unexpected shape (columns < 2): {raw_downbeats.shape}"
-                )
-            # --- End Shape Validation ---
-
-            detected_beats_per_bar = int(np.max(raw_downbeats[:, 1]))
-            if detected_beats_per_bar not in SUPPORTED_BEATS_PER_BAR:
-                # Check if beats_per_bar is 0 or negative, which is definitely invalid
-                if detected_beats_per_bar <= 0:
-                    raise BeatCalculationError(
-                        f"Madmom detected an invalid beats_per_bar: {detected_beats_per_bar}"
-                    )
-                # If it's positive but not in SUPPORTED_BEATS_PER_BAR, issue a warning and maybe default?
-                warnings.warn(
-                    f"Madmom detected an unsupported beats_per_bar: {detected_beats_per_bar}. Using it anyway."
-                )
-        except (ValueError, IndexError) as e:
-            # This catch might now be less likely for shape errors, but keep for np.max etc.
+        # --- Shape Validation (ensure Madmom output is as expected) ---
+        if raw_downbeats.ndim != 2:
             raise BeatCalculationError(
-                f"Could not process madmom output: {e}"
-            ) from e
+                f"Madmom output array has unexpected shape (ndim != 2): {raw_downbeats.shape}"
+            )
+        if raw_downbeats.shape[1] < 2: # Must have at least time and count columns
+            raise BeatCalculationError(
+                f"Madmom output array has unexpected shape (columns < 2): {raw_downbeats.shape}"
+            )
+        # --- End Shape Validation ---
 
-        # Return the full array and the determined beats_per_bar
+        # check if Madmom's determined meter is one of the specified options.
+        try:
+            # Madmom's output (raw_downbeats[:, 1]) contains the beat number (1, 2, 3, etc.)
+            # The maximum of this column gives the meter it effectively detected/used.
+            detected_bpb_from_output = int(np.max(raw_downbeats[:, 1]))
+
+            if detected_bpb_from_output <= 0:
+                # This indicates an issue with Madmom's output or our understanding of it.
+                raise BeatCalculationError(
+                    f"Madmom output implies an invalid beats_per_bar: {detected_bpb_from_output}. "
+                    f"Expected positive value. Raw output max count: {np.max(raw_downbeats[:, 1])}"
+                )
+
+            # Check if the single detected value is one of the options we provided/defaulted to.
+            if detected_bpb_from_output not in self.beats_per_bar:
+                warnings.warn(
+                    f"Madmom's output indicates a beats_per_bar of {detected_bpb_from_output}, "
+                    f"which is not one of the configured options in self.beats_per_bar={self.beats_per_bar}. "
+                    f"Using Madmom's output counts directly.",
+                    UserWarning
+                )
+        except ValueError: # Handles cases like empty raw_downbeats or non-numeric data in counts column
+            # This might occur if raw_downbeats[:, 1] is empty or contains non-castable values.
+            raise BeatCalculationError(
+                "Could not determine beats_per_bar from Madmom's output for comparison. "
+                f"Problematic raw output second column (counts): {raw_downbeats[:, 1]}"
+            )
+        except IndexError: # If raw_downbeats somehow doesn't have a second column after passing shape checks
+                raise BeatCalculationError(
+                "Could not access beat counts (second column) from Madmom's output for comparison. "
+                f"Madmom output shape: {raw_downbeats.shape}"
+            )
+
         return raw_downbeats 
