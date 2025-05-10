@@ -13,9 +13,54 @@ import os
 import numpy as np
 import torch
 from beat_this.inference import File2Beats
+from beat_this.model.postprocessor import Postprocessor
+from madmom.features.downbeats import DBNDownBeatTrackingProcessor
 
 from beat_detection.core.beats import RawBeats
 from beat_detection.core.detector_protocol import BeatDetector  # Reuse the existing protocol
+
+import beat_detection.utils.constants as constants
+
+from typing import Optional, List, Tuple, Union
+
+class CustomBeatTrackingProcessor(Postprocessor):
+    """Custom Postprocessor that uses DBN with customizable parameters."""
+    
+    def __init__(self, 
+                 fps: int,
+                 beats_per_bar: Union[List[int], Tuple[int, ...]],
+                 min_bpm: int,
+                 max_bpm: int,
+                 transition_lambda: float):
+        """
+        Initialize a custom DBN postprocessor with configurable parameters.
+        
+        Args:
+            fps: The frames per second of the model predictions.
+            beats_per_bar: List of possible values for beats per bar, e.g. [3, 4]
+            min_bpm: Minimum BPM to consider
+            max_bpm: Maximum BPM to consider
+            transition_lambda: Lambda for the tempo change distribution
+        """
+        super().__init__(type="dbn", fps=fps)
+        
+        print(f"fps: {fps}")
+        print(f"beats_per_bar: {beats_per_bar}")
+        print(f"min_bpm: {min_bpm}")
+        print(f"max_bpm: {max_bpm}")
+        print(f"transition_lambda: {transition_lambda}")
+        
+        dbn_args = {
+            "beats_per_bar": beats_per_bar,
+            "fps": fps,
+            "transition_lambda": transition_lambda,
+        }
+        if min_bpm is not None:
+            dbn_args["min_bpm"] = min_bpm
+        if max_bpm is not None:
+            dbn_args["max_bpm"] = max_bpm
+        
+        self.dbn = DBNDownBeatTrackingProcessor(**dbn_args)
 
 
 class BeatThisDetector:
@@ -27,6 +72,11 @@ class BeatThisDetector:
         device: str | None = None,
         use_float16: bool = False,
         use_dbn: bool = True,
+        beats_per_bar: Optional[Union[List[int], Tuple[int, ...]]] = constants.SUPPORTED_BEATS_PER_BAR,
+        min_bpm: Optional[int] = None,
+        max_bpm: Optional[int] = None,
+        transition_lambda: float = 100,
+        fps: int = constants.FPS,
     ) -> None:
         """Prepare the underlying Beat-This model once at construction time."""
 
@@ -47,6 +97,18 @@ class BeatThisDetector:
             float16=use_float16,
             dbn=use_dbn,
         )
+        
+        custom_postprocessor = CustomBeatTrackingProcessor(
+            fps=fps,
+            beats_per_bar=beats_per_bar,
+            min_bpm=min_bpm,
+            max_bpm=max_bpm,
+            transition_lambda=transition_lambda
+        )
+        
+        self._file2beats.frames2beats= custom_postprocessor
+
+
 
     # ---------------------------------------------------------------------
     # Public API – part of the BeatDetector protocol
@@ -60,6 +122,8 @@ class BeatThisDetector:
 
         # The underlying processor returns (beats, downbeats)
         beats, downbeats = self._file2beats(str(audio_path))
+        print(f"beats: {beats}")
+        print(f"downbeats: {downbeats}")
 
         timestamps, counts = self._beats_to_counts(beats, downbeats)
 
