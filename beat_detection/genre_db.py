@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union, TextIO
 import io
 
+import logging
 
 def _parse_bpm_range(bpm_range_str: str) -> Dict[str, int]:
     """
@@ -93,10 +94,12 @@ class GenreDB:
         """
         self._data = {}
         if isinstance(source, Path):
+            logging.info(f"Loading genre data from file: {source}")
             with source.open(newline="") as f:
                 reader = csv.DictReader(f)
                 self._parse_reader(reader)
         else:  # Assumed to be a TextIO object (like StringIO)
+            logging.info(f"Loading genre data from TextIO object")
             reader = csv.DictReader(source)
             self._parse_reader(reader)
 
@@ -140,24 +143,21 @@ class GenreDB:
         Get Beats constructor arguments for a genre.
         
         Returns a dictionary containing beats_per_bar for the given genre,
-        if not already present in 'existing'.
+        overriding any existing values.
         
         Args:
             genre: Genre name to look up (case-insensitive)
             existing: Optional existing dictionary to merge with
             
         Returns:
-            Dictionary with beats_per_bar parameter (if not in existing)
+            Dictionary with beats_per_bar parameter from genre defaults
         """
         if existing is None:
             existing = {}
         
         genre_defaults = self._lookup_genre_raw(genre)
         result = existing.copy()
-
-        if "beats_per_bar" not in result:
-            result["beats_per_bar"] = genre_defaults["beats_per_bar"]
-        
+        result["beats_per_bar"] = genre_defaults["beats_per_bar"]
         return result
 
     def detector_kwargs_for_genre(self, genre: str, existing: Optional[Dict] = None) -> Dict:
@@ -165,15 +165,17 @@ class GenreDB:
         Get BeatDetector constructor arguments for a genre.
         
         Returns a dictionary containing min_bpm, max_bpm, and beats_per_bar for the given genre,
-        if not already present in 'existing'.
+        overriding any existing values.
         
         Args:
             genre: Genre name to look up (case-insensitive)
             existing: Optional existing dictionary to merge with
             
         Returns:
-            Dictionary with min_bpm, max_bpm, beats_per_bar parameters (if not in existing)
+            Dictionary with min_bpm, max_bpm, beats_per_bar parameters from genre defaults
         """
+        logging.info(f"Getting detector kwargs for genre: {genre}")
+        logging.info(f"Existing: {existing}")
         if existing is None:
             existing = {}
 
@@ -181,12 +183,8 @@ class GenreDB:
         result = existing.copy()
 
         bpm_min, bpm_max = genre_defaults["bpm_range"]["min"], genre_defaults["bpm_range"]["max"]
-
-        if "min_bpm" not in result:
-            result["min_bpm"] = bpm_min
-        if "max_bpm" not in result:
-            result["max_bpm"] = bpm_max
-        if "beats_per_bar" not in result:  # beats_per_bar is also relevant for detector
-            result["beats_per_bar"] = [genre_defaults["beats_per_bar"]]
+        result["min_bpm"] = bpm_min
+        result["max_bpm"] = bpm_max
+        result["beats_per_bar"] = [genre_defaults["beats_per_bar"]]
             
         return result 
