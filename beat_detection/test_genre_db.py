@@ -139,19 +139,19 @@ class TestGenreDB:
         assert result == {"some_other_key": "value", "beats_per_bar": 4}
         assert isinstance(result["beats_per_bar"], int), "beats_per_bar should be an integer"
         
-        # With existing dict containing beats_per_bar (should not override)
+        # With existing dict containing beats_per_bar (should override)
         result = genre_db_from_content.beats_kwargs_for_genre(
             "House", 
             existing={"beats_per_bar": 3}  # Different value as integer
         )
-        assert result == {"beats_per_bar": 3}  # Original value preserved
+        assert result == {"beats_per_bar": 4}  # Genre default overrides existing value
         
-        # With existing dict containing beats_per_bar as a list (should still not override)
+        # With existing dict containing beats_per_bar as a list (should override)
         result = genre_db_from_content.beats_kwargs_for_genre(
             "House", 
             existing={"beats_per_bar": [3]}  # Different value as a list
         )
-        assert result == {"beats_per_bar": [3]}  # Original value preserved in its original form
+        assert result == {"beats_per_bar": 4}  # Genre default overrides existing value
     
     def test_detector_kwargs_for_genre(self, genre_db_from_content):
         """detector_kwargs_for_genre should return correct parameters."""
@@ -179,7 +179,7 @@ class TestGenreDB:
         assert result == expected
         assert isinstance(result["beats_per_bar"], list), "beats_per_bar should be a list"
         
-        # With existing dict containing some overlapping keys (should not override)
+        # With existing dict containing some overlapping keys (should override)
         result = genre_db_from_content.detector_kwargs_for_genre(
             "Dubstep", 
             existing={
@@ -188,14 +188,14 @@ class TestGenreDB:
             }
         )
         expected = {
-            "min_bpm": 135,  # Original value preserved
+            "min_bpm": 140,  # Overridden by genre default
             "max_bpm": 150,  # Added from genre
             "beats_per_bar": [4],  # Added from genre
             "other_param": True  # Preserved
         }
         assert result == expected
         
-        # With existing dict containing all overlapping keys (none should be added)
+        # With existing dict containing all overlapping keys (should override all)
         result = genre_db_from_content.detector_kwargs_for_genre(
             "Dubstep", 
             existing={
@@ -206,9 +206,9 @@ class TestGenreDB:
             }
         )
         expected = {
-            "min_bpm": 135,
-            "max_bpm": 160,
-            "beats_per_bar": [6],
-            "other_param": True
+            "min_bpm": 140,  # Overridden by genre default
+            "max_bpm": 150,  # Overridden by genre default
+            "beats_per_bar": [4],  # Overridden by genre default
+            "other_param": True  # Preserved
         }
-        assert result == expected  # All original values preserved 
+        assert result == expected 
