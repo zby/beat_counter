@@ -115,21 +115,11 @@ class BeatVideoGenerator:
         # Get the beats per bar value for coloring
         beats_per_bar_value = beats.beats_per_bar
 
-        # Create and cache the "no beat" frame (beat_count = 0)
-        no_beat_frame = self._create_beat_frame(0, beats_per_bar_value)
-        self._frame_cache[0] = no_beat_frame
-
         # Create and cache frames for each possible beat count (1 to beats_per_bar)
-        for beat_count in range(1, beats_per_bar_value + 1):
+        for beat_count in range(beats_per_bar_value + 1):
             frame = self._create_beat_frame(beat_count, beats_per_bar_value)
             # Cache by beat count for direct access
             self._frame_cache[beat_count] = frame
-
-        # Create and cache frames for each timestamp
-        for timestamp, beat_count in beats.iterate_beats():
-            # Store the frame in our cache using timestamp as key
-            # Use the cached frame corresponding to the beat_count
-            self._frame_cache[timestamp] = self._frame_cache[beat_count]
 
     def _create_beat_frame(self, current_beat: int, beats_per_bar: int) -> np.ndarray:
         """
