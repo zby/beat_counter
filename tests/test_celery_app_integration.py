@@ -24,10 +24,10 @@ from beat_detection.core.beats import Beats, RawBeats # Import RawBeats
     scope="module"
 )  # Scope module cleans once before all tests in this file
 def temp_storage_integration(request):  # Add request fixture to get workspace path
-    """Uses a fixed directory tests/data/celery_test_storage, cleans it before tests, leaves it after."""
+    """Uses a fixed directory tests/output/celery_test_storage, cleans it before tests, leaves it after."""
     # Define the fixed path relative to the workspace root
     # Assuming the test runs from the workspace root where 'tests/' directory exists
-    base_test_dir = Path("tests/data/celery_test_storage")
+    base_test_dir = Path("tests/output/celery_test_storage")
     print(f"\nUsing fixed test storage directory: {base_test_dir.resolve()}")
 
     # Clean up before tests

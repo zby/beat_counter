@@ -175,11 +175,11 @@ cython_debug/
 
 ################3
 
-/tmp/
-/data/
-/web_app/uploads/
-/web_app/output/
-/web_app/config/config.json
-/web_app/config/users.json
+tmp/
+data/
+web_app/uploads/
+web_app/output/
+web_app/config/config.json
+web_app/config/users.json
 
-/tests/output/
+tests/output/

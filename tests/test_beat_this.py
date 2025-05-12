@@ -145,7 +145,7 @@ def main():
     """Run all tests directly when script is executed."""
     tests = [
         run_beat_this_detect_save_load_reconstruct,
-#        run_beat_this_polka_beats_per_bar
+        run_beat_this_polka_beats_per_bar
     ]
     
     failed_tests = []
