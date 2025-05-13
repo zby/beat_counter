@@ -59,6 +59,10 @@ def test_madmom_detect_save_load_reconstruct():
     assert np.all(raw_beats.timestamps <= raw_beats.clip_length), \
         f"Some timestamps exceed clip_length: max timestamp {np.max(raw_beats.timestamps)} > clip_length {raw_beats.clip_length}"
 
+    # Verify the last beat is in the latter part of the clip (past 9 seconds)
+    assert raw_beats.timestamps[-1] > 9.0, \
+        f"Last beat timestamp ({raw_beats.timestamps[-1]}) is too early - should be past 9 seconds"
+
     # Infer beats_per_bar and assert directly
     assert raw_beats.beat_counts.size > 0, "No beat counts detected by madmom, cannot infer beats_per_bar."
     inferred_beats_per_bar = int(np.max(raw_beats.beat_counts[raw_beats.beat_counts > 0]))

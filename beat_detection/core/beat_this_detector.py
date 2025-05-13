@@ -25,6 +25,9 @@ import beat_detection.utils.constants as constants
 
 from typing import Optional, List, Tuple, Union
 
+
+BEAT_THIS_FPS = 50
+
 class CustomBeatTrackingProcessor(Postprocessor):
     """Custom Postprocessor that uses DBN with customizable parameters."""
     
@@ -78,7 +81,7 @@ class BeatThisDetector(BaseBeatDetector):
         min_bpm: Optional[int] = None,
         max_bpm: Optional[int] = None,
         transition_lambda: float = 100,
-        fps: int = constants.FPS,
+        fps: int = BEAT_THIS_FPS,
     ) -> None:
         """Prepare the underlying Beat-This model once at construction time."""
 
@@ -126,8 +129,9 @@ class BeatThisDetector(BaseBeatDetector):
 
         # The underlying processor returns (beats, downbeats)
         beats, downbeats = self._file2beats(str(audio_path))
-        print(f"beats: {beats}")
-        print(f"downbeats: {downbeats}")
+        print(f"beats length: {len(beats)}")
+        print(f"last beat: {beats[-1]}")
+        print(f"downbeats length: {len(downbeats)}")
 
         timestamps, counts = self._beats_to_counts(beats, downbeats)
 

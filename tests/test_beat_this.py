@@ -88,6 +88,10 @@ def run_beat_this_detect_save_load_reconstruct():
     # Verify timestamps don't exceed clip_length
     assert np.all(raw_beats.timestamps <= raw_beats.clip_length), \
         f"Some timestamps exceed clip_length: max timestamp {np.max(raw_beats.timestamps)} > clip_length {raw_beats.clip_length}"
+    
+    # Verify the last beat is in the latter part of the clip (past 9 seconds)
+    assert raw_beats.timestamps[-1] > 9.0, \
+        f"Last beat timestamp ({raw_beats.timestamps[-1]}) is too early - should be past 9 seconds"
 
     # --- 3. Save RawBeats --- 
     raw_beats.save_to_file(output_beats_file)
