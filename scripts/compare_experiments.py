@@ -139,10 +139,18 @@ def _compare_directories(path1: Path, path2: Path, tolerance: float, summarize: 
         exp1_dir, exp2_dir, max_diff_sec=tolerance
     )
 
+    # Calculate identical files by finding common files that aren't in different_files
+    all_files1 = set(f.relative_to(exp1_dir) for f in exp1_dir.rglob("*.beats"))
+    all_files2 = set(f.relative_to(exp2_dir) for f in exp2_dir.rglob("*.beats"))
+    common_files = all_files1.intersection(all_files2)
+    different_file_paths = {Path(p) for p, _ in different_files}
+    identical_files = common_files - different_file_paths
+
     # --- Summary Section ----------------------------------------------------
     print(f"Files only in {exp1_dir.name}: {len(exp1_only)}")
     print(f"Files only in {exp2_dir.name}: {len(exp2_only)}")
     print(f"Files with differences: {len(different_files)}")
+    print(f"Identical files: {len(identical_files)}")
 
     # Early-exit behaviour for --summarize -----------------------------------
     if summarize and not verbose:
@@ -189,6 +197,7 @@ def _compare_directories(path1: Path, path2: Path, tolerance: float, summarize: 
             "only_in_path1": exp1_only,
             "only_in_path2": exp2_only,
             "different_files": [p for p, _ in different_files],
+            "identical_files_count": len(identical_files),
         }
         with open(output_path, "w") as fp:
             json.dump(results, fp, indent=2)
