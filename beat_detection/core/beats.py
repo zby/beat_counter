@@ -227,7 +227,6 @@ class Beats:
         # Specify max_start_time
         start_idx, end_idx, _ = self._find_longest_regular_sequence_static(
             self.beat_data,
-            tolerance_percent,
             self.beats_per_bar,
             median_interval,
             tolerance_interval_calculated,
@@ -421,7 +420,6 @@ class Beats:
     @staticmethod
     def _find_longest_regular_sequence_static(
         beat_data: np.ndarray,  # Changed from beat_list
-        tolerance_percent: float,
         beats_per_bar: int,
         # Pass median and tolerance to avoid recalculation
         median_interval: float,
@@ -443,8 +441,6 @@ class Beats:
         -----------
         beat_data : np.ndarray
             The array containing timestamps (col 0) and beat counts (col 1).
-        tolerance_percent : float
-            The tolerance percentage (used for error message).
         beats_per_bar : int
             The time signature's upper numeral.
         median_interval : float
@@ -549,7 +545,7 @@ class Beats:
         if best_start == -1:
             raise BeatCalculationError(
                 f"No regular sequence starting with beat count '1' within the first {max_start_time:.1f} seconds was found "
-                f"with the given tolerance ({tolerance_percent}%)."
+                f"with the given tolerance interval of ±{tolerance_interval:.3f} seconds around the median interval of {median_interval:.3f} seconds."
             )
 
         # Calculate irregularity percentage *within* the found best sequence (based on intervals)

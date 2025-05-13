@@ -455,13 +455,11 @@ def create_beat_data(timestamps: list[float], counts: list[int]) -> np.ndarray:
 def default_static_params():
     # Provides common median and tolerance for static tests
     median_interval = 0.5
-    tolerance_percent = 10.0
-    tolerance_interval = median_interval * (tolerance_percent / 100.0)
+    tolerance_interval = 0.05  # Fixed tolerance interval of 0.05 seconds
     beats_per_bar = 4
     max_start_time = 30.0 # Default max start time
     return {
         "median_interval": median_interval,
-        "tolerance_percent": tolerance_percent,
         "tolerance_interval": tolerance_interval,
         "beats_per_bar": beats_per_bar,
         "max_start_time": max_start_time,
