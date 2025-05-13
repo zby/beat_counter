@@ -206,11 +206,13 @@ def mock_extract_beats():
     # Define realistic sample beat data
     mock_timestamps = np.array([0.15, 0.55, 0.95, 1.35]) # Gives 150 BPM
     mock_counts = np.array([1, 2, 3, 4]) # Implies 4 beats per bar
+    mock_clip_length = 2.0  # 2 seconds for our test audio file
     
-    # Create a real RawBeats object
+    # Create a real RawBeats object with clip_length
     real_raw_beats_obj = RawBeats(
         timestamps=mock_timestamps,
-        beat_counts=mock_counts
+        beat_counts=mock_counts,
+        clip_length=mock_clip_length
     )
     
     # Create a real Beats object using default analysis params
@@ -225,6 +227,7 @@ def mock_extract_beats():
         # Verify inferred values match test expectations
         assert real_beats_obj.beats_per_bar == 4
         assert np.isclose(real_beats_obj.overall_stats.tempo_bpm, 150.0)
+        assert real_beats_obj.clip_length == mock_clip_length  # Verify clip_length is preserved
     except Exception as e:
         pytest.fail(f"Failed to create real Beats object in mock fixture: {e}")
 
@@ -360,9 +363,13 @@ def test_upload_valid_audio(
             f"WARN: Mock beats file {beats_file_path} did not exist, creating it explicitly for status check."
         )
         beats_file_path.parent.mkdir(parents=True, exist_ok=True)
-        beats_file_path.write_text(
-            "mock beat data\n0.05\n0.08"
-        )  # Content matching mock
+        # Create a minimal valid RawBeats JSON file with clip_length
+        beats_data = {
+            "timestamps": [0.15, 0.55, 0.95, 1.35],
+            "beat_counts": [1, 2, 3, 4],
+            "clip_length": 2.0
+        }
+        beats_file_path.write_text(json.dumps(beats_data))
     # --- End explicit check --- #
 
     status_response = test_client.get(f"/status/{file_id}")
@@ -372,6 +379,7 @@ def test_upload_valid_audio(
     assert status_data["status"] == ANALYZED
     assert status_data["beats_file_exists"] is True
     assert status_data["beat_stats"]["tempo_bpm"] == 150.0
+    assert status_data["beat_stats"]["clip_length"] == 2.0  # Verify clip_length is included in stats
 
 
 def test_upload_invalid_type(test_client: TestClient):

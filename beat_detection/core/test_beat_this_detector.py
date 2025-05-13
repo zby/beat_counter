@@ -55,11 +55,15 @@ def test_detect_returns_rawbeats(tmp_path: Path):
     downbeats = np.array([0.0])
 
     detector = _make_mock_detector(beats, downbeats)
-    raw = detector.detect_beats(audio_file)
+    
+    # Mock _get_audio_duration to return a fixed duration
+    with patch.object(detector, '_get_audio_duration', return_value=2.0):
+        raw = detector.detect_beats(audio_file)
 
     assert isinstance(raw, RawBeats)
-    np.testing.assert_array_equal(raw.timestamps, beats)
-    np.testing.assert_array_equal(raw.beat_counts, np.array([1, 2]))
+    assert np.array_equal(raw.timestamps, beats)
+    assert np.array_equal(raw.beat_counts, np.array([1, 2]))  # Inferred counts
+    assert raw.clip_length == 2.0  # Verify clip_length from mock
 
 
 def test_detect_file_not_found():

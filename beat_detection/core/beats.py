@@ -64,6 +64,7 @@ class Beats:
         int  # Index of the first beat considered part of the regular section
     )
     end_regular_beat_idx: int  # Index+1 of the last beat considered part of the regular section (exclusive index)
+    clip_length: float  # Total length of the audio clip in seconds
 
     def __init__(
         self,
@@ -93,6 +94,7 @@ class Beats:
         timestamps = raw_beats.timestamps
         input_beat_counts = raw_beats.beat_counts # Use original counts for inference
         num_beats = len(timestamps)
+        self.clip_length = raw_beats.clip_length  # Store clip_length from raw_beats
 
         # --- Infer beats_per_bar if not provided ---
         if beats_per_bar is None:
@@ -346,6 +348,7 @@ class Beats:
             "regular_stats": self.regular_stats.to_dict(),
             # "beat_list": [beat.to_dict() for beat in self.beat_list], # Old version
             "beat_list": beat_list_dict,  # Store the converted list
+            "clip_length": float(self.clip_length),
         }
 
     def get_info_at_time(self, t: float) -> Tuple[int, float, int]:
@@ -581,8 +584,10 @@ class Beats:
         bpb = getattr(self, "beats_per_bar", "?")
         start_idx = getattr(self, "start_regular_beat_idx", "?")
         end_idx = getattr(self, "end_regular_beat_idx", "?")
+        clip_len = getattr(self, "clip_length", "?")
         return (
-            f"<Beats beats={beats_len}, bpb={bpb}, regular_section={start_idx}-{end_idx} at {hex(id(self))}>"
+            f"<Beats beats={beats_len}, bpb={bpb}, regular_section={start_idx}-{end_idx}, "
+            f"clip_length={clip_len:.1f}s at {hex(id(self))}>"
         )
 
 
@@ -592,6 +597,7 @@ class RawBeats:
 
     timestamps: np.ndarray
     beat_counts: np.ndarray
+    clip_length: float  # Total length of the audio clip in seconds
 
     def __post_init__(self):
         # Basic validation moved from Beats.from_timestamps
@@ -602,6 +608,11 @@ class RawBeats:
         if len(self.timestamps) != len(self.beat_counts):
             raise ValueError(
                 f"Timestamp count ({len(self.timestamps)}) does not match beat count ({len(self.beat_counts)}).")
+        if not isinstance(self.clip_length, (int, float)) or self.clip_length <= 0:
+            raise ValueError(f"clip_length must be a positive number, got {self.clip_length}")
+        if len(self.timestamps) > 0 and self.timestamps[-1] > self.clip_length:
+            raise ValueError(
+                f"Last timestamp ({self.timestamps[-1]:.4f}) exceeds clip_length ({self.clip_length:.4f})")
         # Check for strictly increasing timestamps only if there's more than one
         if len(self.timestamps) > 1:
             intervals = np.diff(self.timestamps)
@@ -618,6 +629,7 @@ class RawBeats:
         data_to_save = {
             "timestamps": self.timestamps.tolist(),
             "beat_counts": self.beat_counts.astype(int).tolist(),
+            "clip_length": float(self.clip_length),
         }
         with path.open("w") as f:
             json.dump(data_to_save, f, indent=4)
@@ -639,6 +651,7 @@ class RawBeats:
         required_keys = {
             "timestamps",
             "beat_counts",
+            "clip_length",
         }
         missing_keys = required_keys - set(data.keys())
         if missing_keys:
@@ -647,6 +660,7 @@ class RawBeats:
 
         timestamps_list = data["timestamps"]
         beat_counts_list = data["beat_counts"]
+        clip_length = float(data["clip_length"])
 
         if len(timestamps_list) != len(beat_counts_list):
             raise ValueError(
@@ -660,5 +674,6 @@ class RawBeats:
         return cls(
             timestamps=timestamps,
             beat_counts=beat_counts,
+            clip_length=clip_length,
         )
 

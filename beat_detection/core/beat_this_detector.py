@@ -15,8 +15,9 @@ import torch
 from beat_this.inference import File2Beats
 from beat_this.model.postprocessor import Postprocessor
 from madmom.features.downbeats import DBNDownBeatTrackingProcessor
+from pydub import AudioSegment
 
-from beat_detection.core.beats import RawBeats
+from beat_detection.core.beats import RawBeats, BeatCalculationError
 from beat_detection.core.detector_protocol import BeatDetector  # Reuse the existing protocol
 
 import beat_detection.utils.constants as constants
@@ -106,9 +107,35 @@ class BeatThisDetector:
             transition_lambda=transition_lambda
         )
         
-        self._file2beats.frames2beats= custom_postprocessor
+        self._file2beats.frames2beats = custom_postprocessor
 
+    def _get_audio_duration(self, audio_path: str | Path) -> float:
+        """Get the duration of an audio file in seconds.
 
+        Parameters:
+        -----------
+        audio_path : str | Path
+            Path to the audio file.
+
+        Returns:
+        --------
+        float
+            Duration of the audio file in seconds.
+
+        Raises:
+        -------
+        BeatCalculationError
+            If the audio file cannot be loaded or processed.
+        """
+        try:
+            # Load the audio file using pydub
+            audio = AudioSegment.from_file(str(audio_path))
+            duration = len(audio) / 1000.0  # Convert milliseconds to seconds
+            if duration <= 0:
+                raise BeatCalculationError(f"Invalid audio duration: {duration} seconds")
+            return duration
+        except Exception as e:
+            raise BeatCalculationError(f"Failed to get audio duration: {e}") from e
 
     # ---------------------------------------------------------------------
     # Public API – part of the BeatDetector protocol
@@ -120,6 +147,9 @@ class BeatThisDetector:
         if not audio_path.is_file():
             raise FileNotFoundError(audio_path)
 
+        # Get audio duration for clip_length
+        clip_length = self._get_audio_duration(audio_path)
+
         # The underlying processor returns (beats, downbeats)
         beats, downbeats = self._file2beats(str(audio_path))
         print(f"beats: {beats}")
@@ -127,7 +157,11 @@ class BeatThisDetector:
 
         timestamps, counts = self._beats_to_counts(beats, downbeats)
 
-        return RawBeats(timestamps=timestamps, beat_counts=counts)
+        return RawBeats(
+            timestamps=timestamps, 
+            beat_counts=counts,
+            clip_length=clip_length
+        )
 
     # ------------------------------------------------------------------
     # Static helpers

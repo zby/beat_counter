@@ -404,6 +404,7 @@ async def get_file_status_route(
             "detected_beats_per_bar": metadata.get("detected_beats_per_bar"),
             "irregularity_percent": metadata.get("irregularity_percent"),
             "irregular_beats_count": metadata.get("irregular_beats_count"),
+            "clip_length": metadata.get("clip_length"),  # Add clip_length to beat_stats
             "status": beat_status,
             "error": None,
         }

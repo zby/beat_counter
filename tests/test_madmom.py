@@ -3,6 +3,7 @@ import os  # Import os for file operations
 from pathlib import Path
 from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.core.factory import get_beat_detector
+from beat_detection.core.beats import BeatCalculationError
 import numpy as np
 
 # Define the path to the test *fixtures* directory
@@ -12,6 +13,7 @@ TEST_AUDIO_FILE = TEST_FIXTURES_DIR / "Besito_a_Besito_10sec.mp3"
 # Define parameters used across tests
 TEST_TOLERANCE_PERCENT = 10.0
 TEST_MIN_MEASURES = 5
+EXPECTED_DURATION = 10.0  # Known duration of the test file
 
 # Define fixed output path for madmom results in the output directory
 MADMOM_OUTPUT_DIR = Path(__file__).parent / "output" / "madmom"
@@ -26,6 +28,7 @@ def test_madmom_detect_save_load_reconstruct():
     1. Detect beats from an audio file.
     2. Infer beats_per_bar.
     3. Save the simplified RawBeats to a file.
+    4. Verify clip_length is correctly detected and stored.
     (Allows exceptions to propagate naturally)
     """
     # --- Setup --- 
@@ -46,6 +49,16 @@ def test_madmom_detect_save_load_reconstruct():
     assert raw_beats is not None, "Simplified RawBeats object was not created by madmom."
     assert raw_beats.timestamps.shape[0] > 0, "No raw beats were detected by madmom."
 
+    # Verify clip_length
+    assert hasattr(raw_beats, 'clip_length'), "RawBeats object missing clip_length attribute"
+    assert raw_beats.clip_length > 0, f"Invalid clip_length: {raw_beats.clip_length}"
+    assert np.isclose(raw_beats.clip_length, EXPECTED_DURATION, rtol=0.01), \
+        f"Detected clip_length ({raw_beats.clip_length}) differs from expected duration ({EXPECTED_DURATION})"
+    
+    # Verify timestamps don't exceed clip_length
+    assert np.all(raw_beats.timestamps <= raw_beats.clip_length), \
+        f"Some timestamps exceed clip_length: max timestamp {np.max(raw_beats.timestamps)} > clip_length {raw_beats.clip_length}"
+
     # Infer beats_per_bar and assert directly
     assert raw_beats.beat_counts.size > 0, "No beat counts detected by madmom, cannot infer beats_per_bar."
     inferred_beats_per_bar = int(np.max(raw_beats.beat_counts[raw_beats.beat_counts > 0]))
@@ -62,6 +75,30 @@ def test_madmom_detect_save_load_reconstruct():
     assert (
         output_beats_file.stat().st_size > 0
     ), f"Raw beats file (madmom) {output_beats_file} is empty."
+
+    # --- 4. Load and verify clip_length is preserved ---
+    loaded_beats = raw_beats.__class__.load_from_file(output_beats_file)
+    assert np.isclose(loaded_beats.clip_length, EXPECTED_DURATION, rtol=0.01), \
+        f"Loaded clip_length ({loaded_beats.clip_length}) differs from expected duration ({EXPECTED_DURATION})"
+
+
+def test_madmom_invalid_audio_file():
+    """Test that appropriate errors are raised for invalid audio files."""
+    detector: BeatDetector = get_beat_detector("madmom")
+    
+    # Test non-existent file
+    with pytest.raises(FileNotFoundError):
+        detector.detect_beats("nonexistent.mp3")
+    
+    # Test empty file (create a temporary empty file)
+    empty_file = TEST_FIXTURES_DIR / "empty.mp3"
+    try:
+        empty_file.touch()
+        with pytest.raises(BeatCalculationError, match="Failed to get audio duration"):
+            detector.detect_beats(str(empty_file))
+    finally:
+        if empty_file.exists():
+            empty_file.unlink()
 
 
 # Keep the main block for potentially running tests directly (though pytest is preferred)

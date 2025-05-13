@@ -16,7 +16,8 @@ def create_test_raw_beats(num_beats=20, interval=0.5, beats_per_bar=4) -> RawBea
     timestamps = np.arange(num_beats) * interval
     # Simple downbeats every 'beats_per_bar' beats
     beat_counts = np.array([(i % beats_per_bar) + 1 for i in range(num_beats)])
-    return RawBeats(timestamps=timestamps, beat_counts=beat_counts)
+    clip_length = timestamps[-1] + interval  # Add one more interval to clip_length
+    return RawBeats(timestamps=timestamps, beat_counts=beat_counts, clip_length=clip_length)
 
 
 # Helper function to create a standard Beats object for testing using the new init
@@ -119,6 +120,7 @@ def test_beat_creation_properties():
     assert beats.end_regular_beat_idx == 20
     assert beats.regular_stats.total_beats == 20
     assert np.isclose(beats.regular_stats.median_interval, 0.5)
+    assert np.isclose(beats.clip_length, 10.0)  # 20 beats * 0.5s interval + 0.5s
 
     # Test properties
     assert isinstance(beats.beat_data, np.ndarray)
@@ -132,7 +134,7 @@ def test_beat_creation_properties():
     actual_downbeat_indices = np.where(beats.counts == 1)[0].tolist()
     assert actual_downbeat_indices == expected_downbeat_indices
     assert len(beats.irregular_beat_indices) == 0
-    assert isinstance(beats.irregular_beat_indices, np.ndarray) # Check type
+    assert isinstance(beats.irregular_beat_indices, np.ndarray)
 
 
 def test_beat_creation_invalid_bpb_override():
@@ -154,16 +156,14 @@ def test_beat_creation_invalid_bpb_override():
 
 def test_beat_creation_inference_fails_empty():
     """Test error raising when inferring bpb from empty RawBeats."""
-    raw_beats = RawBeats(np.array([]), np.array([]))
-    with pytest.raises(
-        BeatCalculationError, match="Cannot infer beats_per_bar: No beats provided"
-    ):
+    raw_beats = RawBeats(np.array([]), np.array([]), clip_length=3.0)
+    with pytest.raises(BeatCalculationError, match="Cannot infer beats_per_bar: No beats provided"):
         Beats(raw_beats=raw_beats, beats_per_bar=None)
 
 
 def test_beat_creation_inference_fails_all_zero_counts():
     """Test error raising when inferring bpb from only zero counts."""
-    raw_beats = RawBeats(np.array([0.5, 1.0, 1.5]), np.array([0, 0, 0]))
+    raw_beats = RawBeats(np.array([0.5, 1.0, 1.5]), np.array([0, 0, 0]), clip_length=2.0)
     with assert_raises(
         BeatCalculationError,
         match=r"Cannot infer beats_per_bar: No valid \(non-zero\) beat counts found",
@@ -174,14 +174,14 @@ def test_beat_creation_inference_fails_all_zero_counts():
 def test_beat_creation_inference_fails_invalid_max():
     """Test error raising when inferred bpb is <= 1."""
     # Max count is 1
-    raw_beats = RawBeats(np.array([0.5, 1.0, 1.5]), np.array([1, 1, 1]))
+    raw_beats = RawBeats(np.array([0.5, 1.0, 1.5]), np.array([1, 1, 1]), clip_length=2.0)
     with assert_raises(
         BeatCalculationError,
         match=r"Inferred beats_per_bar \(1\) is invalid. Must be > 1."
     ):
         Beats(raw_beats=raw_beats, beats_per_bar=None)
     # Max count is 0 (after filtering)
-    raw_beats_zero = RawBeats(np.array([0.5, 1.0, 1.5]), np.array([0, 0, -1]))
+    raw_beats_zero = RawBeats(np.array([0.5, 1.0, 1.5]), np.array([0, 0, -1]), clip_length=2.0)
     with assert_raises(
         BeatCalculationError,
         match=r"Cannot infer beats_per_bar: No valid \(non-zero\) beat counts found",
@@ -217,7 +217,7 @@ def test_irregular_beats_marked_as_zero_count():
     counts_input = np.array(
         [1, 2, 3, 4, 1, 2, 1, 2]
     ) # Counts are sequentially valid initially
-    raw_beats = RawBeats(timestamps=timestamps, beat_counts=counts_input)
+    raw_beats = RawBeats(timestamps=timestamps, beat_counts=counts_input, clip_length=4.5)
 
     # Expected regular sequence: 0-5 (len 6). min_measures=1 requires 4 beats.
     beats = Beats(raw_beats=raw_beats, beats_per_bar=beats_per_bar, tolerance_percent=10.0, min_measures=1)
@@ -249,7 +249,7 @@ def test_irregular_beats_marked_as_zero_count():
     timestamps_c = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
     beats_per_bar_c = 4
     beat_counts_irr_c = np.array([1, 2, 3, 4, 5, 1, 2]) # Invalid count 5 at index 4
-    raw_beats_c = RawBeats(timestamps=timestamps_c, beat_counts=beat_counts_irr_c)
+    raw_beats_c = RawBeats(timestamps=timestamps_c, beat_counts=beat_counts_irr_c, clip_length=3.5)
 
     beats_c = Beats(
         raw_beats=raw_beats_c,
@@ -298,7 +298,7 @@ def test_get_info_at_time():
     # Scenario 2: Enough beats overall, but longest regular sequence is too short
     timestamps = np.arange(10) * 0.5
     counts = np.array([1, 2, 3, 4, 1, 2, 0, 1, 2, 3]) # Regular sequence 0-5 (len 6)
-    raw_beats_irr = RawBeats(timestamps, counts)
+    raw_beats_irr = RawBeats(timestamps=timestamps, beat_counts=counts, clip_length=5.5)
     with pytest.raises(
         BeatCalculationError,
         match=r"Longest regular sequence found \(6 beats from index 0 to 5\) is shorter than required \(8 beats = 2 measures of 4/X time\)\.$"
@@ -306,11 +306,11 @@ def test_get_info_at_time():
         Beats(raw_beats=raw_beats_irr, beats_per_bar=4, min_measures=2)
 
     # Scenario 3: 0 or 1 beat (should still check min_measures)
-    raw_beats_0 = RawBeats(np.array([]), np.array([]))
+    raw_beats_0 = RawBeats(np.array([]), np.array([]), clip_length=3.0)
     with pytest.raises(BeatCalculationError, match=r"Insufficient number of beats \(0\) for analysis with beats_per_bar 4"):
         Beats(raw_beats=raw_beats_0, beats_per_bar=4, min_measures=1) # requires 4
 
-    raw_beats_1 = RawBeats(np.array([0.5]), np.array([1]))
+    raw_beats_1 = RawBeats(np.array([0.5]), np.array([1]), clip_length=1.0)
     with pytest.raises(BeatCalculationError, match=r"Insufficient number of beats \(1\) for analysis with beats_per_bar 4"):
         Beats(raw_beats=raw_beats_1, beats_per_bar=4, min_measures=1) # requires 4
 
@@ -321,7 +321,7 @@ def test_get_info_at_time():
 
     # Scenario 5: Strict increasing timestamp error (now caught by RawBeats)
     with pytest.raises(ValueError, match="Timestamps must be strictly increasing"):
-        RawBeats(np.array([0.0, 0.5, 0.5, 1.0]), np.array([1, 2, 3, 4]))
+        RawBeats(np.array([0.0, 0.5, 0.5, 1.0]), np.array([1, 2, 3, 4]), clip_length=1.5)
 
     # Scenario 6: Invalid tolerance
     raw_beats_valid = create_test_raw_beats(num_beats=8)
@@ -331,11 +331,11 @@ def test_get_info_at_time():
     # Scenario 7: Invalid beats_per_bar (tested separately above)
     # Scenario 8: Median interval <= 0
     with pytest.raises(ValueError, match="Timestamps must be strictly increasing"):
-        RawBeats(np.array([0.0, 0.0, 0.0, 0.0]), np.array([1, 2, 3, 4]))
+        RawBeats(np.array([0.0, 0.0, 0.0, 0.0]), np.array([1, 2, 3, 4]), clip_length=1.0)
 
     # Scenario 9: Mismatched lengths (now caught by RawBeats)
     with pytest.raises(ValueError, match=r"Timestamp count \(4\) does not match beat count \(3\)"):
-        RawBeats(np.array([0.0, 0.5, 1.0, 1.5]), np.array([1, 2, 3]))
+        RawBeats(np.array([0.0, 0.5, 1.0, 1.5]), np.array([1, 2, 3]), clip_length=2.0)
 
 
 def test_regular_section_detection_full():
@@ -352,7 +352,7 @@ def test_regular_section_detection_intro_outro():
         [0.1, 0.7, 1.2, 1.7, 2.2, 2.7, 3.2, 3.7, 4.2, 4.9] # Intro 0.1, Outro 4.9 (intervals 0.6, 0.7)
     ) # Median interval 0.5
     counts = np.array([0, 1, 2, 3, 4, 1, 2, 3, 4, 0])
-    raw_beats = RawBeats(timestamps, counts)
+    raw_beats = RawBeats(timestamps=timestamps, beat_counts=counts, clip_length=5.5)
     # Needs 5 measures of 4 beats = 20 beats! Helper adjusts num_beats
     # Let's use min_measures=1 (requires 4 beats)
     beats = Beats(raw_beats=raw_beats, beats_per_bar=4, min_measures=1)
@@ -368,7 +368,7 @@ def test_regular_section_detection_insufficient():
     """Test that BeatCalculationError is raised if no sequence meets min_measures."""
     timestamps = np.arange(7) * 0.5 # 7 beats
     counts = np.array([1, 2, 3, 4, 1, 2, 3])
-    raw_beats = RawBeats(timestamps, counts)
+    raw_beats = RawBeats(timestamps=timestamps, beat_counts=counts, clip_length=4.0)
 
     # Requires min_measures=2 * beats_per_bar=4 = 8 beats for regular section
     with pytest.raises(
@@ -383,7 +383,7 @@ def test_regular_section_with_count_irregularities():
     timestamps = np.arange(12) * 0.5
     # Counts have invalid values (0, 5) breaking regularity
     counts = np.array([1, 2, 3, 4, 1, 0, 3, 4, 1, 2, 5, 4])
-    raw_beats = RawBeats(timestamps, counts)
+    raw_beats = RawBeats(timestamps=timestamps, beat_counts=counts, clip_length=6.5)
 
     # Longest sequences: 0-4 (len 5), 8-9 (len 2). Need min 1 measure = 4 beats.
     beats = Beats(raw_beats=raw_beats, beats_per_bar=4, min_measures=1)
@@ -407,7 +407,7 @@ def test_regular_sequence_starts_from_downbeat():
     timestamps = np.arange(10) * 0.5
     # Sequence starts with 2, then becomes regular from index 1 (count 1)
     counts = np.array([2, 1, 2, 3, 4, 1, 2, 3, 4, 1])
-    raw_beats = RawBeats(timestamps, counts)
+    raw_beats = RawBeats(timestamps=timestamps, beat_counts=counts, clip_length=5.5)
     # Requires 1 measure = 4 beats
     beats = Beats(raw_beats=raw_beats, beats_per_bar=4, min_measures=1)
 
@@ -418,7 +418,7 @@ def test_regular_sequence_starts_from_downbeat():
 
     # Scenario: No downbeat found at all within a potential segment
     counts_no_db = np.array([2, 3, 4, 2, 3, 4, 2, 3, 4]) # Regular intervals, counts > 1
-    raw_beats_no_db = RawBeats(np.arange(9) * 0.5, counts_no_db)
+    raw_beats_no_db = RawBeats(np.arange(9) * 0.5, counts_no_db, clip_length=5.0)
     with pytest.raises(BeatCalculationError, match="No regular sequence starting with beat count '1'"):
         Beats(raw_beats=raw_beats_no_db, beats_per_bar=4, min_measures=1)
 
@@ -435,7 +435,7 @@ def test_regular_sequence_starts_from_downbeat():
     counts_late = np.array([(i % 4) + 1 for i in range(20)])
     counts_late[0] = 1 # Ensure it starts with 1
     assert timestamps_late[0] > 30.0
-    raw_beats_late = RawBeats(timestamps_late, counts_late)
+    raw_beats_late = RawBeats(timestamps_late, counts_late, clip_length=timestamps_late[-1] + 0.5)
     with pytest.raises(BeatCalculationError, match="No regular sequence starting with beat count '1' within the first 30.0 seconds"):
          Beats(raw_beats=raw_beats_late, beats_per_bar=4, min_measures=1, max_start_time=30.0)
 
@@ -629,3 +629,52 @@ def test_find_longest_regular_sequence_max_start_time(default_static_params):
 
 # Removed tests for _find_longest_regular_sequence preferring shorter sequence < 30s,
 # as that logic is now implicitly handled by the single pass finding the first longest valid one.
+
+def test_beat_creation_invalid_clip_length():
+    """Test error raising for invalid clip_length in RawBeats."""
+    # Create timestamps that exceed clip_length
+    timestamps = np.array([0.5, 1.0, 1.5, 2.0])
+    counts = np.array([1, 2, 3, 4])
+    with pytest.raises(ValueError, match="Last timestamp.*exceeds clip_length"):
+        RawBeats(timestamps=timestamps, beat_counts=counts, clip_length=1.5)
+
+def test_beat_creation_negative_clip_length():
+    """Test error raising for negative clip_length in RawBeats."""
+    timestamps = np.array([0.5, 1.0])
+    counts = np.array([1, 2])
+    with pytest.raises(ValueError, match="clip_length must be a positive number"):
+        RawBeats(timestamps=timestamps, beat_counts=counts, clip_length=-1.0)
+
+def test_beat_creation_zero_clip_length():
+    """Test error raising for zero clip_length in RawBeats."""
+    timestamps = np.array([0.5, 1.0])
+    counts = np.array([1, 2])
+    with pytest.raises(ValueError, match="clip_length must be a positive number"):
+        RawBeats(timestamps=timestamps, beat_counts=counts, clip_length=0.0)
+
+def test_beat_creation_empty_with_clip_length():
+    """Test creating Beats with empty RawBeats but valid clip_length."""
+    raw_beats = RawBeats(np.array([]), np.array([]), clip_length=3.0)
+    with pytest.raises(BeatCalculationError, match="Cannot infer beats_per_bar: No beats provided"):
+        Beats(raw_beats=raw_beats, beats_per_bar=None)
+
+def test_beat_creation_single_beat_with_clip_length():
+    """Test creating Beats with single beat RawBeats and valid clip_length."""
+    raw_beats = RawBeats(np.array([0.5]), np.array([1]), clip_length=1.0)
+    with pytest.raises(BeatCalculationError, match="Insufficient number of beats.*for analysis"):
+        Beats(raw_beats=raw_beats, beats_per_bar=4, min_measures=1)
+
+def test_beat_creation_clip_length_preserved():
+    """Test that clip_length is preserved from RawBeats to Beats."""
+    raw_beats = create_test_raw_beats(num_beats=8, interval=0.5)
+    expected_clip_length = raw_beats.clip_length
+    beats = Beats(raw_beats=raw_beats, beats_per_bar=4, min_measures=1)
+    assert np.isclose(beats.clip_length, expected_clip_length)
+
+def test_beat_to_dict_includes_clip_length():
+    """Test that to_dict includes clip_length in serialization."""
+    beats = create_test_beats(num_beats=8, interval=0.5)
+    data = beats.to_dict()
+    assert "clip_length" in data
+    assert np.isclose(data["clip_length"], beats.clip_length)
+    assert isinstance(data["clip_length"], float)

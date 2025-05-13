@@ -24,6 +24,10 @@ TEST_FIXTURES_DIR = Path(__file__).parent / "fixtures"
 TEST_AUDIO_FILE = TEST_FIXTURES_DIR / "Besito_a_Besito_10sec.mp3"
 POLKA_AUDIO_FILE = TEST_FIXTURES_DIR / "bavarian-beer-fest-20sec.mp3"
 
+# Known durations of test files
+TEST_AUDIO_DURATION = 10.0  # Besito_a_Besito_10sec.mp3
+POLKA_AUDIO_DURATION = 20.0  # bavarian-beer-fest-20sec.mp3
+
 TOLERANCE_PERCENT = 10.0
 MIN_MEASURES = 5
 
@@ -75,12 +79,27 @@ def run_beat_this_detect_save_load_reconstruct():
     assert raw_beats.beat_counts.size > 0, "No beat counts detected by beat_this, cannot infer beats_per_bar."
     assert int(np.max(raw_beats.beat_counts)) == 4, "Inferred beats_per_bar by beat_this is invalid."
 
+    # Verify clip_length
+    assert hasattr(raw_beats, 'clip_length'), "RawBeats object missing clip_length attribute"
+    assert raw_beats.clip_length > 0, f"Invalid clip_length: {raw_beats.clip_length}"
+    assert np.isclose(raw_beats.clip_length, TEST_AUDIO_DURATION, rtol=0.01), \
+        f"Detected clip_length ({raw_beats.clip_length}) differs from expected duration ({TEST_AUDIO_DURATION})"
+    
+    # Verify timestamps don't exceed clip_length
+    assert np.all(raw_beats.timestamps <= raw_beats.clip_length), \
+        f"Some timestamps exceed clip_length: max timestamp {np.max(raw_beats.timestamps)} > clip_length {raw_beats.clip_length}"
+
     # --- 3. Save RawBeats --- 
     raw_beats.save_to_file(output_beats_file)
     print(f"[Test beat_this] Saved simplified raw beats to fixed path: {output_beats_file}")
     
     assert output_beats_file.is_file(), f"Raw beats file (beat_this) was not created at {output_beats_file}"
     assert output_beats_file.stat().st_size > 0, f"Raw beats file (beat_this) {output_beats_file} is empty."
+
+    # --- 4. Load and verify clip_length is preserved ---
+    loaded_beats = raw_beats.__class__.load_from_file(output_beats_file)
+    assert np.isclose(loaded_beats.clip_length, TEST_AUDIO_DURATION, rtol=0.01), \
+        f"Loaded clip_length ({loaded_beats.clip_length}) differs from expected duration ({TEST_AUDIO_DURATION})"
     
     print("✓ beat_this detect, save, load, reconstruct test passed")
 
@@ -129,6 +148,14 @@ def run_beat_this_polka_beats_per_bar():
     assert isinstance(beats, Beats), f"Expected beats to be of type Beats, got {type(beats).__name__}"
     assert beats.beats_per_bar == 2, f"Expected beats_per_bar to be 2, got {beats.beats_per_bar}"
     assert beats.overall_stats.total_beats > 20, f"Expected more than 40 beats, got {beats.overall_stats.total_beats}"
+    
+    # Verify clip_length
+    assert np.isclose(beats.clip_length, POLKA_AUDIO_DURATION, rtol=0.01), \
+        f"Detected clip_length ({beats.clip_length}) differs from expected duration ({POLKA_AUDIO_DURATION})"
+    
+    # Verify timestamps don't exceed clip_length
+    assert np.all(beats.timestamps <= beats.clip_length), \
+        f"Some timestamps exceed clip_length: max timestamp {np.max(beats.timestamps)} > clip_length {beats.clip_length}"
     
     print("✓ beat_this polka beats_per_bar test passed")
 

@@ -168,6 +168,7 @@ def _perform_beat_detection(
             "detected_tempo_bpm": beats_obj.overall_stats.tempo_bpm,
             "irregularity_percent": beats_obj.overall_stats.irregularity_percent,
             "irregular_beats_count": len(beats_obj.irregular_beat_indices),
+            "clip_length": beats_obj.clip_length,  # Add clip_length to metadata
             "beats_file": output_path_str, # Use the path where extract_beats saved the file
             "analysis_params": {
                 "beats_per_bar_override": beats_per_bar,

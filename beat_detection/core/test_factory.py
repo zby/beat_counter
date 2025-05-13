@@ -63,7 +63,7 @@ def mock_audio_file(tmp_path):
     return str(audio_path)
 
 # Helper function to create test RawBeats objects
-def create_test_raw_beats(timestamps=None, beat_counts=None) -> RawBeats:
+def create_test_raw_beats(timestamps=None, beat_counts=None, clip_length=None) -> RawBeats:
     """Creates a RawBeats object with provided data or default test data."""
     if timestamps is None or beat_counts is None:
         # Create a sequence of 20 beats with regular 0.5s intervals
@@ -77,10 +77,15 @@ def create_test_raw_beats(timestamps=None, beat_counts=None) -> RawBeats:
     else:
         timestamps = np.array(timestamps, dtype=float)
         beat_counts = np.array(beat_counts, dtype=int)
+    
+    # Default clip_length to last timestamp + interval if not provided
+    if clip_length is None:
+        clip_length = float(timestamps[-1] + 0.5) if len(timestamps) > 0 else 10.0
         
     return RawBeats(
         timestamps=timestamps,
-        beat_counts=beat_counts
+        beat_counts=beat_counts,
+        clip_length=clip_length
     )
 
 @pytest.fixture
@@ -121,6 +126,7 @@ def test_extract_beats_default_output(mock_extract_dependencies, tmp_path, mock_
     assert isinstance(result, Beats)
     assert result.beats_per_bar == 4  # From our test data
     assert result.min_measures == 1   # From our beats_args
+    assert result.clip_length == raw_beats.clip_length  # Verify clip_length is preserved
 
     # Assert that save_to_file was called on the RawBeats object
     mock_save_to_file.assert_called_once()
@@ -157,6 +163,7 @@ def test_extract_beats_specified_output(mock_extract_dependencies, tmp_path, moc
     assert isinstance(result, Beats)
     assert result.tolerance_percent == 5.0  # From beats_arguments
     assert result.min_measures == 1         # From beats_arguments
+    assert result.clip_length == raw_beats.clip_length  # Verify clip_length is preserved
 
     # Assert save_to_file called with specified path
     mock_save_to_file.assert_called_once_with(str(specified_output_path))
@@ -188,6 +195,7 @@ def test_extract_beats_passes_kwargs_to_detector(mock_extract_dependencies, tmp_
     # Assertions
     assert isinstance(result, Beats)
     assert result.min_measures == 1  # From beats_args
+    assert result.clip_length == raw_beats.clip_length  # Verify clip_length is preserved
 
     # Assert save_to_file was called
     mock_save_to_file.assert_called_once()

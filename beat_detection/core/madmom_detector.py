@@ -6,6 +6,7 @@ import numpy as np
 import warnings
 from pathlib import Path
 from typing import Optional, List, Tuple, Union
+from pydub import AudioSegment
 
 from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatProcessor
 
@@ -106,6 +107,34 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
         self.downbeat_tracker = DBNDownBeatTrackingProcessor(**dbn_kwargs)
 
 
+    def _get_audio_duration(self, audio_path: str | Path) -> float:
+        """Get the duration of an audio file in seconds.
+
+        Parameters:
+        -----------
+        audio_path : str | Path
+            Path to the audio file.
+
+        Returns:
+        --------
+        float
+            Duration of the audio file in seconds.
+
+        Raises:
+        -------
+        BeatCalculationError
+            If the audio file cannot be loaded or processed.
+        """
+        try:
+            # Load the audio file using pydub
+            audio = AudioSegment.from_file(str(audio_path))
+            duration = len(audio) / 1000.0  # Convert milliseconds to seconds
+            if duration <= 0:
+                raise BeatCalculationError(f"Invalid audio duration: {duration} seconds")
+            return duration
+        except Exception as e:
+            raise BeatCalculationError(f"Failed to get audio duration: {e}") from e
+
     def detect_beats(self, audio_path: str | Path) -> RawBeats:
         """
         Detects beats in an audio file using Madmom.
@@ -133,6 +162,9 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
         if not audio_path.is_file():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        # Get audio duration for clip_length
+        clip_length = self._get_audio_duration(audio_path)
+
         # Detect downbeats, getting only raw data (no bpb calculation here)
         raw_beats_with_counts = self._detect_downbeats(str(audio_path)) # Pass string path
 
@@ -144,11 +176,12 @@ class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @run
         beat_timestamps = raw_beats_with_counts[:, 0]
         beat_counts = raw_beats_with_counts[:, 1].astype(int)
 
-        # Return simplified RawBeats object (timestamps and counts only)
+        # Return RawBeats object with clip_length from audio duration
         # Validation happens within RawBeats __post_init__
         return RawBeats(
             timestamps=beat_timestamps,
             beat_counts=beat_counts,
+            clip_length=clip_length,
         )
 
     def _detect_downbeats(self, audio_file_path: str) -> np.ndarray:
