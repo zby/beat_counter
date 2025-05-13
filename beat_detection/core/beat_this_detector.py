@@ -18,7 +18,8 @@ from madmom.features.downbeats import DBNDownBeatTrackingProcessor
 from pydub import AudioSegment
 
 from beat_detection.core.beats import RawBeats, BeatCalculationError
-from beat_detection.core.detector_protocol import BeatDetector  # Reuse the existing protocol
+from beat_detection.core.detector_protocol import BeatDetector
+from beat_detection.core.base_detector import BaseBeatDetector
 
 import beat_detection.utils.constants as constants
 
@@ -64,7 +65,7 @@ class CustomBeatTrackingProcessor(Postprocessor):
         self.dbn = DBNDownBeatTrackingProcessor(**dbn_args)
 
 
-class BeatThisDetector:
+class BeatThisDetector(BaseBeatDetector):
     """Very thin wrapper around Beat-This! (`File2Beats`)."""
 
     def __init__(

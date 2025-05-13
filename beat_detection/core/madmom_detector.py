@@ -11,11 +11,12 @@ from pydub import AudioSegment
 from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatProcessor
 
 from beat_detection.core.beats import RawBeats, BeatCalculationError
-from beat_detection.core.detector_protocol import BeatDetector # Import the protocol
+from beat_detection.core.detector_protocol import BeatDetector
+from beat_detection.core.base_detector import BaseBeatDetector
 
 import beat_detection.utils.constants as constants
 
-class MadmomBeatDetector: # No need to explicitly inherit Protocol if using @runtime_checkable
+class MadmomBeatDetector(BaseBeatDetector): # Inherit from BaseBeatDetector
     """Detect beats and downbeats in audio files using Madmom."""
 
     def __init__(
