@@ -355,12 +355,17 @@ class Beats:
         Get count, time since last beat, and beat index at time t.
 
         Returns a tuple of (count, time_since_beat, beat_idx) where:
-        - count: The beat count (0 if before first beat, irregular, or outside regular section)
-        - time_since_beat: Time in seconds since the last beat (0.0 if before first beat)
-        - beat_idx: Index of the beat in the beat_data array (-1 if before first beat)
+        - count: The beat count (0 if before first beat, irregular, outside regular section, or too far past last beat)
+        - time_since_beat: Time in seconds since the last beat (0.0 if before first beat or too far past last beat)
+        - beat_idx: Index of the beat in the beat_data array (-1 if before first beat, -1 if too far past last beat)
         """
         if self.beat_data.shape[0] == 0 or t < self.beat_data[0, 0]:
             return 0, 0.0, -1  # Before first beat or no beats
+
+        # Check if we're too far past the last beat
+        last_beat_time = self.beat_data[-1, 0]
+        if t > last_beat_time + self.tolerance_interval:
+            return 0, 0.0, -1  # Too far past last beat
 
         timestamps = self.beat_data[:, 0]
         # Find the index of the beat *before* or *at* time t

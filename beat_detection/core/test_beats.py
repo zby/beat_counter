@@ -337,6 +337,29 @@ def test_get_info_at_time():
     with pytest.raises(ValueError, match=r"Timestamp count \(4\) does not match beat count \(3\)"):
         RawBeats(np.array([0.0, 0.5, 1.0, 1.5]), np.array([1, 2, 3]), clip_length=2.0)
 
+    # Scenario 10: Time past last beat tolerance
+    # Create beats with 8 beats at 0.5s intervals (last beat at 3.5s)
+    raw_beats_tolerance = create_test_raw_beats(num_beats=8, interval=0.5)
+    beats_tolerance = Beats(raw_beats=raw_beats_tolerance, beats_per_bar=4, min_measures=2, tolerance_percent=10.0)
+    
+    # Calculate tolerance interval (0.5s * 10% = 0.05s)
+    tolerance_interval = 0.5 * (10.0 / 100.0)
+    last_beat_time = 3.5  # Last beat at 3.5s
+    
+    # Test just before tolerance (should return last beat)
+    time_before_tolerance = last_beat_time + tolerance_interval - 0.01
+    count_before, time_since_before, idx_before = beats_tolerance.get_info_at_time(time_before_tolerance)
+    assert count_before == 4  # Last beat count
+    assert np.isclose(time_since_before, tolerance_interval - 0.01)
+    assert idx_before == 7  # Last beat index
+    
+    # Test just past tolerance (should return 0)
+    time_after_tolerance = last_beat_time + tolerance_interval + 0.01
+    count_after, time_since_after, idx_after = beats_tolerance.get_info_at_time(time_after_tolerance)
+    assert count_after == 0  # Should return 0
+    assert np.isclose(time_since_after, 0.0)  # Should return 0.0 for time since
+    assert idx_after == -1  # Should return -1 for index
+
 
 def test_regular_section_detection_full():
     """Regular section covers the entire input."""
