@@ -29,13 +29,14 @@ jobs:
         source .venv/bin/activate
         echo "======== Cleaning uv cache ========"
         uv cache clean
-        echo "======== Installing NumPy and Cython explicitly ========"
-        uv pip install numpy cython
+        echo "======== Installing NumPy and Cython explicitly (no cache) ========"
+        uv pip install --no-cache numpy cython
         echo "======== Verifying NumPy and Cython installation ========"
         uv pip list | grep -E "numpy|Cython" || echo "NumPy or Cython not found after explicit install"
-        echo "======== Installing project dependencies (with verbosity) ========"
-        uv pip install --verbose ".[dev]"
+        echo "======== Installing project dependencies (with verbosity, no cache) ========"
+        uv pip install --verbose --no-cache ".[dev]"
         # Print installed packages to verify dependencies
+        echo "======== Listing all installed packages ========"
         uv pip list
         
     - name: Install system dependencies
