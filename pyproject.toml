@@ -38,11 +38,6 @@ dependencies = [
     "pyyaml>=6.0.2",
     "pydub>=0.25.1",
     "httpx>=0.24.0",
-    
-]
-
-[project.optional-dependencies]
-dev = [
     "pytest>=6.0.0",
     "pytest-asyncio>=0.21.0",
     "black>=21.5b2",
@@ -50,9 +45,7 @@ dev = [
     "isort>=5.9.1",
     "pre-commit>=3.3.3",
     "httpx>=0.24.0",
-]
-beat_this_algo = [
-    "beat_this @ git+https://github.com/CPJKU/beat_this@main#egg=beat_this"
+    "beat_this @ git+https://github.com/CPJKU/beat_this@main#egg=beat_this",
 ]
 
 [project.scripts]
