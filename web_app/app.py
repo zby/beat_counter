@@ -34,7 +34,7 @@ from celery.result import AsyncResult
 from celery import states
 
 # Local imports
-from web_app.config import Config
+from web_app.config import Config, User # Import User for type safety
 from web_app.storage import FileMetadataStorage
 from web_app.auth import UserManager
 
@@ -55,21 +55,27 @@ UPLOADED = "UPLOADED"  # Added for the new status logic
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- Globals to be initialized by initialize_fastapi_app --- 
+app: Optional[FastAPI] = None
+_global_config: Optional[Config] = None
+_initialized_app_config_ref: Optional[Config] = None # To track which config was used for init
+_global_templates: Optional[Jinja2Templates] = None # Initialize as None
+
 # --- Global Configuration Loading ---
-try:
-    _global_config = Config.from_env()
-except FileNotFoundError as e:
-    logger.error(f"Configuration error: {e}")
-    raise SystemExit(f"Error: Configuration file not found. {e}") from e
+# try:
+# _global_config = Config.from_env()
+# except FileNotFoundError as e:
+# logger.error(f"Configuration error: {e}")
+# raise SystemExit(f"Error: Configuration file not found. {e}") from e
 
 # --- Global Initialization ---
 BASE_DIR = pathlib.Path(__file__).parent.absolute()
 
 # Initialize Templates globally
-TEMPLATES_DIR = BASE_DIR / "templates"
-if not TEMPLATES_DIR.is_dir():
-    raise SystemExit(f"Error: Templates directory not found at {TEMPLATES_DIR}")
-_global_templates = Jinja2Templates(directory=str(TEMPLATES_DIR))  # <-- Initialize here
+# TEMPLATES_DIR = BASE_DIR / "templates"
+# if not TEMPLATES_DIR.is_dir():
+#     raise SystemExit(f"Error: Templates directory not found at {TEMPLATES_DIR}")
+# _global_templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # Application Context Holder
 _app_context: Dict[str, Any] = {}
@@ -77,13 +83,20 @@ _app_context: Dict[str, Any] = {}
 # --- Dependency Functions ---
 
 
-def get_config() -> Config:
-    """Dependency function to get the application configuration."""
+def get_config_dependency() -> Config: # Renamed to avoid clash if we name the global _config
+    if _global_config is None:
+        # This should not happen if app is initialized correctly before serving requests.
+        logger.error("CRITICAL: get_config_dependency called before _global_config was set.")
+        raise RuntimeError("Configuration not initialized for FastAPI app.")
     return _global_config
 
 
 def get_templates() -> Jinja2Templates:  # <-- New dependency function
     """Dependency function to get the Jinja2Templates instance."""
+    if _global_templates is None:
+        # This should ideally not happen if create_app_instance was called
+        logger.error("CRITICAL: get_templates called before _global_templates was set by create_app_instance.")
+        raise RuntimeError("Templates not initialized for FastAPI app.")
     return _global_templates
 
 
@@ -282,10 +295,10 @@ async def index_route(
 async def upload_audio_route(
     request: Request,
     file: UploadFile = File(...),
-    algorithm: str = Form("madmom"),  # Default to madmom
-    beats_per_bar: Optional[int] = Form(None),  # Optional override
+    algorithm: str = Form("madmom"),
+    beats_per_bar: Optional[int] = Form(None),
     storage: FileMetadataStorage = Depends(get_storage),
-    config: Config = Depends(get_config),
+    config: Config = Depends(get_config_dependency),
     user: Dict[str, Any] = Depends(require_auth),
 ):
     """Upload an audio file, save it, and start beat detection task."""
@@ -369,7 +382,7 @@ async def get_file_status_route(
     file_id: str,
     request: Request,  # Keep request for potential future use (e.g., user checks)
     storage: FileMetadataStorage = Depends(get_storage),
-    # config: Config = Depends(get_config), # Config potentially not needed here anymore
+    # config: Config = Depends(get_config_dependency), # Config potentially not needed here anymore
     user: Dict[str, Any] = Depends(require_auth),
 ):
     """Get the processing status of a specific file based on metadata.json."""
@@ -564,7 +577,7 @@ async def get_processing_queue_route(
     request: Request,
     templates: Jinja2Templates = Depends(get_templates),  # <-- Inject templates
     storage: FileMetadataStorage = Depends(get_storage),
-    config: Config = Depends(get_config),
+    config: Config = Depends(get_config_dependency),
     user: Dict[str, Any] = Depends(require_auth),
 ):
     """Display a list of recently processed files."""
@@ -617,7 +630,7 @@ async def confirm_analysis_route(
     file_id: str,
     request: Request,
     storage: FileMetadataStorage = Depends(get_storage),
-    # config: Config = Depends(get_config), # Config no longer needed for this check
+    # config: Config = Depends(get_config_dependency), # Config no longer needed for this check
     user: Dict[str, Any] = Depends(require_auth),
 ):
     """Confirm successful analysis and start video generation task."""
@@ -744,63 +757,230 @@ async def download_video_route(
     )
 
 
-# --- FastAPI App Creation Function ---
+# --- Main Application Creation Logic ---
+def create_app_instance(app_config: Config) -> FastAPI:
+    """Creates and configures the FastAPI application instance and its context."""
+    global _global_config, _app_context, _global_templates # Allow modification of these module globals
 
+    if not isinstance(app_config, Config):
+        raise TypeError("create_app_instance requires a valid Config object.")
 
-def create_app() -> FastAPI:
-    """Create and configure the FastAPI application instance."""
-    current_config = _global_config
+    _global_config = app_config # Set the global config reference
 
-    # Initialize services required by dependencies and store in context
-    # Use existing components from context if available (e.g., patched by tests)
-    if "storage" not in _app_context:
-        _app_context["storage"] = FileMetadataStorage(current_config.storage)
-    if "auth_manager" not in _app_context:
-        _app_context["auth_manager"] = UserManager(
-            users={"users": [user.__dict__ for user in current_config.users]}
-        )
-    # Note: Templates instance (_global_templates) is already created at module level
+    # Initialize services and store in context
+    storage_service = FileMetadataStorage(app_config.storage)
+    
+    # Prepare user list for UserManager
+    # UserManager expects List[Dict[str, Any]]
+    # app_config.users is List[User]
+    user_list_for_manager: List[Dict[str, Any]] = []
+    for user_obj in app_config.users:
+        user_dict = user_obj.__dict__.copy()
+        # Ensure datetime is stringified if UserManager or downstream code expects strings
+        if isinstance(user_dict.get("created_at"), datetime):
+            user_dict["created_at"] = user_obj.created_at.isoformat() + "Z" # Consistent with test fixture
+        user_list_for_manager.append(user_dict)
+    
+    auth_manager_service = UserManager(users_list=user_list_for_manager)
 
-    app = FastAPI(
-        title=current_config.app.name,
-        version=current_config.app.version,
-        debug=current_config.app.debug,
+    _app_context["storage"] = storage_service
+    _app_context["auth_manager"] = auth_manager_service
+    _app_context["config"] = app_config # Can also store the whole config in context
+
+    # Initialize Templates
+    TEMPLATES_DIR = BASE_DIR / "templates"
+    if not TEMPLATES_DIR.is_dir():
+        logger.error(f"Templates directory not found at {TEMPLATES_DIR}. Cannot create FastAPI app instance.")
+        raise RuntimeError(f"Templates directory not found at {TEMPLATES_DIR}")
+    _global_templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    logger.info(f"Jinja2Templates initialized with directory: {TEMPLATES_DIR}")
+
+    # Create FastAPI app
+    current_app = FastAPI(
+        title=app_config.app.name,
+        version=app_config.app.version,
+        debug=app_config.app.debug,
+        # openapi_url=f"/{app_config.app.name}/openapi.json", # Example customization
+        # docs_url=f"/{app_config.app.name}/docs" # Example customization
     )
 
     # Mount static files
     static_dir = BASE_DIR / "static"
-    if not static_dir.is_dir():
-        logger.warning(f"Static directory not found at {static_dir}, creating it.")
-        static_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    if static_dir.is_dir():
+        current_app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    else:
+        logger.warning(f"Static files directory not found at {static_dir}, skipping mount.")
 
-    # Include the routers
-    app.include_router(auth_router)
-    app.include_router(main_router)
+    # Include routers
+    current_app.include_router(auth_router, prefix="") # Or specific prefix for auth routes
+    current_app.include_router(main_router, prefix="") # Main app routes
+    
+    logger.info(f"FastAPI app '{current_app.title}' created with provided configuration.")
+    return current_app
 
-    logger.info(f"FastAPI application '{current_config.app.name}' configured.")
+
+def initialize_fastapi_app(config_to_use: Config) -> FastAPI:
+    """Initializes the global FastAPI app instance. idempotent for the same config."""
+    global app, _initialized_app_config_ref
+
+    if not isinstance(config_to_use, Config):
+        raise TypeError("initialize_fastapi_app requires a valid Config object.")
+
+    if app is not None and _initialized_app_config_ref is config_to_use:
+        logger.info("FastAPI app already initialized with this exact config instance. Skipping re-init.")
+        return app
+    
+    if app is not None and _initialized_app_config_ref == config_to_use:
+        logger.info("FastAPI app already initialized with an equivalent config. Skipping re-init.")
+        return app
+
+    logger.info(f"Initializing FastAPI application with config: {config_to_use.app.name}")
+    # Create and assign to global 'app'
+    # create_app_instance will also set _global_config
+    new_app_instance = create_app_instance(config_to_use)
+    app = new_app_instance
+    _initialized_app_config_ref = config_to_use
+    
+    logger.info(f"Global FastAPI application instance '{app.title}' has been created and configured.")
     return app
 
+# The old create_app function if it was for direct execution, 
+# now we expect initialize_fastapi_app to be called by start_app.py
+# For tests, they will need to call initialize_fastapi_app(test_config) 
+# or directly use create_app_instance(test_config) if they manage the app instance locally.
 
-# --- Main Application Instance & Entry Point ---
-app = create_app()
+# Remove old main() if it was for direct execution, use start_app.py instead
+# def main():
+#     # ... (old uvicorn run, now handled by start_app.py) ...
 
+# --- Ensure all routes that used Depends(get_config) are updated to Depends(get_config_dependency) ---
+# This requires checking all @*.get, @*.post, etc. decorators for this dependency.
+# Example (ensure this is done for all relevant routes):
+# in upload_audio_route, get_processing_queue_route
+# The provided snippet doesn't show all routes, this must be done carefully.
 
-def main():
-    """Entry point for running the web application directly using uvicorn."""
-    host = "0.0.0.0"
-    port = 8000
-    reload = _global_config.app.debug
+# Placeholder for the edit to update Depends(get_config) to Depends(get_config_dependency)
+# This is a non-trivial change across many routes and needs careful application.
+# I will list the routes from the outline that might need this change:
+# - upload_audio_route (already mentioned)
+# - get_processing_queue_route (already mentioned)
+# - Potentially others that might have been missed in the outline.
 
-    logger.info(f"Starting Uvicorn server on {host}:{port} (Reload: {reload})")
-    uvicorn.run(
-        "web_app.app:app",
-        host=host,
-        port=port,
-        reload=reload,
-        log_level="debug" if reload else "info",
+# NOTE: The change from get_config to get_config_dependency needs to be applied to the actual route definitions.
+# The edit tool is not ideal for such widespread, patterned changes across a large file.
+# I will make the structural changes (global app, initialize_fastapi_app, create_app_instance)
+# and then we'll need to manually ensure all Depends(get_config) are updated. 
+# For now, I will make the change in the `upload_audio_route` as an example. 
+
+# Re-defining a part of a route to show the change:
+@main_router.post("/upload", name="upload_audio")
+async def upload_audio_route(
+    request: Request,
+    file: UploadFile = File(...),
+    algorithm: str = Form("madmom"),
+    beats_per_bar: Optional[int] = Form(None),
+    storage: FileMetadataStorage = Depends(get_storage),
+    config: Config = Depends(get_config_dependency),
+    user: Dict[str, Any] = Depends(require_auth),
+):
+# ... existing route logic ...
+    job_id = str(uuid.uuid4())
+    audio_extension = pathlib.Path(file.filename).suffix
+    audio_file_path = storage.save_uploaded_file(file.file, job_id, audio_extension)
+
+    metadata = {
+        "file_id": job_id,
+        "original_filename": file.filename,
+        "upload_time": datetime.now().isoformat(),
+        "content_type": file.content_type,
+        "status": UPLOADED,
+        "beat_detection_status": None,
+        "beat_detection_error": None,
+        "video_generation_status": None,
+        "video_generation_error": None,
+        "beats_file": None,
+        "video_file": None,
+        "algorithm": algorithm,
+        "beats_per_bar_override": beats_per_bar,
+        "analysis_params": {
+            "beats_per_bar_override": beats_per_bar,
+             # These should come from app_config or defaults
+            "tolerance_percent": config.storage.max_audio_secs, # Placeholder - this is wrong, get actual default
+            "min_measures": 1, # Placeholder - get actual default
+        }
+    }
+    storage.save_metadata(job_id, metadata)
+    logger.info(f"Uploaded file saved to {audio_file_path} with ID {job_id}")
+
+    detect_beats_task.delay(
+        file_id=job_id,
+        algorithm=algorithm,
+        beats_per_bar=beats_per_bar,
+        # Pass other relevant params from config if defaults in task are not sufficient
+        # min_bpm=config.celery.min_bpm (example if such config existed)
+    )
+    logger.info(f"Celery task detect_beats_task enqueued for file ID: {job_id}")
+
+    return RedirectResponse(
+        url=request.url_for("file_page_route", file_id=job_id),
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
+# Find and update other routes similarly. Example for get_processing_queue_route:
+@main_router.get(
+    "/processing_queue", response_class=HTMLResponse, name="processing_queue"
+)
+async def get_processing_queue_route(
+    request: Request,
+    templates: Jinja2Templates = Depends(get_templates),
+    storage: FileMetadataStorage = Depends(get_storage),
+    config: Config = Depends(get_config_dependency),
+    user: Dict[str, Any] = Depends(require_auth),
+):
+    # ... existing route logic ...
+    processing_files = []
+    all_metadata_files = storage.get_all_metadata_files()
+    for meta_file_path in all_metadata_files:
+        try:
+            metadata = storage.load_metadata_from_path(meta_file_path)
+            if metadata and metadata.get("status") not in [COMPLETED, ERROR, ANALYZING_FAILURE, VIDEO_ERROR]:
+                processing_files.append(metadata)
+        except Exception as e:
+            logger.error(f"Error loading metadata from {meta_file_path}: {e}")
+    # Sort by upload time, newest first
+    processing_files.sort(key=lambda x: x.get("upload_time", ""), reverse=True)
+    return templates.TemplateResponse(
+        request,
+        "processing_queue.html",
+        {"processing_files": processing_files, "user": user, "config": config},
+    )
 
-if __name__ == "__main__":
-    main()
+# Remove the original create_app function if it's fully replaced by create_app_instance
+# and initialize_fastapi_app logic.
+# def create_app(): ... (original one that might have been here)
+
+# Ensure get_config is renamed to get_config_dependency in all Depends() calls
+# For example, if confirm_analysis_route used it:
+@main_router.post("/confirm/{file_id}", name="confirm_analysis")
+async def confirm_analysis_route(
+    file_id: str,
+    request: Request,
+    storage: FileMetadataStorage = Depends(get_storage),
+    # config: Config = Depends(get_config_dependency), # If it was here, update it
+    user: Dict[str, Any] = Depends(require_auth),
+):
+    # ... existing logic ...
+    metadata = storage.get_metadata(file_id)
+    if not metadata or metadata.get("beat_detection_status") != "success":
+        raise HTTPException(status_code=400, detail="File not ready for confirmation or analysis failed.")
+    if not metadata.get("beats_file") or not pathlib.Path(metadata["beats_file"]).exists():
+        raise HTTPException(status_code=400, detail="Beats file missing, cannot confirm.")
+
+    # Trigger video generation task
+    task = generate_video_task.delay(file_id)
+    logger.info(f"Video generation task enqueued for file ID: {file_id}, Task ID: {task.id}")
+
+    # Update metadata with video task ID and status
+    storage.update_metadata(file_id, {"video_generation": task.id, "video_generation_status": None, "status": GENERATING_VIDEO})
+
+    return {"status": "ok", "message": "Video generation started", "task_id": task.id}

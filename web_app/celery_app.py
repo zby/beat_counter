@@ -7,12 +7,12 @@ and video generation in a distributed manner.
 
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, TYPE_CHECKING
 import logging
 
-# Import Task for type hints
 from celery import Celery, states, Task
-from web_app.config import Config
+from celery.signals import worker_init
+from web_app.config import Config, ConfigurationError # Ensure Config and ConfigurationError are imported
 from web_app.storage import FileMetadataStorage
 from web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
 from beat_detection.core.factory import get_beat_detector, extract_beats
@@ -24,15 +24,15 @@ from beat_detection.genre_db import GenreDB, parse_genre_from_path
 # Set up logger
 logger = logging.getLogger(__name__)
 
-# Load configuration
-try:
-    config = Config.from_env()
-except FileNotFoundError as e:
-    logger.error(f"Configuration error: {e}")
-    raise SystemExit(f"Error: Configuration file not found. {e}") from e
-except Exception as e:
-    logger.error(f"Error loading configuration: {e}")
-    raise SystemExit(f"Error loading configuration: {e}") from e
+# Removed import-time configuration loading
+# try:
+#     config = Config.from_env()
+# except FileNotFoundError as e:
+#     logger.error(f"Configuration error: {e}")
+#     raise SystemExit(f"Error: Configuration file not found. {e}") from e
+# except Exception as e:
+#     logger.error(f"Error loading configuration: {e}")
+#     raise SystemExit(f"Error loading configuration: {e}") from e
 
 
 class AppContext:
@@ -47,42 +47,117 @@ class AppContext:
         self.storage = storage
 
 
-# Create the Celery app instance
-app = Celery(
-    config.app.name or "beat_detection_app",
-    broker=config.celery.broker_url,
-    backend=config.celery.result_backend,
-    include=["web_app.celery_app"],
-)
+# Create a basic Celery app instance globally. It will be configured later.
+# The name here is a placeholder and will be updated during initialization.
+# `include` ensures tasks in this module are found.
+app = Celery("beat_detection_app_unconfigured", include=["web_app.celery_app"])
 
-# Apply other Celery settings from the Config object
-app.conf.update(
-    task_serializer=config.celery.task_serializer,
-    accept_content=config.celery.accept_content,
-    result_serializer=config.celery.task_serializer,
-    task_ignore_result=config.celery.task_ignore_result,
-    result_extended=config.celery.result_extended,
-    task_track_started=config.celery.task_track_started,
-)
+# Global variable to track if initialization has occurred, primarily for safety/assertion.
+_celery_app_initialized = False
 
-# Configure Celery logging
-log_file_path = config.storage.upload_dir / "celery.log"
-log_file_path.parent.mkdir(parents=True, exist_ok=True)
-app.conf.update(
-    worker_log_format="%(asctime)s - %(levelname)s - %(message)s",
-    worker_task_log_format="%(asctime)s - %(levelname)s - Task:%(task_name)s[%(task_id)s] - %(message)s",
-    worker_log_file=str(log_file_path),
-    worker_redirect_stdouts=False,
-)
-logger.info(f"Celery worker log file configured at: {log_file_path}")
+def initialize_celery_app(app_config: Config) -> Celery:
+    """Configures the global Celery app instance with settings from the Config object."""
+    global app, _celery_app_initialized
 
-# Initialize application context with storage
-app.context = AppContext(storage=FileMetadataStorage(config.storage))
+    if not isinstance(app_config, Config):
+        raise TypeError("app_config must be an instance of web_app.config.Config")
 
-# --- Celery Tasks (Base class removed) ---
+    if _celery_app_initialized:
+        # Optionally, decide how to handle re-initialization. For now, log a warning.
+        logger.warning(
+            f"Celery app already initialized. Attempting to reconfigure with new config: {app_config.app.name}"
+        )
+        # Consider if app.main or other critical parts should be protected or reset explicitly.
+
+    # Update the Celery app's main name (used in task names, logging, etc.)
+    app.main = app_config.app.name or "beat_detection_app"
+
+    # Configure broker and backend
+    app.conf.broker_url = app_config.celery.broker_url
+    app.conf.result_backend = app_config.celery.result_backend
+
+    # Apply other Celery settings from the Config object
+    app.conf.update(
+        task_serializer=app_config.celery.task_serializer,
+        accept_content=app_config.celery.accept_content,
+        result_serializer=app_config.celery.task_serializer,  # Often same as task_serializer
+        task_ignore_result=app_config.celery.task_ignore_result,
+        result_extended=app_config.celery.result_extended,
+        task_track_started=app_config.celery.task_track_started,
+    )
+
+    # Configure Celery logging - Note: direct file logging via conf is often less flexible.
+    # It's generally better to configure Python's standard logging module, which Celery uses.
+    # However, if specific worker log file behavior from conf is desired:
+    # log_file_path = Path(app_config.storage.upload_dir) / "celery_worker.log"
+    # log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    # app.conf.worker_log_file = str(log_file_path)
+    # app.conf.worker_log_format = "%(asctime)s - %(levelname)s - %(message)s"
+    # app.conf.worker_task_log_format = "%(asctime)s - %(levelname)s - Task:%(task_name)s[%(task_id)s] - %(message)s"
+    
+    # Standard practice: redirect Celery's stdout/stderr to its logger.
+    # False means it uses Python's logging, True means it redirects to its own log files if configured.
+    app.conf.worker_redirect_stdouts = False
+    logger.info(
+        "Celery logging will use standard Python logging. Ensure handlers are configured appropriately."
+    )
+
+    # Initialize application context with storage
+    try:
+        storage_service = FileMetadataStorage(app_config.storage)
+        app.context = AppContext(storage=storage_service)
+    except Exception as e:
+        logger.error(f"Failed to initialize FileMetadataStorage or AppContext: {e}")
+        raise ConfigurationError(f"Error initializing storage for Celery context: {e}") from e
+
+    _celery_app_initialized = True
+    logger.info(f"Celery app '{app.main}' has been configured.")
+    return app
+
+
+@worker_init.connect
+def celery_worker_init_handler(**kwargs):
+    """Signal handler for Celery worker initialization."""
+    logger.info("Celery worker_init signal received. Initializing application configuration...")
+    try:
+        # Step 1: Get the application root directory from the environment variable
+        app_root_dir = Config.get_app_dir_from_env()
+        logger.info(f"Application root directory for config: {app_root_dir}")
+
+        # Step 2: Load the configuration from the specified directory
+        loaded_config = Config.from_dir(app_root_dir)
+        logger.info(f"Configuration loaded successfully for app: {loaded_config.app.name}")
+
+        # Step 3: Initialize the global Celery app instance with this configuration
+        initialize_celery_app(loaded_config)
+        # The global 'app' in this module is now fully configured.
+        logger.info("Global Celery app instance has been initialized and configured via worker_init.")
+
+    except ConfigurationError as e:
+        logger.critical(f"CRITICAL: Configuration failed during worker_init: {e}. Worker cannot operate.", exc_info=True)
+        # Fail Fast: Exit the worker process if configuration is faulty.
+        raise SystemExit(f"FATAL: Worker could not initialize due to configuration error: {e}") from e
+    except FileNotFoundError as e: # Raised by Config.from_dir if files are missing
+        logger.critical(f"CRITICAL: Configuration file not found during worker_init: {e}. Worker cannot start.", exc_info=True)
+        raise SystemExit(f"FATAL: Worker could not initialize, essential configuration file not found: {e}") from e
+    except Exception as e: # Catch any other unexpected errors during this critical phase
+        logger.critical(f"CRITICAL: An unexpected error occurred during worker_init configuration: {e}", exc_info=True)
+        raise SystemExit(f"FATAL: Worker could not initialize due to an unexpected error: {e}") from e
+
+
+# --- Celery Tasks ---
+# Task definitions remain below. They use `@app.task` which now works because `app` is a Celery instance.
+# Inside tasks, `self.app` will refer to this globally configured `app`.
+
+# Ensure that tasks can access the app context IF the app has been initialized.
+# This is a runtime check that could be added to tasks if necessary, or rely on entry points to initialize.
+
+# Example: (This check would be inside a task if we were very defensive,
+# but typically initialization is guaranteed by the worker startup process)
+# if not _celery_app_initialized:
+#     raise RuntimeError("Celery app accessed before initialization with config.")
 
 # Core beat detection logic (separated for testability)
-
 
 def _perform_beat_detection(
     storage: FileMetadataStorage,
@@ -540,8 +615,29 @@ def debug_task(self: Task):
     task_id = self.request.id if self.request else "unknown"
     logger.info(f"Debug task executed. Request: {self.request!r}")
 
-    return {
-        "status": "ok",
-        "request_id": task_id,
-        "worker_hostname": self.request.hostname if self.request else "unknown",
-    }
+    if not _celery_app_initialized:
+        logger.error("Debug task: Celery app not initialized!")
+        self.update_state(state=states.FAILURE, meta="Celery app not initialized")
+        raise RuntimeError("Celery app not initialized at time of debug_task execution")
+
+    try:
+        # Try to access context to see if it's there
+        app_context = self.app.context
+        if app_context and app_context.storage:
+            logger.info(f"Debug task: App context and storage seem available. Storage config: {app_context.storage.config}")
+            # You could add a more specific check here, e.g., try a benign storage operation
+        else:
+            logger.warning("Debug task: App context or storage is missing.")
+            # Potentially update state to reflect this issue
+
+        # Example of using IOCapture if needed for a command
+        # with IOCapture() as output:
+        #     print("This is some stdout from the debug task")
+        # logger.info(f"Debug task captured output: {output.stdout}")
+
+        return {"status": "Debug task completed successfully", "file_id": None}
+    except Exception as e:
+        logger.exception(f"Error during debug_task: {e}")
+        self.update_state(state=states.FAILURE, meta=safe_error(e))
+        # According to fail-fast, we should re-raise to make the failure clear
+        raise

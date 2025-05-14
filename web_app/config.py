@@ -14,6 +14,11 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+class ConfigurationError(Exception):
+    """Custom exception for configuration related errors."""
+    pass
+
+
 @dataclass
 class User:
     username: str
@@ -70,51 +75,80 @@ class Config:
     users: List[User]
 
     @classmethod
-    def from_dir(cls, app_dir: pathlib.Path) -> "Config":
-        config_path = app_dir / "etc" / "config.json"
-        if not config_path.exists():
-            raise FileNotFoundError(f"Configuration file not found at {config_path}")
-        with open(config_path, "r") as f:
-            data = json.load(f)
-
-        # Load user configuration
-        users_path = app_dir / "etc" / "users.json"
-        if not users_path.exists():
+    def _load_json_file(cls, file_path: pathlib.Path) -> Dict[str, Any]:
+        if not file_path.exists():
             raise FileNotFoundError(
-                f"Users configuration file not found at {users_path}"
+                f"Required configuration file not found at {file_path}"
             )
-        with open(users_path, "r") as f:
-            users_data = json.load(f)
-
-        return cls(
-            app=AppConfig(**data["app"]),
-            storage=StorageConfig(
-                upload_dir=pathlib.Path(data["storage"]["upload_dir"]),
-                max_upload_size_mb=data["storage"]["max_upload_size_mb"],
-                allowed_extensions=data["storage"]["allowed_extensions"],
-                max_audio_secs=data["storage"]["max_audio_secs"],
-            ),
-            celery=CeleryConfig(**data["celery"]),
-            users=[User.from_dict(user) for user in users_data["users"]],
-        )
+        try:
+            with open(file_path, "r") as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            raise ConfigurationError(
+                f"Error decoding JSON from {file_path}: {e}"
+            ) from e
 
     @classmethod
-    def from_env(cls) -> "Config":
-        app_dir = os.getenv("BEAT_COUNTER_APP_DIR")
-        if app_dir:
-            return cls.from_dir(pathlib.Path(app_dir).resolve())
-        logger.warning("BEAT_COUNTER_APP_DIR is not set, using current directory")
-        return cls.from_dir(pathlib.Path.cwd())
+    def from_dir(cls, app_root_dir: pathlib.Path) -> "Config":
+        if not app_root_dir.is_dir():
+            raise ConfigurationError(
+                f"Application root directory not found or is not a directory: {app_root_dir}"
+            )
 
+        config_file_path = app_root_dir / "etc" / "config.json"
+        users_file_path = app_root_dir / "etc" / "users.json"
 
-# Convenience functions for backward compatibility
-def get_config() -> Dict[str, Any]:
-    """Get application configuration as a dictionary."""
-    config = Config.from_env()
-    return config.__dict__
+        main_config_data = cls._load_json_file(config_file_path)
+        users_data = cls._load_json_file(users_file_path)
 
+        # Validate top-level keys
+        required_main_keys = {"app", "storage", "celery"}
+        if not required_main_keys.issubset(main_config_data.keys()):
+            missing_keys = required_main_keys - main_config_data.keys()
+            raise ConfigurationError(
+                f"Missing required keys in {config_file_path}: {missing_keys}"
+            )
 
-def get_users() -> List[Dict[str, Any]]:
-    """Get user configuration as a list of dictionaries."""
-    config = Config.from_env()
-    return [user.__dict__ for user in config.users]
+        required_users_keys = {"users"}
+        if not required_users_keys.issubset(users_data.keys()):
+            missing_keys = required_users_keys - users_data.keys()
+            raise ConfigurationError(
+                f"Missing required keys in {users_file_path}: {missing_keys}"
+            )
+
+        try:
+            storage_data = main_config_data["storage"]
+            return cls(
+                app=AppConfig(**main_config_data["app"]),
+                storage=StorageConfig(
+                    upload_dir=pathlib.Path(storage_data["upload_dir"]),
+                    max_upload_size_mb=storage_data["max_upload_size_mb"],
+                    allowed_extensions=storage_data["allowed_extensions"],
+                    max_audio_secs=storage_data["max_audio_secs"],
+                ),
+                celery=CeleryConfig(**main_config_data["celery"]),
+                users=[User.from_dict(user) for user in users_data["users"]],
+            )
+        except KeyError as e:
+            raise ConfigurationError(
+                f"Missing expected key in configuration files: {e}"
+            ) from e
+        except TypeError as e:  # For issues with **unpacking
+            raise ConfigurationError(f"Configuration structure error: {e}") from e
+
+    @classmethod
+    def get_app_dir_from_env(cls) -> pathlib.Path:
+        app_dir_str = os.getenv("BEAT_COUNTER_APP_DIR")
+        if not app_dir_str:
+            raise ConfigurationError(
+                "BEAT_COUNTER_APP_DIR environment variable is not set. "
+                "It should point to the root directory of the application "
+                "(the parent of the 'etc' directory)."
+            )
+
+        resolved_path = pathlib.Path(app_dir_str).resolve()
+        if not resolved_path.is_dir():
+            raise ConfigurationError(
+                f"The path specified by BEAT_COUNTER_APP_DIR is not a valid directory: {resolved_path}"
+            )
+        return resolved_path

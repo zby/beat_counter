@@ -51,8 +51,8 @@ MOCK_USERS_DATA = {
 @pytest.fixture
 def user_manager() -> UserManager:
     """Provides a UserManager instance initialized with mock data."""
-    # Pass the mock data directly to the constructor
-    return UserManager(users=MOCK_USERS_DATA)
+    # Pass the list of user dictionaries directly from MOCK_USERS_DATA
+    return UserManager(users_list=MOCK_USERS_DATA["users"])
 
 
 # --- Test Cases ---

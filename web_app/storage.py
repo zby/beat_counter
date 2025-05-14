@@ -26,6 +26,7 @@ class FileMetadataStorage:
         Args:
             config: Storage configuration object containing settings
         """
+        self._storage_config = config
         self.max_audio_secs = config.max_audio_secs  # Duration in seconds
         self.base_upload_dir = config.upload_dir
         self.allowed_extensions = config.allowed_extensions

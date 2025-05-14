@@ -14,7 +14,7 @@ import shutil
 import json
 import os
 import io
-from typing import Generator, Dict, Any, Tuple
+from typing import Generator, Dict, Any, Tuple, List
 from datetime import datetime, timedelta
 
 # Mocking imports
@@ -30,11 +30,10 @@ from celery.result import AsyncResult
 from unittest.mock import patch, MagicMock  # Ensure MagicMock is imported
 
 # Import the specific task function to patch its methods
-from web_app.celery_app import AppContext
+# from web_app.celery_app import AppContext # AppContext is still used by Celery app internally, but test doesn't directly init it here for Celery anymore.
 
 # Import app creation function and components
 from web_app.app import (
-    create_app,
     ANALYZING,
     ANALYZED,
     ANALYZING_FAILURE,
@@ -49,6 +48,9 @@ from web_app.auth import UserManager
 
 # Import RawBeats
 from beat_detection.core.beats import RawBeats, Beats
+
+# Import Celery app instance and initialization function
+from web_app.celery_app import app as actual_celery_app, initialize_celery_app, AppContext
 
 # --- Test Fixtures ---
 
@@ -108,67 +110,83 @@ def test_storage(test_config: Config) -> FileMetadataStorage:
 
 @pytest.fixture(scope="session")
 def test_auth_manager(test_config: Config) -> UserManager:
-    users_dict = {"users": []}
-    for user in test_config.users:
-        user_data = user.__dict__.copy()
-        if isinstance(user_data["created_at"], datetime):
-            user_data["created_at"] = user.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        users_dict["users"].append(user_data)
-    return UserManager(users=users_dict)
+    user_list_for_manager: List[Dict[str, Any]] = []
+    for user_obj in test_config.users: # test_config.users is List[User]
+        user_dict = user_obj.__dict__.copy() # Convert User dataclass to dict
+        # Ensure datetime is stringified as UserManager might expect strings from JSON originally
+        if isinstance(user_dict.get("created_at"), datetime):
+            user_dict["created_at"] = user_obj.created_at.isoformat() + "Z" # Match config format
+        user_list_for_manager.append(user_dict)
+    return UserManager(users_list=user_list_for_manager)
 
 
 @pytest.fixture(scope="module", autouse=True)
-def configure_celery_for_test(test_storage: FileMetadataStorage):
-    from web_app.celery_app import app as actual_celery_app
+def configure_celery_for_test(test_config: Config):
+    # Initialize the global Celery app with the test_config.
+    # This function (initialize_celery_app) is responsible for setting up the broker, backend,
+    # and the AppContext using the storage configuration within test_config.
+    initialize_celery_app(test_config)
 
+    # Now, override specific Celery settings for eager execution in tests.
+    # The broker and backend URLs from test_config (e.g., "memory://") are already applied by initialize_celery_app.
     actual_celery_app.conf.update(
-        task_always_eager=True,
-        task_eager_propagates=True,
-        broker_url="memory://",
-        result_backend="cache+memory://",
-        task_store_eager_result=True,  # Store results even when eager
+        task_always_eager=True,      # Tasks will be executed locally, synchronously.
+        task_eager_propagates=True,  # Exceptions from eager tasks will be re-raised.
+        task_store_eager_result=True, # Ensure results are stored even for eager tasks.
     )
-    if not hasattr(actual_celery_app, "context") or not actual_celery_app.context:
-        actual_celery_app.context = AppContext(storage=test_storage)
-    else:
-        actual_celery_app.context.storage = test_storage
-    print("Celery configured for eager execution (module scope).")
+    
+    # Verification: Ensure AppContext and storage were set up by initialize_celery_app
+    assert hasattr(actual_celery_app, "context"), "Celery app context not set after initialize_celery_app"
+    assert actual_celery_app.context is not None, "Celery app context is None after initialize_celery_app"
+    assert isinstance(actual_celery_app.context, AppContext), "Celery app context is not an AppContext instance"
+    assert actual_celery_app.context.storage is not None, "Storage within Celery app context is None"
+    assert actual_celery_app.context.storage._storage_config == test_config.storage, \
+        "Celery app context storage not configured with test_config.storage"
+
+    print(
+        f"Celery app '{actual_celery_app.main}' initialized with test_config and configured for eager execution (module scope)."
+    )
 
 
 @pytest.fixture()
 def test_client(
-    test_config: Config,
-    test_storage: FileMetadataStorage,
-    test_auth_manager: UserManager,
+    test_config: Config, # test_storage and test_auth_manager no longer directly needed here
+                         # as initialize_fastapi_app will use test_config to set them up.
 ) -> Generator[TestClient, None, None]:
-    # Patch the global config and app context used by create_app
-    with patch("web_app.app._global_config", test_config), patch.dict(
-        "web_app.app._app_context",
-        {"storage": test_storage, "auth_manager": test_auth_manager},
-        clear=True,
-    ):  # clear=True ensures we start with only our test components
+    # Initialize the FastAPI application using the test_config.
+    # This will set up the global app, _global_config, and _app_context in web_app.app.
+    # It uses the same `test_config` that `configure_celery_for_test` used, ensuring consistency.
+    from web_app.app import app as fastapi_global_app, initialize_fastapi_app
+    
+    initialized_app = initialize_fastapi_app(test_config)
+    
+    # The old patching mechanism is no longer needed here as initialize_fastapi_app handles context setup.
+    # with patch("web_app.app._global_config", test_config), patch.dict(
+    #     "web_app.app._app_context",
+    #     {"storage": test_storage, "auth_manager": test_auth_manager},
+    #     clear=True,
+    # ):
+    # app = create_app() # Old way
 
-        # Now create_app will use the patched globals/context
-        app = create_app()  # Call without arguments
+    client = TestClient(initialized_app) # Use the app returned by initializer or the global one
+    
+    # Perform login to get the auth cookie for subsequent requests
+    login_data = {"username": test_config.users[0].username, "password": "password"}
+    response = client.post("/login", data=login_data)
+    assert (
+        "access_token" in client.cookies
+        or "access_token" in response.cookies.get("access_token", "")
+    ), ("Login failed during test setup. Response: " + response.text)
 
-        client = TestClient(app)
-        # Perform login to get the auth cookie for subsequent requests
-        login_data = {"username": test_config.users[0].username, "password": "password"}
-        response = client.post("/login", data=login_data)
-        # Ensure login was successful (check for cookie)
-        assert (
-            "access_token" in client.cookies
-            or "access_token" in response.cookies.get("access_token", "")
-        ), ("Login failed during test setup")
+    yield client
 
-        yield client  # Provide the configured client to the test
-
-        # Cleanup after tests finish with this client instance
-        print(f"Cleaning up storage directory: {test_storage.base_upload_dir}")
-        # Careful cleanup: only remove files/dirs created during the test
-        for item in test_storage.base_upload_dir.iterdir():
-            # Optionally skip log files or other persistent items if needed
-            # Example: if item.name == "celery.log": continue
+    # Cleanup after tests finish with this client instance
+    # Access storage via the initialized app context if needed for robust cleanup path
+    from web_app.app import _app_context as web_app_global_context
+    cleanup_storage = web_app_global_context.get("storage")
+    if cleanup_storage and hasattr(cleanup_storage, 'base_upload_dir'):
+        print(f"Cleaning up storage directory: {cleanup_storage.base_upload_dir}")
+        for item in cleanup_storage.base_upload_dir.iterdir():
             try:
                 if item.is_dir():
                     shutil.rmtree(item)
@@ -177,6 +195,8 @@ def test_client(
             except Exception as e:
                 print(f"Warning: Could not clean up {item}: {e}")
         print("Storage directory cleaned.")
+    else:
+        print("Warning: Could not retrieve storage for cleanup in test_client fixture.")
 
 
 @pytest.fixture(scope="module")
@@ -272,18 +292,15 @@ def test_index_authenticated(test_client: TestClient):
     assert "Upload Audio" in response.text
 
 
-def test_index_unauthenticated(test_config, test_storage, test_auth_manager):
-    # Patch the necessary globals before calling create_app
-    with patch("web_app.app._global_config", test_config), patch.dict(
-        "web_app.app._app_context",
-        {"storage": test_storage, "auth_manager": test_auth_manager},
-        clear=True,
-    ):
-        app = create_app()  # Call without arguments
-        client = TestClient(app)
-        response = client.get("/", follow_redirects=False)
-        assert response.status_code == 303
-        assert "/login" in response.headers["location"]
+def test_index_unauthenticated(test_config: Config):
+    from web_app.app import initialize_fastapi_app
+    
+    initialized_app = initialize_fastapi_app(test_config)
+    
+    client = TestClient(initialized_app)
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 303
+    assert "/login" in response.headers["location"]
 
 
 def test_login_page(test_client: TestClient):
@@ -391,23 +408,23 @@ def test_upload_invalid_type(test_client: TestClient):
 
 
 def test_upload_unauthenticated(
-    test_config, test_storage, test_auth_manager, generated_sample_audio
+    test_config: Config,
+    generated_sample_audio: Dict[str, Any]
 ):
-    # Patch the necessary globals before calling create_app
-    with patch("web_app.app._global_config", test_config), patch.dict(
-        "web_app.app._app_context",
-        {"storage": test_storage, "auth_manager": test_auth_manager},
-        clear=True,
-    ):
-        app = create_app()  # Call without arguments
-        client = TestClient(app)
-        filename = generated_sample_audio["filename"]
-        file_obj = generated_sample_audio["file_obj"]
-        mime_type = generated_sample_audio["mime_type"]
-        files = {"file": (filename, file_obj, mime_type)}
-        response = client.post("/upload", files=files, follow_redirects=False)
-        assert response.status_code == 303
-        assert "/login" in response.headers["location"]
+    from web_app.app import initialize_fastapi_app
+
+    initialized_app = initialize_fastapi_app(test_config)
+    client = TestClient(initialized_app)
+
+    filename = generated_sample_audio["filename"]
+    file_obj = generated_sample_audio["file_obj"]
+    mime_type = generated_sample_audio["mime_type"]
+    file_obj.seek(0) # Ensure file is at the beginning for upload
+    files = {"file": (filename, file_obj, mime_type)}
+
+    response = client.post("/upload", files=files, follow_redirects=False)
+    assert response.status_code == 303
+    assert "/login" in response.headers["location"]
 
 
 # --- Status and Workflow Tests ---

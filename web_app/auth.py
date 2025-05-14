@@ -19,16 +19,18 @@ from jose import jwt
 from fastapi import Request, HTTPException, status
 
 # Local imports
-# Avoid circular dependency if auth is needed by config; get_users is okay if config loads first.
-# Consider passing users directly instead of relying on get_users() inside UserManager.
-from web_app.config import get_users  # Keep for now, but consider alternatives
+# Removed problematic import: from web_app.config import get_users
+# No direct config import needed here anymore for users data.
+# UserManager will expect user data to be passed in.
+
+# If UserManager is changed to accept List[User], then: 
+# from web_app.config import User 
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants for JWT (Module level)
-# Consider moving these to central config (e.g., Config object) eventually
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "a_very_secret_key_for_development_only")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours (Default)
@@ -37,17 +39,24 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours (Default)
 class UserManager:
     """User manager for the application."""
 
-    def __init__(self, users: Optional[Dict[str, List[Dict[str, Any]]]] = None):
+    def __init__(self, users_list: List[Dict[str, Any]]):
         """Initialize the user manager.
 
         Args:
-            users: Optional dictionary of users for testing. If not provided,
-                  users will be loaded from the config file via get_users().
+            users_list: A list of user dictionaries. Each dictionary should
+                        conform to the expected user data structure.
         """
-        # Load users - careful with get_users() if it depends on config that might need auth later
-        self._users_data = users if users is not None else get_users()
+        if users_list is None:
+            # Following "Fail Fast", UserManager requires user data.
+            # Allowing None or empty list without explicit handling can hide issues.
+            # If an empty list of users is a valid state, the caller should pass [].
+            logger.error("UserManager initialized with None for users_list. This is not allowed.")
+            raise ValueError("UserManager requires a non-None users_list for initialization.")
+        
+        # Store the list of user dictionaries directly.
+        # The dictionaries are expected to have keys like 'username', 'password' or 'password_hash', etc.
+        self._users_list: List[Dict[str, Any]] = users_list
 
-        # FIX: Make the expiration time accessible via the instance
         self.ACCESS_TOKEN_EXPIRE_MINUTES = ACCESS_TOKEN_EXPIRE_MINUTES
 
     def authenticate(self, username: str, password: str) -> Optional[Dict[str, Any]]:
@@ -59,52 +68,33 @@ class UserManager:
 
         Returns:
             User data dictionary if authentication successful, None otherwise.
-            (Note: Returning sensitive info like password hashes is generally discouraged)
         """
-        # Access the loaded user data
-        users = self._users_data.get("users", [])
+        users_to_check = self._users_list
 
-        # Find user by username
-        for user_dict in users:
-            # Ensure comparison is safe (case-insensitive/normalized?)
+        for user_dict in users_to_check:
             if user_dict.get("username") == username:
-                # For TEST_USERS in the test (plain password check - less secure)
+                # Plain password check (typically for testing or very simple setups)
                 if "password" in user_dict and user_dict["password"] == password:
                     logger.info(
-                        f"User '{username}' authenticated via plain password (testing only?)."
+                        f"User '{username}' authenticated via plain password."
                     )
-                    # Return a copy without sensitive info if possible
-                    return {
-                        k: v
-                        for k, v in user_dict.items()
-                        if k != "password" and k != "password_hash"
-                    }
+                    return {k: v for k, v in user_dict.items() if k not in ["password", "password_hash", "password_md5"]}
 
                 # Check hashed password using bcrypt if present
                 if "password_hash" in user_dict and self._verify_password(
                     password, user_dict["password_hash"]
                 ):
                     logger.info(f"User '{username}' authenticated via hashed password.")
-                    # Return a copy without sensitive info
-                    return {
-                        k: v
-                        for k, v in user_dict.items()
-                        if k != "password" and k != "password_hash"
-                    }
+                    return {k: v for k, v in user_dict.items() if k not in ["password", "password_hash", "password_md5"]}
 
-                # Check legacy md5 hash if present and bcrypt failed/missing (less secure)
+                # Check legacy md5 hash if present
                 if "password_md5" in user_dict and self._verify_md5(
                     password, user_dict["password_md5"]
                 ):
                     logger.warning(
                         f"User '{username}' authenticated via legacy MD5 hash."
                     )
-                    # Return a copy without sensitive info
-                    return {
-                        k: v
-                        for k, v in user_dict.items()
-                        if k != "password" and k != "password_md5"
-                    }
+                    return {k: v for k, v in user_dict.items() if k not in ["password", "password_hash", "password_md5"]}
 
         logger.warning(f"Authentication failed for username: '{username}'")
         return None
