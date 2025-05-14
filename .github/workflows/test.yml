@@ -27,7 +27,14 @@ jobs:
         pip install -U uv
         uv venv
         source .venv/bin/activate
-        uv pip install "."
+        echo "======== Cleaning uv cache ========"
+        uv cache clean
+        echo "======== Installing NumPy and Cython explicitly ========"
+        uv pip install numpy cython
+        echo "======== Verifying NumPy and Cython installation ========"
+        uv pip list | grep -E "numpy|Cython" || echo "NumPy or Cython not found after explicit install"
+        echo "======== Installing project dependencies (with verbosity) ========"
+        uv pip install --verbose ".[dev]"
         # Print installed packages to verify dependencies
         uv pip list
         
