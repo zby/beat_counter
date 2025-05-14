@@ -27,7 +27,7 @@ jobs:
         pip install -U uv
         uv venv
         source .venv/bin/activate
-        uv pip install ".[dev,beat_this_algo]"
+        uv pip install "."
         # Print installed packages to verify dependencies
         uv pip list
         
