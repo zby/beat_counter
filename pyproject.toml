@@ -23,7 +23,7 @@ dependencies = [
     "celery>=5.2.0",
     "redis>=4.0.0",
     "pyjwt>=2.3.0",
-    "madmom @ git+https://github.com/CPJKU/madmom.git@develop",
+    "madmom @ git+https://github.com/CPJKU/madmom.git",
     "tqdm>=4.64.0",
     "Pillow>=10.0.0",
     "moviepy>=2.1.2",
