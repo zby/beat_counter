@@ -17,7 +17,8 @@ from typing import Dict, Any, Optional, List, Tuple
 
 import yaml
 
-from beat_detection.core.factory import process_batch, extract_beats, find_audio_files
+from beat_detection.core import process_batch, extract_beats
+from beat_detection.utils.file_utils import find_audio_files
 from beat_detection.core.video import generate_batch_videos
 from beat_detection.core.beats import Beats
 from beat_detection.genre_db import GenreDB, parse_genre_from_path

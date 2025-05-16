@@ -30,7 +30,7 @@ import pathlib
 import sys
 from typing import List, Tuple, Optional, Dict, Any
 
-from beat_detection.core.factory import process_batch
+from beat_detection.core import process_batch
 from beat_detection.core.beats import Beats
 from beat_detection.genre_db import GenreDB, parse_genre_from_path
 
@@ -137,7 +137,8 @@ def process_batch_with_genre_defaults(
     # Pre-initialize the GenreDB to avoid re-loading CSV for each file
     genre_db = GenreDB()
     
-    from beat_detection.core.factory import find_audio_files, extract_beats
+    from beat_detection.core import extract_beats
+    from beat_detection.utils.file_utils import find_audio_files
     from tqdm import tqdm
     
     if not directory_path.is_dir():
@@ -198,69 +199,77 @@ def process_batch_with_genre_defaults(
                 **file_detector_kwargs,
             )
             results.append((relative_path_str, beats_obj))
+            logging.info(f"Successfully processed {relative_path_str}")
         except Exception as e:
-            logging.error(f"Failed to process {relative_path_str}: {e}")
             results.append((relative_path_str, None))
+            logging.error(f"Failed to process {relative_path_str}: {e}")
     
     if pbar:
         pbar.close()
-    
+        
     return results
 
 
 def main() -> None:  # noqa: D401
+    """CLI entry point."""
     args = parse_args()
-    setup_logging(quiet=args.quiet)
+    setup_logging(args.quiet)
 
-    directory_path = pathlib.Path(args.directory)
-    if not directory_path.exists():
-        logging.error("Directory not found: %s", directory_path)
+    # Prepare directory path
+    input_dir = pathlib.Path(args.directory)
+    if not input_dir.is_dir():
+        logging.error(f"Directory not found: {input_dir}")
         sys.exit(1)
 
-    # Detector/Beats arguments (prepared once)
-    detector_kwargs: Dict[str, Any] = {
-        "min_bpm": args.min_bpm,
-        "max_bpm": args.max_bpm,
-    }
-    beats_constructor_args: Dict[str, Any] = {
-        "beats_per_bar": args.beats_per_bar,
+    # Prepare detector kwargs (start with an empty dict and add valid args)
+    detector_kwargs: Dict[str, Any] = {}
+    if args.min_bpm is not None:
+        detector_kwargs["min_bpm"] = args.min_bpm
+    if args.max_bpm is not None:
+        detector_kwargs["max_bpm"] = args.max_bpm
+
+    # Prepare Beats constructor args
+    beats_args: Dict[str, Any] = {
         "tolerance_percent": args.tolerance,
         "min_measures": args.min_measures,
     }
+    if args.beats_per_bar is not None:
+        beats_args["beats_per_bar"] = args.beats_per_bar
 
-    # Choose processing method based on whether genre defaults are enabled
+    # Conditionally use genre-aware processing
     if args.use_genre_defaults:
-        logging.info("Genre-based defaults enabled. Will check paths for genre information.")
+        logging.info("Using genre-specific defaults for files in genre-specific directories")
         results = process_batch_with_genre_defaults(
-            directory_path=directory_path,
+            directory_path=input_dir,
             algorithm=args.algorithm,
-            beats_args=beats_constructor_args,
+            beats_args=beats_args,
             detector_kwargs=detector_kwargs,
             no_progress=args.no_progress,
         )
     else:
-        # Standard processing without genre detection
+        # Use standard process_batch
         results = process_batch(
-            directory_path=directory_path,
+            directory_path=input_dir,
             algorithm=args.algorithm,
-            beats_args=beats_constructor_args,
+            beats_args=beats_args,
             detector_kwargs=detector_kwargs,
             no_progress=args.no_progress,
         )
 
-    # Summary
-    successful = [r for r in results if r[1] is not None]
-    failed = [r for r in results if r[1] is None]
+    # Summarize results
+    success_count = sum(1 for _, beats in results if beats is not None)
+    total_count = len(results)
+    failure_count = total_count - success_count
 
-    if not args.quiet:
-        print("\n--- Batch Processing Summary ---")
-        print(f"Total files attempted: {len(results)}")
-        print(f"Successful detections: {len(successful)}")
-        print(f"Failed detections: {len(failed)}")
-        if failed:
-            print("\nFailed files:")
-            for fname, _ in failed:
-                print(f"  - {fname}")
+    if total_count > 0:
+        success_percent = (success_count / total_count) * 100
+        logging.info(
+            f"Processed {total_count} files: "
+            f"{success_count} successful ({success_percent:.1f}%), "
+            f"{failure_count} failed."
+        )
+    else:
+        logging.warning("No audio files were processed.")
 
 
 if __name__ == "__main__":
