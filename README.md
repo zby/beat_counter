@@ -185,6 +185,49 @@ For detailed deployment instructions, see the [Deployment Guide](DEPLOYMENT.md).
 - Pillow - Python Imaging Library for image processing
 - MoviePy - Video editing library for Python
 
+## API Usage
+
+The core beat detection API is organized in a modular structure:
+
+```python
+# Get a beat detector (main entry point)
+from beat_detection.core import get_beat_detector
+
+# Create a detector instance
+detector = get_beat_detector("madmom")  # or "beat_this"
+
+# Detect beats in an audio file
+raw_beats = detector.detect_beats("path/to/audio.mp3")
+
+# Process a batch of files
+from beat_detection.core import process_batch
+results = process_batch("path/to/directory", algorithm="madmom")
+
+# Extract beats from a single file (high-level API)
+from beat_detection.core import extract_beats
+beats = extract_beats("path/to/audio.mp3", algorithm="madmom")
+```
+
+### Creating Custom Beat Detectors
+
+You can create and register custom beat detector implementations:
+
+```python
+from beat_detection.core.registry import register
+from beat_detection.core.detectors.base import BaseBeatDetector
+from beat_detection.core.beats import RawBeats
+
+@register("my_custom_detector")
+class MyCustomDetector(BaseBeatDetector):
+    def detect_beats(self, audio_path: str) -> RawBeats:
+        # Your implementation here
+        pass
+
+# Then use it like any other detector
+from beat_detection.core import get_beat_detector
+detector = get_beat_detector("my_custom_detector")
+```
+
 ## Testing
 
 The project uses pytest for testing. Tests are located in the `tests/` and `beat_detection/tests/` directories.
