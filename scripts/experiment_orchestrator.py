@@ -10,7 +10,6 @@ and saves results with reproducibility information into a structured output dire
 import argparse
 import logging
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
@@ -21,203 +20,13 @@ from beat_detection.core import process_batch, extract_beats
 from beat_detection.utils.file_utils import find_audio_files
 from beat_detection.core.video import generate_batch_videos
 from beat_detection.core.beats import Beats
-from beat_detection.genre_db import GenreDB, parse_genre_from_path
+from beat_detection.genre_db import GenreDB
+from beat_detection.utils.reproducibility import get_git_info, save_reproducibility_info
 from tqdm import tqdm
 
 
-def get_git_info() -> Dict[str, str]:
-    """
-    Get the current Git commit hash and diff.
-    
-    Returns
-    -------
-    Dict[str, str]
-        Dictionary containing commit hash and diff.
-        
-    Raises
-    ------
-    RuntimeError
-        If Git commands fail.
-    """
-    try:
-        commit_hash = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], 
-            stderr=subprocess.STDOUT
-        ).decode().strip()
-        
-        diff = subprocess.check_output(
-            ["git", "diff", "HEAD"], 
-            stderr=subprocess.STDOUT
-        ).decode()
-        
-        return {
-            "commit_hash": commit_hash,
-            "diff": diff
-        }
-    except subprocess.CalledProcessError as e:
-        error_msg = f"Failed to get Git information: {e.output.decode()}"
-        logging.error(error_msg)
-        raise RuntimeError(error_msg)
-
-
-def save_reproducibility_info(output_dir: Path, git_info: Dict[str, str], config_file: Path, config: Dict[str, Any]) -> None:
-    """
-    Save reproducibility information to the experiment directory.
-    
-    Parameters
-    ----------
-    output_dir : Path
-        Directory to save reproducibility information.
-    git_info : Dict[str, str]
-        Dictionary containing Git commit hash and diff.
-    config_file : Path
-        Path to the experiment configuration file.
-    config : Dict[str, Any]
-        The configuration dictionary that will be saved (possibly modified from original).
-    """
-    # Save Git commit hash
-    (output_dir / "git_commit.txt").write_text(git_info["commit_hash"])
-    
-    # Save Git diff
-    (output_dir / "git_diff.patch").write_text(git_info["diff"])
-    
-    # Save the configuration
-    with open(output_dir / "config_used.yaml", 'w') as f:
-        yaml.dump(config, f)
-    
-    # Save the genre database if using genre defaults
-    if config.get("use_genre_defaults", True):
-        try:
-            # Get default genre CSV path from GenreDB
-            genre_db = GenreDB()
-            default_csv_path = Path(__file__).parent.parent / "data" / "dance_music_genres.csv"
-            
-            # Copy the genre database to the experiment directory
-            genre_db_output = output_dir / "dance_music_genres.csv"
-            shutil.copy2(default_csv_path, genre_db_output)
-            logging.info(f"Saved genre database for reproducibility to {genre_db_output}")
-        except Exception as e:
-            logging.warning(f"Failed to save genre database: {e}")
-
-
-def process_batch_with_genre_defaults(
-    directory_path: Path,
-    algorithm: str,
-    beats_args: Dict[str, Any],
-    detector_kwargs: Dict[str, Any],
-    no_progress: bool = False,
-) -> List[Tuple[str, Optional[Beats]]]:
-    """
-    Enhanced version of process_batch that applies genre-specific defaults.
-    
-    For each audio file, it checks if it's in a path with /by_genre/<genre>/
-    and applies the appropriate genre defaults before calling extract_beats.
-    
-    Parameters
-    ----------
-    directory_path : Path
-        Root directory to scan for audio files
-    algorithm : str
-        Beat detection algorithm to use
-    beats_args : Dict[str, Any]
-        Base arguments for Beats constructor
-    detector_kwargs : Dict[str, Any]
-        Base arguments for beat detector
-    no_progress : bool, optional
-        Whether to disable progress bar, by default False
-        
-    Returns
-    -------
-    List[Tuple[str, Optional[Beats]]]
-        List of tuples with file path and resulting Beats object (or None if failed)
-    """
-    # DEBUG
-    print(f"DEBUG: process_batch_with_genre_defaults called with:")
-    print(f"  directory_path = {directory_path}")
-    print(f"  algorithm = {algorithm}")
-    print(f"  beats_args = {beats_args} (type: {type(beats_args)})")
-    print(f"  detector_kwargs = {detector_kwargs} (type: {type(detector_kwargs)})")
-    
-    # Pre-initialize the GenreDB to avoid re-loading CSV for each file
-    genre_db = GenreDB()
-    
-    # Ensure we have dictionaries (handle null values from YAML)
-    beats_args = {} if beats_args is None else beats_args
-    detector_kwargs = {} if detector_kwargs is None else detector_kwargs
-    
-    if not directory_path.is_dir():
-        logging.error("Directory not found: %s", directory_path)
-        raise FileNotFoundError(f"Directory not found: {directory_path}")
-
-    audio_files = find_audio_files(directory_path)
-    if not audio_files:
-        logging.warning("No audio files found in %s", directory_path)
-        return [] # Return empty list if no files found
-
-    logging.info(f"Found {len(audio_files)} audio files to process in {directory_path}")
-    
-    pbar: Optional[tqdm] = None
-    if not no_progress:
-        pbar = tqdm(audio_files, desc="Processing files", unit="file", ncols=100)
-        file_iterator = pbar
-    else:
-        file_iterator = audio_files
-    
-    results: List[Tuple[str, Optional[Beats]]] = []
-    
-    # Debug - first file only
-    if audio_files:
-        first_file = audio_files[0]
-        print(f"DEBUG: First file = {first_file}")
-    
-    for audio_file in file_iterator:
-        # Use relative path for reporting, but full path for processing
-        relative_path_str = str(audio_file.relative_to(directory_path))
-        full_path_str = str(audio_file)
-        
-        if pbar:
-            pbar.set_description(f"Processing {audio_file.name}")
-        else:
-            logging.info(f"Processing {relative_path_str}...")
-        
-        # For each file, start with base arguments
-        file_beats_args = beats_args.copy() if beats_args is not None else {}
-        file_detector_kwargs = detector_kwargs.copy() if detector_kwargs is not None else {}
-       
-        # Try to get genre from path
-        try:
-            genre = parse_genre_from_path(full_path_str)
-            logging.info(f"Detected genre from path for {audio_file.name}: {genre}")
-            
-            # Apply genre defaults to detector kwargs and beats args
-            file_detector_kwargs = genre_db.detector_kwargs_for_genre(genre, existing=file_detector_kwargs)
-            file_beats_args = genre_db.beats_kwargs_for_genre(genre, existing=file_beats_args)
-            
-            logging.info(f"Applied genre defaults for '{genre}' to {audio_file.name}")
-            logging.info(f"DEBUG: file_detector_kwargs = {file_detector_kwargs}")
-            logging.info(f"DEBUG: file_beats_args = {file_beats_args}")
-        except ValueError:
-            # No genre in path, use base arguments
-            logging.debug(f"No genre detected in path for {audio_file.name}, using base arguments")
-        
-        # Process the file
-        try:
-            beats_obj = extract_beats(
-                audio_file_path=full_path_str,
-                output_path=None,  # Let extract_beats handle default output
-                algorithm=algorithm,
-                beats_args=file_beats_args,
-                **file_detector_kwargs,
-            )
-            results.append((relative_path_str, beats_obj))
-        except Exception as e:
-            logging.error(f"Failed to process {relative_path_str}: {e}")
-            results.append((relative_path_str, None))
-    
-    if pbar:
-        pbar.close()
-    
-    return results
+# This function has been refactored into the enhanced process_batch function
+# in beat_detection/core/pipeline.py with the use_genre_defaults parameter
 
 
 def run_experiment(config_file: Path, input_dir: Optional[Path] = None, 
@@ -317,7 +126,13 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
     
     # 4. Save reproducibility information
     git_info = get_git_info()
-    save_reproducibility_info(root_output_dir, git_info, config_file, config)
+    save_reproducibility_info(
+        output_dir=root_output_dir,
+        git_info=git_info,
+        config_file=config_file,
+        config=config,
+        save_genre_db=final_use_genre_defaults
+    )
     
     # 5. Copy input data to experiment directory
     logging.info(f"Copying input data from {original_root_input_audio_dir} to {experiment_data_dir}")
@@ -346,28 +161,21 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
     else:
         logging.info("Genre-based defaults disabled. Using explicit configuration values only.")
     
-    # Choose processing method based on whether genre defaults are enabled
-    if final_use_genre_defaults:
-        try:
-            beat_results = process_batch_with_genre_defaults(
-                directory_path=experiment_data_dir,
-                algorithm=algorithm,
-                detector_kwargs=detector_kwargs,
-                beats_args=beats_args,
-                no_progress=False
-            )
-        except Exception as e:
-            print(f"DEBUG: Error in process_batch_with_genre_defaults: {e}")
-            print(f"DEBUG: detector_kwargs = {detector_kwargs!r}")
-            print(f"DEBUG: beats_args = {beats_args!r}")
-            raise
-    else:
+    # Use the enhanced process_batch function with genre defaults parameter
+    try:
         beat_results = process_batch(
             directory_path=experiment_data_dir,
             algorithm=algorithm,
             detector_kwargs=detector_kwargs,
-            beats_args=beats_args
+            beats_args=beats_args,
+            no_progress=False,
+            use_genre_defaults=final_use_genre_defaults
         )
+    except Exception as e:
+        print(f"DEBUG: Error in process_batch: {e}")
+        print(f"DEBUG: detector_kwargs = {detector_kwargs!r}")
+        print(f"DEBUG: beats_args = {beats_args!r}")
+        raise
     
     logging.info(f"Beat detection completed for {len(beat_results)} files")
     
