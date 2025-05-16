@@ -37,6 +37,11 @@ dependencies = [
     "torch>=2.0.0",
     "pyyaml>=6.0.2",
     "httpx>=0.24.0",
+    "beat_this @ git+https://github.com/CPJKU/beat_this@main#egg=beat_this",
+]
+
+[project.optional-dependencies]
+dev = [
     "pytest>=6.0.0",
     "pytest-asyncio>=0.21.0",
     "black>=21.5b2",
@@ -44,7 +49,7 @@ dependencies = [
     "isort>=5.9.1",
     "pre-commit>=3.3.3",
     "httpx>=0.24.0",
-    "beat_this @ git+https://github.com/CPJKU/beat_this@main#egg=beat_this",
+    "pydot>=3.0.4",
 ]
 
 [project.scripts]
@@ -76,10 +81,6 @@ markers = [
 pythonpath = ["."]
 addopts = "-m 'not slow'"  # Skip slow tests by default
 
-[dependency-groups]
-dev = [
-    "pydot>=3.0.4",
-]
 # Logging configuration
 # log_cli = true
 # log_cli_level = "INFO"
