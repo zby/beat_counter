@@ -1,14 +1,16 @@
 """
-Tests for the beat detector factory (now part of detector.py).
+Tests for the beat detector factory (now part of registry.py).
 """
 import pytest
 from unittest.mock import patch, MagicMock
 from typing import Dict, Type, Any
 import inspect
 
-from beat_detection.core.factory import get_beat_detector, DETECTOR_REGISTRY, BeatDetector
-from beat_detection.core.madmom_detector import MadmomBeatDetector
-from beat_detection.core.beat_this_detector import BeatThisDetector
+from beat_detection.core import get_beat_detector
+from beat_detection.core.registry import _DETECTORS
+from beat_detection.core.detector_protocol import BeatDetector
+from beat_detection.core.detectors.madmom import MadmomBeatDetector
+from beat_detection.core.detectors.beat_this import BeatThisDetector
 
 # Define a simple MockDetector for testing patching
 class MockDetector(BeatDetector):
@@ -17,7 +19,7 @@ class MockDetector(BeatDetector):
         # Store kwargs if needed for assertion
         self.init_kwargs = kwargs
 
-    def detect(self, audio_path):
+    def detect_beats(self, audio_path):
         # Simple mock implementation
         print(f"MockDetector detecting beats for: {audio_path}")
         return MagicMock() # Return a mock object for RawBeats
@@ -25,7 +27,7 @@ class MockDetector(BeatDetector):
 
 def test_get_beat_detector_default():
     """Test that the default detector is MadmomBeatDetector."""
-    detector = get_beat_detector()
+    detector = get_beat_detector("madmom")
     assert isinstance(detector, MadmomBeatDetector)
 
 
@@ -56,43 +58,41 @@ def test_get_beat_detector_kwargs():
 
 def test_detector_registry():
     """Test that the detector registry contains the expected detectors."""
-    assert "madmom" in DETECTOR_REGISTRY
-    assert DETECTOR_REGISTRY["madmom"] == MadmomBeatDetector
-    assert "beat_this" in DETECTOR_REGISTRY
-    assert DETECTOR_REGISTRY["beat_this"] == BeatThisDetector
+    assert "madmom" in _DETECTORS
+    assert _DETECTORS["madmom"] == MadmomBeatDetector
+    assert "beat_this" in _DETECTORS
+    assert _DETECTORS["beat_this"] == BeatThisDetector
 
 
 # Test that get_beat_detector uses the DETECTOR_REGISTRY
-# Patch the registry within the factory module where get_beat_detector uses it
-@patch("beat_detection.core.factory.DETECTOR_REGISTRY", {
+# Patch the registry within the registry module where get_beat_detector uses it
+@patch("beat_detection.core.registry._DETECTORS", {
     "mock_detector": MockDetector
 })
 def test_get_beat_detector_mocked_registry():
     """Test getting a detector using a patched registry."""
-    # Call the factory function (imported directly from factory)
+    # Call the factory function (imported directly from registry)
     detector = get_beat_detector("mock_detector")
 
     # Verify the mock detector class was used
     assert isinstance(detector, MockDetector)
 
 
-# Test filtering of kwargs with a patched registry
-# Patch the registry within the factory module where get_beat_detector uses it
-@patch("beat_detection.core.factory.DETECTOR_REGISTRY", {
+# Test kwargs passing
+@patch("beat_detection.core.registry._DETECTORS", {
     "mock_detector_with_params": MockDetector # Use the same mock class
 })
 def test_get_beat_detector_filtered_kwargs_mocked_registry():
-    """Test getting a detector with filtered kwargs using a patched registry."""
-    # Call the factory function with valid and invalid kwargs for MockDetector
-    valid_kwarg = list(inspect.signature(MockDetector.__init__).parameters.keys())[-1] # Assuming last is a valid kwarg
-    kwargs_to_pass = {valid_kwarg: "test_value", "extra_param": 123}
+    """Test that kwargs are passed to the detector constructor."""
+    # Call the function with kwargs
+    kwargs_to_pass = {"valid_kwarg": "test_value", "extra_param": 123}
 
-    # Expect a warning about the extra param
-    with pytest.warns(UserWarning, match="Ignoring extraneous keyword arguments"):
-        detector = get_beat_detector("mock_detector_with_params", **kwargs_to_pass)
+    detector = get_beat_detector("mock_detector_with_params", **kwargs_to_pass)
 
-    # Verify the mock detector class was used and received only valid kwargs
+    # Verify the mock detector class was used
     assert isinstance(detector, MockDetector)
-    assert valid_kwarg in detector.init_kwargs
-    assert "extra_param" not in detector.init_kwargs
-    assert detector.init_kwargs[valid_kwarg] == "test_value"
+    # In the new implementation, all kwargs are passed to the detector
+    assert "valid_kwarg" in detector.init_kwargs
+    assert detector.init_kwargs["valid_kwarg"] == "test_value"
+    assert "extra_param" in detector.init_kwargs
+    assert detector.init_kwargs["extra_param"] == 123

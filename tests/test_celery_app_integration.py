@@ -1,21 +1,32 @@
+"""
+Celery app integration tests.
+
+These tests verify that the Celery app can call the beat detection functions.
+"""
+
+import asyncio
 import pytest
 import os
 import json
+import sys
+import tempfile
 from pathlib import Path
 import shutil
 import numpy as np  # Needed for potential BeatDetector interactions
 from typing import Dict, Any
 import logging  # Import logging
+from unittest.mock import MagicMock, patch, PropertyMock
 
 from web_app.config import StorageConfig
 from web_app.storage import FileMetadataStorage
 from web_app.celery_app import (
     _perform_beat_detection,
-    _perform_video_generation,
+    _perform_video_generation
 )  # Import tasks and the new helper function
-from beat_detection.core.detector_protocol import BeatDetector # Import real detector
-from beat_detection.core.factory import get_beat_detector # Import factory function
-from beat_detection.core.beats import Beats, RawBeats # Import RawBeats
+from beat_detection.core import get_beat_detector
+from beat_detection.core.beats import Beats, RawBeats
+from web_app.config import Config
+from web_app.storage import FileMetadataStorage
 
 # --- Fixtures ---
 
@@ -102,7 +113,7 @@ def sample_beats_file(sample_audio_file, temp_storage_integration):
     # --- 1. Perform Beat Detection ---
     print(f"\nGenerating beats for {audio_path} using 'madmom' detector...")
     try:
-        detector: BeatDetector = get_beat_detector("madmom") # Use madmom for consistency or choose another
+        detector = get_beat_detector("madmom") # Use madmom for consistency or choose another
         raw_beats: RawBeats = detector.detect_beats(str(audio_path)) # NEW
         assert raw_beats is not None, "Beat detection did not return a RawBeats object."
         assert len(raw_beats.timestamps) > 0, "Beat detection returned no timestamps."

@@ -1,18 +1,22 @@
-"""Diagnostic version of beat_this tests to troubleshoot GitHub Actions failures."""
+"""
+Tests for beat_this detector diagnostics.
 
-from __future__ import annotations
+This file contains tests for debugging and diagnostic data from the beat_this detector.
+"""
 
-import sys
+import pytest
+import torch
 import os
+import json
+import sys
 import inspect
 import traceback
+from unittest.mock import patch, MagicMock, ANY
 from pathlib import Path
 
 import numpy as np
-import pytest
 
-from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.core.factory import get_beat_detector
+from beat_detection.core import get_beat_detector
 
 # -----------------------------------------------------------------------------
 # Test data with additional diagnostics
@@ -54,7 +58,7 @@ def test_beat_this_diagnostic():
 
         # --- Diagnose detector ---
         print_diagnostic("Initializing beat_this detector...")
-        detector: BeatDetector = get_beat_detector("beat_this")
+        detector = get_beat_detector("beat_this")
         print_diagnostic(f"Detector type: {type(detector)}")
         print_diagnostic(f"Detector methods: {dir(detector)}")
         print_diagnostic(f"detect_beats method: {inspect.signature(detector.detect_beats)}")

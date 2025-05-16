@@ -9,9 +9,11 @@ import numpy as np
 import pytest
 import os
 from unittest.mock import MagicMock
+import torch
+import logging
 
+from beat_detection.core import get_beat_detector, extract_beats
 from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.core.factory import get_beat_detector, extract_beats
 from beat_detection.core.beats import RawBeats, Beats
 from beat_detection.genre_db import GenreDB
 

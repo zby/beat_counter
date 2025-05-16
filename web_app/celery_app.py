@@ -11,15 +11,16 @@ from typing import Dict, Any, Optional, Callable, TYPE_CHECKING
 import logging
 
 from celery import Celery, states, Task
-from celery.signals import worker_init
+from celery.signals import worker_init, worker_process_init
 from web_app.config import Config, ConfigurationError # Ensure Config and ConfigurationError are imported
 from web_app.storage import FileMetadataStorage
 from web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
-from beat_detection.core.factory import get_beat_detector, extract_beats
+from beat_detection.core import get_beat_detector, extract_beats
 from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.core.beats import Beats, BeatCalculationError, RawBeats
 from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.genre_db import GenreDB, parse_genre_from_path
+import numpy as np
 
 # Set up logger
 logger = logging.getLogger(__name__)

@@ -53,7 +53,8 @@ def force_cpu_for_tests():
     os.environ['BEAT_DETECTION_FORCE_CPU'] = '1'
     
     # Apply patch for BeatThisDetector initialization
-    original_get_detector = __import__('beat_detection.core.factory').core.factory.get_beat_detector
+    import beat_detection.core
+    original_get_detector = beat_detection.core.get_beat_detector
     
     def patched_get_detector(*args, **kwargs):
         # Force 'device' parameter to 'cpu' for any BeatThisDetector
@@ -61,7 +62,7 @@ def force_cpu_for_tests():
             kwargs['device'] = 'cpu'
         return original_get_detector(*args, **kwargs)
     
-    with patch('beat_detection.core.factory.get_beat_detector', patched_get_detector):
+    with patch('beat_detection.core.registry.get', patched_get_detector):
         yield 
 
 def pytest_collection_modifyitems(items):

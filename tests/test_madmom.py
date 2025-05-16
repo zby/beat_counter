@@ -1,8 +1,7 @@
 import pytest
 import os  # Import os for file operations
 from pathlib import Path
-from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.core.factory import get_beat_detector
+from beat_detection.core import get_beat_detector
 from beat_detection.core.beats import BeatCalculationError
 import numpy as np
 
@@ -43,7 +42,7 @@ def test_madmom_detect_save_load_reconstruct():
     output_beats_file = MADMOM_OUTPUT_BEATS_FILE
 
     # --- 1. Detect beats & 2. Infer beats_per_bar --- 
-    detector: BeatDetector = get_beat_detector("madmom")
+    detector = get_beat_detector("madmom")
     raw_beats = detector.detect_beats(str(TEST_AUDIO_FILE))
 
     assert raw_beats is not None, "Simplified RawBeats object was not created by madmom."
@@ -88,7 +87,7 @@ def test_madmom_detect_save_load_reconstruct():
 
 def test_madmom_invalid_audio_file():
     """Test that appropriate errors are raised for invalid audio files."""
-    detector: BeatDetector = get_beat_detector("madmom")
+    detector = get_beat_detector("madmom")
     
     # Test non-existent file
     with pytest.raises(FileNotFoundError):
@@ -103,6 +102,26 @@ def test_madmom_invalid_audio_file():
     finally:
         if empty_file.exists():
             empty_file.unlink()
+
+
+def test_madmom_detector_constructor():
+    """Test that the detector can be instantiated with various parameters."""
+    # Default constructor
+    detector = get_beat_detector("madmom")
+    assert detector is not None
+    
+    # With min/max BPM
+    detector = get_beat_detector("madmom", min_bpm=90, max_bpm=180)
+    assert detector.min_bpm == 90
+    assert detector.max_bpm == 180
+    
+    # With custom fps
+    detector = get_beat_detector("madmom", fps=200)
+    assert detector.fps == 200
+    
+    # With custom beats_per_bar
+    detector = get_beat_detector("madmom", beats_per_bar=[3, 4])
+    assert detector.beats_per_bar == [3, 4]
 
 
 # Keep the main block for potentially running tests directly (though pytest is preferred)
