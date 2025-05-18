@@ -11,98 +11,77 @@ from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatP
 
 from beat_detection.core.beats import RawBeats, BeatCalculationError
 from beat_detection.core.registry import register
-from beat_detection.core.detectors.base import BaseBeatDetector
+from beat_detection.core.detectors.base import BaseBeatDetector, DetectorConfig
 import beat_detection.utils.constants as constants
 
 @register("madmom")
 class MadmomBeatDetector(BaseBeatDetector):
     """Detect beats and downbeats in audio files using Madmom."""
 
-    def __init__(
-        self,
-        beats_per_bar: Optional[Union[List[int], Tuple[int, ...]]] = constants.SUPPORTED_BEATS_PER_BAR,
-        min_bpm: Optional[int] = None,
-        max_bpm: Optional[int] = None,
-        fps: Optional[int] = constants.FPS,
-    ):
+    def __init__(self, cfg: DetectorConfig):
         """
         Initialize the MadmomBeatDetector.
 
         Parameters:
         ----------
-        beats_per_bar : Optional[Union[List[int], Tuple[int, ...]]], optional
-            A list or tuple of integers representing the number of beats per bar
-            to guide the downbeat tracker (e.g., [3, 4]).
-            Defaults to SUPPORTED_BEATS_PER_BAR (typically [3, 4]).
-            If None, Madmom's processor throws an error.
-        min_bpm : Optional[int], optional
-            Minimum tempo to consider. If None, Madmom's default is used.
-        max_bpm : Optional[int], optional
-            Maximum tempo to consider. If None, Madmom's default is used.
-        fps : Optional[int], optional
-            Frames per second for activation functions. If None, Madmom's default is used.
+        cfg : DetectorConfig
+            Configuration object with detector parameters.
 
         Raises:
         -------
         BeatCalculationError
             If provided parameters are invalid.
         """
-        # --- Input Validation (Applied only if values are provided or for defaults) ---
-        if beats_per_bar is not None: # This includes the default SUPPORTED_BEATS_PER_BAR
-            if not isinstance(beats_per_bar, (list, tuple)):
+        super().__init__(cfg)
+
+        # --- Input Validation (Applied from the config object) ---
+        if self.cfg.beats_per_bar is not None:
+            if not isinstance(self.cfg.beats_per_bar, (list, tuple)):
                 raise BeatCalculationError(
-                    f"Invalid beats_per_bar: {beats_per_bar}. Must be a list or tuple of integers if provided."
+                    f"Invalid beats_per_bar: {self.cfg.beats_per_bar}. Must be a list or tuple of integers if provided."
                 )
-            if not beats_per_bar: # Check for empty list/tuple
+            if not self.cfg.beats_per_bar:  # Check for empty list/tuple
                  raise BeatCalculationError(
-                    f"Invalid beats_per_bar: {beats_per_bar}. Cannot be an empty list/tuple."
+                    f"Invalid beats_per_bar: {self.cfg.beats_per_bar}. Cannot be an empty list/tuple."
                 )
-            for bpb_val in beats_per_bar:
+            for bpb_val in self.cfg.beats_per_bar:
                 if not isinstance(bpb_val, int) or bpb_val <= 0:
                     raise BeatCalculationError(
                         f"Invalid value in beats_per_bar: {bpb_val}. All values must be positive integers."
                     )
-        # If beats_per_bar is explicitly None, Madmom might use a very broad default for its processor
-        # or potentially error if the processor strictly requires it. 
-        # Our default is SUPPORTED_BEATS_PER_BAR, so this condition is met unless a caller explicitly passes None.
 
-        if min_bpm is not None:
-            if not isinstance(min_bpm, int) or min_bpm <= 0:
+        if self.cfg.min_bpm is not None:
+            if not isinstance(self.cfg.min_bpm, int) or self.cfg.min_bpm <= 0:
                 raise BeatCalculationError(
-                    f"Invalid min_bpm: {min_bpm}. Must be a positive integer if provided."
+                    f"Invalid min_bpm: {self.cfg.min_bpm}. Must be a positive integer if provided."
                 )
-        if max_bpm is not None:
-            if not isinstance(max_bpm, int) or max_bpm <= 0:
+        if self.cfg.max_bpm is not None:
+            if not isinstance(self.cfg.max_bpm, int) or self.cfg.max_bpm <= 0:
                  raise BeatCalculationError(
-                    f"Invalid max_bpm: {max_bpm}. Must be a positive integer if provided."
+                    f"Invalid max_bpm: {self.cfg.max_bpm}. Must be a positive integer if provided."
                 )
-        if min_bpm is not None and max_bpm is not None:
-            if max_bpm <= min_bpm:
+        if self.cfg.min_bpm is not None and self.cfg.max_bpm is not None:
+            if self.cfg.max_bpm <= self.cfg.min_bpm:
                 raise BeatCalculationError(
-                    f"Invalid max_bpm: {max_bpm}. Must be > min_bpm ({min_bpm}) if both are provided."
+                    f"Invalid max_bpm: {self.cfg.max_bpm}. Must be > min_bpm ({self.cfg.min_bpm}) if both are provided."
                 )
-        if fps is not None:
-            if not isinstance(fps, int) or fps <= 0:
+        if self.cfg.fps is not None:
+            if not isinstance(self.cfg.fps, int) or self.cfg.fps <= 0:
                 raise BeatCalculationError(
-                    f"Invalid fps: {fps}. Must be a positive integer if provided."
+                    f"Invalid fps: {self.cfg.fps}. Must be a positive integer if provided."
                 )
         # --- End Validation ---
 
-        self.beats_per_bar = beats_per_bar
-        self.min_bpm = min_bpm
-        self.max_bpm = max_bpm
-        self.fps = fps
-
         self.downbeat_processor = RNNDownBeatProcessor()
 
-        dbn_kwargs = { 'beats_per_bar': self.beats_per_bar }
+        dbn_kwargs = { 'beats_per_bar': self.cfg.beats_per_bar }
         
-        if self.min_bpm is not None:
-            dbn_kwargs['min_bpm'] = float(self.min_bpm)
-        if self.max_bpm is not None:
-            dbn_kwargs['max_bpm'] = float(self.max_bpm)
-        if self.fps is not None:
-            dbn_kwargs['fps'] = int(self.fps)
+        if self.cfg.min_bpm is not None:
+            dbn_kwargs['min_bpm'] = float(self.cfg.min_bpm)
+        if self.cfg.max_bpm is not None:
+            dbn_kwargs['max_bpm'] = float(self.cfg.max_bpm)
+        if self.cfg.fps is not None:
+            dbn_kwargs['fps'] = int(self.cfg.fps)
 
         self.downbeat_tracker = DBNDownBeatTrackingProcessor(**dbn_kwargs)
 

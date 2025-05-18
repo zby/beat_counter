@@ -19,8 +19,7 @@ from pydub import AudioSegment
 
 from beat_detection.core.beats import RawBeats, BeatCalculationError
 from beat_detection.core.registry import register
-from beat_detection.core.detectors.base import BaseBeatDetector
-
+from beat_detection.core.detectors.base import BaseBeatDetector, DetectorConfig
 import beat_detection.utils.constants as constants
 
 from typing import Optional, List, Tuple, Union
@@ -73,17 +72,31 @@ class BeatThisDetector(BaseBeatDetector):
 
     def __init__(
         self,
+        cfg: DetectorConfig,
         checkpoint: str = "final0",
         device: str | None = None,
         use_float16: bool = False,
         use_dbn: bool = True,
-        beats_per_bar: Optional[Union[List[int], Tuple[int, ...]]] = constants.SUPPORTED_BEATS_PER_BAR,
-        min_bpm: Optional[int] = None,
-        max_bpm: Optional[int] = None,
         transition_lambda: float = 100,
-        fps: int = BEAT_THIS_FPS,
     ) -> None:
-        """Prepare the underlying Beat-This model once at construction time."""
+        """Prepare the underlying Beat-This model once at construction time.
+        
+        Parameters:
+        -----------
+        cfg : DetectorConfig
+            Configuration object with detector parameters.
+        checkpoint : str, optional
+            Checkpoint path for the beat_this model. Defaults to "final0".
+        device : str | None, optional
+            Device to use for inference. If None, will auto-select. Defaults to None.
+        use_float16 : bool, optional
+            Whether to use float16 precision. Defaults to False.
+        use_dbn : bool, optional
+            Whether to use the DBN postprocessor. Defaults to True.
+        transition_lambda : float, optional
+            Lambda for the tempo change distribution. Defaults to 100.
+        """
+        super().__init__(cfg)
 
         # Check if we need to force CPU usage via environment variable
         force_cpu = os.environ.get('BEAT_DETECTION_FORCE_CPU') == '1'
@@ -103,11 +116,14 @@ class BeatThisDetector(BaseBeatDetector):
             dbn=use_dbn,
         )
         
+        # Get the proper FPS value - use BEAT_THIS_FPS as fallback if needed
+        fps = getattr(self.cfg, 'fps', BEAT_THIS_FPS)
+        
         custom_postprocessor = CustomBeatTrackingProcessor(
             fps=fps,
-            beats_per_bar=beats_per_bar,
-            min_bpm=min_bpm,
-            max_bpm=max_bpm,
+            beats_per_bar=self.cfg.beats_per_bar,
+            min_bpm=self.cfg.min_bpm,
+            max_bpm=self.cfg.max_bpm,
             transition_lambda=transition_lambda
         )
         
