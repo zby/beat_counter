@@ -59,7 +59,7 @@ generate-video = "beat_detection.cli.generate_video:main"
 generate-video-batch = "beat_detection.cli.generate_video_batch:main"
 
 [tool.setuptools]
-packages = ["web_app", "beat_detection", "beat_detection.core", "beat_detection.utils", "beat_detection.cli"]
+packages = ["web_app", "beat_detection", "beat_detection.core", "beat_detection.core.detectors", "beat_detection.utils", "beat_detection.cli"]
 
 [tool.black]
 line-length = 88
