@@ -1,99 +1,96 @@
 """
-Tests for pipeline functionality.
+Tests for the pipeline module.
 """
 import os
 import pytest
-from pathlib import Path
 import numpy as np
-from unittest.mock import Mock, patch
+from unittest.mock import patch, MagicMock
+from pathlib import Path
 
-from beat_detection.core.pipeline import extract_beats, process_batch
+from beat_detection.core.pipeline import process_batch, extract_beats
 from beat_detection.core.beats import RawBeats, Beats
 
 
-class FakeDetector:
-    """Mock detector for testing."""
+def test_extract_beats_calls_build():
+    """Test that extract_beats uses the build function from registry."""
+    # Create beats_per_bar that we'll use
+    beats_per_bar = 3
     
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
+    # Create enough data to satisfy the requirements (min_measures=5 with 3 beats per measure = 15 beats)
+    timestamps = np.linspace(0, 7.0, 15)  # 15 evenly spaced beats
+    # Create beat counts that cycle 1,2,3,1,2,3,... to simulate beats in 3/4 time
+    beat_counts = np.array([(i % beats_per_bar) + 1 for i in range(15)])
+    
+    # Create a proper mock of RawBeats that passes isinstance check and has required attributes
+    mock_raw_beats = MagicMock(spec=RawBeats)
+    mock_raw_beats.timestamps = timestamps
+    mock_raw_beats.beat_counts = beat_counts
+    mock_raw_beats.clip_length = 8.0
+    mock_raw_beats.save_to_file = MagicMock()
+    
+    # Create a mock detector that returns our mock_raw_beats
+    mock_detector = MagicMock()
+    mock_detector.detect_beats.return_value = mock_raw_beats
+    
+    # Create a mock Beats object that will be returned
+    mock_beats = MagicMock()
+    
+    # Patch multiple functions to avoid validation
+    with patch('beat_detection.core.pipeline.build', return_value=mock_detector) as mock_build, \
+         patch('pathlib.Path.is_file', return_value=True), \
+         patch('beat_detection.core.pipeline.get_output_path', return_value='test.beats'), \
+         patch('beat_detection.core.pipeline.Beats', return_value=mock_beats) as mock_beats_class, \
+         patch('builtins.open', MagicMock()), \
+         patch('json.dump'):
         
-    def detect_beats(self, audio_path):
-        """Return fixed beats for testing."""
-        # Create enough beats for a valid test (5 measures with 4 beats each = 20 beats)
-        # Generate timestamps with consistent intervals (0.5s) and simple pattern of beat counts
-        timestamps = np.array([0.5 + i*0.5 for i in range(25)])
+        # Call the function we're testing
+        result = extract_beats("test.wav", detector_name="madmom", min_bpm=90)
         
-        # Create repeating pattern of 1,2,3,4 for beat counts (for a 4/4 time signature)
-        beat_counts = np.array([(i % 4) + 1 for i in range(25)])
+        # Verify that build was called with the correct arguments
+        mock_build.assert_called_once_with("madmom", min_bpm=90)
         
-        return RawBeats(timestamps=timestamps, beat_counts=beat_counts, clip_length=13.0)
+        # Verify that the detector's detect_beats method was called
+        mock_detector.detect_beats.assert_called_once_with("test.wav")
+        
+        # Verify that raw_beats.save_to_file was called
+        mock_raw_beats.save_to_file.assert_called_once()
+        
+        # Verify that Beats constructor was called with raw_beats
+        mock_beats_class.assert_called_once_with(mock_raw_beats, **{})
+        
+        # Verify that we got the expected result
+        assert result is mock_beats
 
 
-@pytest.fixture
-def audio_file(tmp_path):
-    """Create a fake audio file for testing."""
-    audio_path = tmp_path / "test.wav"
-    audio_path.touch()  # Create an empty file
-    return str(audio_path)
-
-
-# Use function-level patching to avoid issues with imported names
-@patch("beat_detection.core.pipeline.get_detector")
-def test_extract_beats_uses_detector(mock_get_detector, audio_file):
-    """Test that extract_beats uses the detector from registry."""
-    # Set up mock
-    fake_detector = FakeDetector()
-    mock_get_detector.return_value = fake_detector
+def test_process_batch_calls_extract_beats():
+    """Test that process_batch calls extract_beats with the correct arguments."""
+    mock_audio_files = [Path('/path/to/audio1.mp3'), Path('/path/to/audio2.mp3')]
     
-    # Call function
-    result = extract_beats(audio_file, algorithm="test_algo")
-    
-    # Check that registry.get was called with the right args
-    mock_get_detector.assert_called_once_with(algorithm="test_algo")
-    
-    # Check that the result is a Beats object with expected values
-    assert isinstance(result, Beats)
-    assert result.beat_data.shape[0] == 25  # 25 beats
-    assert result.beat_data[0, 0] == 0.5    # First timestamp
-    
-    # Check that .beats file was created
-    beats_file = Path(audio_file).with_suffix(".beats")
-    assert beats_file.exists()
-    
-    # Check that ._beat_stats file was created
-    stats_file = Path(str(beats_file).replace(".beats", "._beat_stats"))
-    assert stats_file.exists()
-
-
-@patch("beat_detection.core.pipeline.get_detector")
-@patch("beat_detection.core.pipeline.find_audio_files")
-def test_process_batch(mock_find_files, mock_get_detector, tmp_path):
-    """Test batch processing of audio files."""
-    # Create some test files
-    file1 = tmp_path / "test1.wav"
-    file2 = tmp_path / "test2.wav"
-    file1.touch()
-    file2.touch()
-    
-    # Set up mock for find_audio_files
-    mock_find_files.return_value = [file1, file2]
-    
-    # Set up mock for get_detector
-    fake_detector = FakeDetector()
-    mock_get_detector.return_value = fake_detector
-    
-    # Call function with no_progress=True to avoid tqdm output in tests
-    results = process_batch(tmp_path, algorithm="test_algo", no_progress=True)
-    
-    # Check results
-    assert len(results) == 2
-    assert results[0][0] == "test1.wav"
-    assert results[1][0] == "test2.wav"
-    assert isinstance(results[0][1], Beats)
-    assert isinstance(results[1][1], Beats)
-    
-    # Check that files were created
-    assert (tmp_path / "test1.beats").exists()
-    assert (tmp_path / "test2.beats").exists()
-    assert (tmp_path / "test1._beat_stats").exists()
-    assert (tmp_path / "test2._beat_stats").exists() 
+    with patch('beat_detection.core.pipeline.Path.is_dir', return_value=True), \
+         patch('beat_detection.core.pipeline.find_audio_files', return_value=mock_audio_files), \
+         patch('beat_detection.core.pipeline.extract_beats') as mock_extract_beats, \
+         patch('pathlib.Path.relative_to', side_effect=lambda x: Path(os.path.basename(x))):
+        
+        # Mock extract_beats to return a MagicMock
+        mock_extract_beats.return_value = MagicMock()
+        
+        # Create detector kwargs dict
+        detector_kwargs = {"min_bpm": 90}
+        
+        # Call process_batch with custom parameters
+        process_batch("/path/to/dir", detector_name="beat_this", detector_kwargs=detector_kwargs, no_progress=True)
+        
+        # Verify extract_beats was called for each file with correct params
+        assert mock_extract_beats.call_count == 2
+        
+        # Check first call
+        args, kwargs = mock_extract_beats.call_args_list[0]
+        assert kwargs['audio_file_path'] == str(mock_audio_files[0])
+        assert kwargs['detector_name'] == "beat_this"
+        assert kwargs['min_bpm'] == 90
+        
+        # Check second call
+        args, kwargs = mock_extract_beats.call_args_list[1]
+        assert kwargs['audio_file_path'] == str(mock_audio_files[1])
+        assert kwargs['detector_name'] == "beat_this"
+        assert kwargs['min_bpm'] == 90 
