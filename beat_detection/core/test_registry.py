@@ -1,66 +1,90 @@
 """
-Tests for the registry module.
+Tests for the beat detection registry.
 """
+
 import pytest
-from beat_detection.core.registry import register, get, _DETECTORS
-from beat_detection.core.detector_protocol import BeatDetector
+import warnings
+from unittest.mock import patch, MagicMock
 
-# Clear registry between tests
-@pytest.fixture(autouse=True)
-def clear_registry():
-    original_detectors = _DETECTORS.copy()
-    _DETECTORS.clear()
-    yield
-    _DETECTORS.clear()
-    _DETECTORS.update(original_detectors)
+from beat_detection.core.registry import register, build, get
+from beat_detection.core.detectors.base import DetectorConfig
 
-# Create a dummy detector for testing
-class _DummyDetector:
-    def __init__(self, param1=None):
-        self.param1 = param1
-    
-    def detect_beats(self, audio_path):
-        return "dummy_beats"  # Not a real RawBeats, just for testing
 
-def test_register_decorator():
-    # Test registering a detector
-    @register("dummy")
-    class TestDetector(_DummyDetector):
-        pass
+# Test detector class
+class MockDetector:
+    def __init__(self, cfg, **kwargs):
+        self.cfg = cfg
+        self.kwargs = kwargs
+
+
+def test_register():
+    """Test detector registration."""
+    # Create a local registry for testing
+    with patch('beat_detection.core.registry._DETECTORS', {}):
+        # Register the test detector
+        register_name = "test_detector"
+        decorated = register(register_name)(MockDetector)
         
-    assert "dummy" in _DETECTORS
-    assert _DETECTORS["dummy"] == TestDetector
+        from beat_detection.core.registry import _DETECTORS
+        assert register_name in _DETECTORS
+        assert _DETECTORS[register_name] == MockDetector
+        assert decorated == MockDetector
 
-def test_register_duplicate():
-    # Test registering a detector with the same name twice
-    @register("dummy")
-    class TestDetector1(_DummyDetector):
-        pass
+
+def test_build_with_config():
+    """Test building a detector with an explicit config object."""
+    with patch('beat_detection.core.registry._DETECTORS', {"test_detector": MockDetector}):
+        # Create a config
+        config = DetectorConfig(min_bpm=90, max_bpm=180)
         
-    with pytest.raises(ValueError, match="is already registered"):
-        @register("dummy")
-        class TestDetector2(_DummyDetector):
-            pass
-
-def test_get_success():
-    # Test successfully getting a detector
-    @register("dummy")
-    class TestDetector(_DummyDetector):
-        pass
+        # Build detector with config
+        detector = build("test_detector", config=config, extra_arg="value")
         
-    detector = get("dummy")
-    assert isinstance(detector, TestDetector)
+        # Check detector was created with our config and extra args
+        assert detector.cfg is config
+        assert detector.kwargs == {"extra_arg": "value"}
 
-def test_get_with_params():
-    # Test getting a detector with parameters
-    @register("dummy")
-    class TestDetector(_DummyDetector):
-        pass
+
+def test_build_with_kwargs():
+    """Test building a detector from kwargs to create a config."""
+    with patch('beat_detection.core.registry._DETECTORS', {"test_detector": MockDetector}):
+        # Build detector with kwargs that should go into config
+        detector = build("test_detector", min_bpm=90, max_bpm=180, extra_arg="value")
         
-    detector = get("dummy", param1="test_value")
-    assert detector.param1 == "test_value"
+        # Check detector was created with a proper config and extra args
+        assert isinstance(detector.cfg, DetectorConfig)
+        assert detector.cfg.min_bpm == 90
+        assert detector.cfg.max_bpm == 180
+        assert detector.kwargs == {"extra_arg": "value"}
 
-def test_get_failure():
-    # Test getting a detector that doesn't exist
-    with pytest.raises(ValueError, match="Unsupported beat detection algorithm"):
-        get("nonexistent") 
+
+def test_get_deprecated():
+    """Test that get() calls build() and emits a deprecation warning."""
+    with patch('beat_detection.core.registry.build') as mock_build, \
+         warnings.catch_warnings(record=True) as recorded_warnings:
+        
+        # Configure mock
+        mock_build.return_value = "mock detector"
+        
+        # Call get() and capture warning
+        result = get("test_detector", min_bpm=90, extra_arg="value")
+        
+        # Verify build was called with correct args
+        mock_build.assert_called_once_with("test_detector", min_bpm=90, extra_arg="value")
+        
+        # Verify result is from build()
+        assert result == "mock detector"
+        
+        # Verify deprecation warning was issued
+        assert len(recorded_warnings) > 0
+        assert issubclass(recorded_warnings[0].category, DeprecationWarning)
+        assert "get() is deprecated" in str(recorded_warnings[0].message)
+
+
+def test_build_algorithm_not_found():
+    """Test that build() raises an error for unknown algorithms."""
+    with patch('beat_detection.core.registry._DETECTORS', {}):
+        with pytest.raises(ValueError) as excinfo:
+            build("nonexistent")
+        
+        assert "Unsupported beat detection algorithm" in str(excinfo.value) 
