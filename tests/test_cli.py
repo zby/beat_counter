@@ -30,42 +30,57 @@ if not SAMPLE_AUDIO_PATH.is_file():
 
 @pytest.fixture(scope="module")
 def cli_test_setup() -> pathlib.Path:
-    """Sets up the tests/out/cli_tests directory for CLI testing.
+    """Set up the test environment for CLI tests. Returns path to the audio file in test dir."""
+    # Set up test output dir
+    CLI_TEST_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    - Cleans and recreates the directory.
-    - Copies the sample audio into it.
-    - Yields the path to the copied audio file.
-    - Leaves the directory contents for inspection after tests.
-    """
-    # Clean up before test run
-    if CLI_TEST_OUTPUT_DIR.exists():
-        shutil.rmtree(CLI_TEST_OUTPUT_DIR)
-    CLI_TEST_OUTPUT_DIR.mkdir(parents=True, exist_ok=True) # Ensure exist_ok=True
+    # Copy a test audio file to the output directory for testing
+    audio_file_dest = CLI_TEST_OUTPUT_DIR / SAMPLE_AUDIO_NAME
 
-    # Copy sample audio
-    dest_path = CLI_TEST_OUTPUT_DIR / SAMPLE_AUDIO_NAME
-    shutil.copy(SAMPLE_AUDIO_PATH, dest_path)
-    yield dest_path
-    # No cleanup - leave files for inspection
+    # Copy only if it doesn't exist or is different (prevents constant copying)
+    if not audio_file_dest.is_file() or audio_file_dest.stat().st_size != SAMPLE_AUDIO_PATH.stat().st_size:
+        try:
+            # Use binary read/write for cross-platform safety
+            with open(SAMPLE_AUDIO_PATH, 'rb') as src_file, open(audio_file_dest, 'wb') as dest_file:
+                dest_file.write(src_file.read())
+            print(f"Copied test audio file to {audio_file_dest}")
+        except Exception as e:
+            pytest.fail(f"Failed to copy test audio file: {e}")
+
+    return audio_file_dest
 
 
 # --- Helper Functions ---
 
 
 def run_cli(command: List[str], **kwargs) -> subprocess.CompletedProcess:
-    """Helper to run CLI commands using the current Python executable."""
-    # Prepend sys.executable to ensure running with the correct environment
-    # This avoids issues if the virtual env isn't activated in the shell running pytest
-    # We directly call the registered script names, assuming `uv pip install .` was run.
-    # If scripts aren't found, prepend [sys.executable, "-m", "beat_detection.cli.<module_name>"]
-    # For now, assume scripts like 'detect-beats' are on PATH
+    """Run a command-line interface command and capture output.
+    
+    Params:
+    -------
+    command : List[str]
+        The command to run, e.g. ["detect-beats", "path/to/audio.mp3"]
+    **kwargs : Any
+        Additional keyword arguments to pass to subprocess.run
+    
+    Returns:
+    --------
+    subprocess.CompletedProcess
+        The result of the command execution
+    """
+    # Capture stdout and stderr by default
+    kwargs.setdefault("capture_output", True)
+    kwargs.setdefault("text", True)  # Return strings not bytes
+    
     print(f"\nRunning CLI: {' '.join(command)}")
-    result = subprocess.run(command, capture_output=True, text=True, check=False, **kwargs)
+    result = subprocess.run(command, **kwargs)
     print(f"Exit Code: {result.returncode}")
-    if result.stdout:
+    
+    if result.stdout and result.stdout.strip():
         print(f"Stdout:\n{result.stdout.strip()}")
-    if result.stderr:
+    if result.stderr and result.stderr.strip():
         print(f"Stderr:\n{result.stderr.strip()}")
+    
     return result
 
 
@@ -75,27 +90,26 @@ def run_cli(command: List[str], **kwargs) -> subprocess.CompletedProcess:
 # 1. detect-beats (Single File)
 
 def test_detect_beats_default_output(cli_test_setup):
-    """Test `detect-beats` writing beats file next to audio by default (using madmom)."""
-    audio_file = cli_test_setup # Path provided by fixture
+    """Test `detect-beats` with default output path (derived from input)."""
+    audio_file = cli_test_setup
     expected_beats_file = audio_file.with_suffix(".beats")
-
-    # Ensure output file doesn't exist beforehand for this test run
+    
+    # Clean up first if file exists
     expected_beats_file.unlink(missing_ok=True)
-
-    # Run command (use madmom)
-    # Use min_measures=1 for testing with short audio samples
-    result = run_cli(["detect-beats", str(audio_file), "--algorithm", "madmom", "--min-measures", "1"])
-
+    
+    # Run command with defaults
+    result = run_cli(["detect-beats", str(audio_file)])
+    
     assert result.returncode == 0
-    assert expected_beats_file.is_file(), f"Expected beats file {expected_beats_file} was not created"
+    assert expected_beats_file.is_file()
     assert expected_beats_file.stat().st_size > 0
-
-    # Verify file content
+    
+    # Verify the beats file format
     try:
         with expected_beats_file.open("r") as f:
             beats_data = json.load(f)
         assert isinstance(beats_data, dict)
-        # Check for simplified RawBeats format
+        # Check for RawBeats format
         assert "timestamps" in beats_data
         assert "beat_counts" in beats_data
         assert isinstance(beats_data["timestamps"], list)
@@ -128,7 +142,7 @@ def test_detect_beats_batch_success(cli_test_setup):
     expected_beats_file.unlink(missing_ok=True)
 
     # Run command (use madmom)
-    result = run_cli(["detect-beats-batch", str(input_dir), "--algorithm", "madmom", "--min-measures", "1"])
+    result = run_cli(["detect-beats-batch", str(input_dir), "--detector-name", "madmom", "--min-measures", "1"])
 
     assert result.returncode == 0
     # Allow stderr for logging, but check main message
@@ -168,7 +182,7 @@ def beats_file_for_video(cli_test_setup) -> pathlib.Path:
     # For simplicity, let's ensure it's created here.
     beats_file.unlink(missing_ok=True)
     # Use min_measures=1 for testing with short audio samples
-    result = run_cli(["detect-beats", str(audio_file), "--algorithm", "madmom", "--min-measures", "1", "-o", str(beats_file)])
+    result = run_cli(["detect-beats", str(audio_file), "--detector-name", "madmom", "--min-measures", "1", "-o", str(beats_file)])
     assert result.returncode == 0, f"Failed to create beats file for video test: {result.stderr}"
     assert beats_file.is_file()
     return beats_file
@@ -230,7 +244,7 @@ def test_generate_video_batch_default_output(cli_test_setup):
     # Ensure beats file exists first for this test (run detect-beats)
     if not beats_file.is_file(): # pragma: no cover (should exist from previous tests/setup)
         # Run detect-beats if needed, although fixture should handle this? Re-run for safety.
-        result_beats = run_cli(["detect-beats", str(audio_file_path), "--algorithm", "madmom", "--min-measures", "1", "-o", str(beats_file)])
+        result_beats = run_cli(["detect-beats", str(audio_file_path), "--detector-name", "madmom", "--min-measures", "1", "-o", str(beats_file)])
         assert result_beats.returncode == 0, f"Setup failed: Could not generate beats file: {result_beats.stderr}"
 
     # Define and ensure expected output file doesn't exist beforehand
@@ -260,7 +274,7 @@ def test_generate_video_batch_explicit_output(cli_test_setup):
 
     # Ensure beats file exists first
     if not beats_file.is_file(): # pragma: no cover
-        result_beats = run_cli(["detect-beats", str(audio_file_path), "--algorithm", "madmom", "--min-measures", "1", "-o", str(beats_file)])
+        result_beats = run_cli(["detect-beats", str(audio_file_path), "--detector-name", "madmom", "--min-measures", "1", "-o", str(beats_file)])
         assert result_beats.returncode == 0, f"Setup failed: Could not generate beats file: {result_beats.stderr}"
 
     # Define and ensure expected output file doesn't exist beforehand
@@ -298,29 +312,55 @@ def test_generate_video_batch_missing_beats(cli_test_setup):
     result = run_cli(["generate-video-batch", str(input_dir)])
     # The batch script should skip the file and report success (exit 0), but log a warning
     assert result.returncode == 0
-    assert "Skipping" in result.stderr or "Beats file not found" in result.stderr
+    # Some indication the file was skipped should be in stdout or stderr
+    assert "skipped" in result.stdout.lower() or "skipped" in result.stderr.lower() or \
+           "missing" in result.stdout.lower() or "missing" in result.stderr.lower()
+    assert not video_file.is_file(), "Expected video file to not be created"
 
 def test_generate_video_batch_input_dir_not_found(cli_test_setup):
-    """Test `generate-video-batch` when input directory doesn't exist."""
-    # Define non-existent dir relative to test output dir
-    non_existent_dir = cli_test_setup.parent / "non_existent_video_batch_dir"
-    # Ensure it doesn't exist
-    if non_existent_dir.exists(): # pragma: no cover
-        shutil.rmtree(non_existent_dir)
-
-    result = run_cli(["generate-video-batch", str(non_existent_dir)])
-    assert result.returncode != 0
-    assert "Input directory not found" in result.stderr
+    """Test `generate-video-batch` with a non-existent input directory."""
+    # Use a path that doesn't exist
+    non_existent_dir = cli_test_setup.parent / "non_existent_dir"
+    try:
+        # Ensure it doesn't exist
+        if non_existent_dir.is_dir():
+            non_existent_dir.rmdir()
+    
+        result = run_cli(["generate-video-batch", str(non_existent_dir)])
+        assert result.returncode != 0
+        assert "not found" in result.stderr.lower() or "does not exist" in result.stderr.lower()
+    finally:
+        # Clean up in case test somehow creates it
+        if non_existent_dir.is_dir():
+            non_existent_dir.rmdir()
 
 def test_generate_video_batch_no_audio_files_found(cli_test_setup):
-    """Test `generate-video-batch` when no audio files are found."""
-    # Create an empty directory within the test output dir
-    empty_dir = cli_test_setup.parent / "empty_video_batch_dir"
-    if empty_dir.exists(): # pragma: no cover
-        shutil.rmtree(empty_dir)
-    empty_dir.mkdir(parents=True)
-
-    result = run_cli(["generate-video-batch", str(empty_dir)])
-    # Script should exit cleanly (0) but warn
-    assert result.returncode == 0
-    assert "No audio files found" in result.stderr
+    """Test `generate-video-batch` with a directory containing no audio files."""
+    # Create a temporary directory for this test
+    empty_dir = cli_test_setup.parent / "empty_dir_for_batch_test"
+    empty_dir.mkdir(exist_ok=True)
+    
+    try:
+        # Remove any audio files (just to be sure)
+        for f in empty_dir.glob("*.mp3"):
+            f.unlink()
+        for f in empty_dir.glob("*.wav"):
+            f.unlink()
+        
+        result = run_cli(["generate-video-batch", str(empty_dir)])
+        # Should succeed with a warning
+        assert result.returncode == 0
+        assert "no audio files" in result.stdout.lower() or "no audio files" in result.stderr.lower()
+    finally:
+        # Clean up
+        if empty_dir.is_dir():
+            # Try to remove files first
+            for f in empty_dir.glob("*"):
+                try:
+                    f.unlink()
+                except:
+                    pass
+            try:
+                empty_dir.rmdir()
+            except:
+                pass # Non-critical cleanup

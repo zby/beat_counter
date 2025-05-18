@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
 
     # Algorithm selection
     parser.add_argument(
-        "--algorithm",
+        "--detector-name",
         type=str,
         default="madmom",
         choices=["madmom", "beat_this"],
@@ -105,6 +105,19 @@ def parse_args() -> argparse.Namespace:
         help="Explicitly specify a genre to use for defaults instead of inferring from path.",
     )
 
+    # Backward compatibility with old flags
+    parser.add_argument(
+        "--algorithm",
+        type=str,
+        help=argparse.SUPPRESS,  # Hide this from help, but still accept it
+    )
+    
+    parser.add_argument(
+        "--detector",
+        type=str,
+        help=argparse.SUPPRESS,  # Hide this from help, but still accept it for backward compatibility
+    )
+
     return parser.parse_args()
 
 
@@ -120,6 +133,15 @@ def main() -> None:  # noqa: D401 – simple imperative main
     args = parse_args()
     setup_logging()
 
+    # For backward compatibility, use --algorithm or --detector if specified
+    detector_name = args.detector_name
+    if args.algorithm:
+        detector_name = args.algorithm
+        logging.warning("--algorithm is deprecated. Use --detector-name instead.")
+    elif args.detector:
+        detector_name = args.detector
+        logging.warning("--detector is deprecated. Use --detector-name instead.")
+    
     # Prepare base arguments for extract_beats
     detector_kwargs: Dict[str, Any] = {
         "min_bpm": args.min_bpm,
@@ -127,7 +149,7 @@ def main() -> None:  # noqa: D401 – simple imperative main
     }
     
     # Add DBN argument for beat_this detector
-    if args.algorithm == "beat_this":
+    if detector_name == "beat_this":
         detector_kwargs["use_dbn"] = args.use_dbn
     
     beats_constructor_args: Dict[str, Any] = {
@@ -170,7 +192,7 @@ def main() -> None:  # noqa: D401 – simple imperative main
     extract_beats(
         audio_file_path=args.audio_file,
         output_path=args.output,
-        algorithm=args.algorithm,
+        detector_name=detector_name,
         beats_args=beats_constructor_args,
         **detector_kwargs
     )

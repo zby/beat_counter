@@ -30,48 +30,69 @@ import pathlib
 import sys
 from typing import List, Tuple, Optional, Dict, Any
 
-from beat_detection.core import process_batch
+from beat_detection.core import extract_beats
 from beat_detection.core.beats import Beats
+from beat_detection.core.pipeline import process_batch
 from beat_detection.genre_db import GenreDB, parse_genre_from_path
+from tqdm import tqdm
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments."""
+    """
+    Parse command-line arguments for the beat detection batch processor.
+
+    Returns
+    -------
+    argparse.Namespace
+        The parsed arguments.
+    """
     parser = argparse.ArgumentParser(
-        prog="detect-beats-batch",
-        description="Detect beats for all audio files in a directory tree.",
+        description=(
+            "Process multiple audio files for beat detection. "
+            "Automatically detects audio files in the specified directory (including subdirectories). "
+            "Creates .beats files alongside each audio file."
+        )
     )
 
+    # Required arguments
     parser.add_argument(
         "directory",
-        nargs="?",
-        default="data/input",
-        help="Directory to scan recursively for audio files (default: data/input).",
+        help="Directory containing audio files to process."
     )
 
-    # Algorithm selection
+    # Beat detection algorithm
     parser.add_argument(
-        "--algorithm",
-        type=str,
-        default="madmom",
+        "--detector-name",
         choices=["madmom", "beat_this"],
-        help="Beat detection algorithm to use.",
+        default="madmom",
+        help="Which beat detection algorithm to use. Default: madmom"
     )
 
-    # Beat-detection parameters
-    parser.add_argument("--min-bpm", type=int, default=60, help="Minimum BPM.")
-    parser.add_argument("--max-bpm", type=int, default=240, help="Maximum BPM.")
+    # BPM range arguments
+    parser.add_argument(
+        "--min-bpm",
+        type=float,
+        help="Minimum BPM to consider (default depends on algorithm)."
+    )
+    parser.add_argument(
+        "--max-bpm",
+        type=float,
+        help="Maximum BPM to consider (default depends on algorithm)."
+    )
+
+    # Beat grouping/analysis arguments
+    parser.add_argument(
+        "--beats-per-bar",
+        type=int,
+        help="Number of beats per bar, or time signature numerator. "
+            "If not provided, will be inferred from the detected beats. "
+            "Common values: 3 (for 3/4 waltz), 4 (for 4/4), etc."
+    )
     parser.add_argument(
         "--tolerance",
         type=float,
         default=10.0,
-        help="Interval tolerance percentage.",
-    )
-    parser.add_argument(
-        "--beats-per-bar",
-        type=int,
-        default=None,
-        help="Fix the time-signature numerator. When omitted, it will be inferred from the detected beats.",
+        help="Tolerance percent for beat interval variation in regular section detection. Default: 10.0"
     )
     parser.add_argument(
         "--min-measures",
@@ -105,7 +126,7 @@ def setup_logging(quiet: bool) -> None:
 
 def process_batch_with_genre_defaults(
     directory_path: pathlib.Path,
-    algorithm: str,
+    detector_name: str,
     beats_args: Dict[str, Any],
     detector_kwargs: Dict[str, Any],
     no_progress: bool = False,
@@ -120,7 +141,7 @@ def process_batch_with_genre_defaults(
     ----------
     directory_path : pathlib.Path
         Root directory to scan for audio files
-    algorithm : str
+    detector_name : str
         Beat detection algorithm to use
     beats_args : Dict[str, Any]
         Base arguments for Beats constructor
@@ -194,7 +215,7 @@ def process_batch_with_genre_defaults(
             beats_obj = extract_beats(
                 audio_file_path=full_path_str,
                 output_path=None,  # Let extract_beats handle default output
-                algorithm=algorithm,
+                detector_name=detector_name,
                 beats_args=file_beats_args,
                 **file_detector_kwargs,
             )
@@ -241,7 +262,7 @@ def main() -> None:  # noqa: D401
         logging.info("Using genre-specific defaults for files in genre-specific directories")
         results = process_batch_with_genre_defaults(
             directory_path=input_dir,
-            algorithm=args.algorithm,
+            detector_name=args.detector_name,
             beats_args=beats_args,
             detector_kwargs=detector_kwargs,
             no_progress=args.no_progress,
@@ -250,7 +271,7 @@ def main() -> None:  # noqa: D401
         # Use standard process_batch
         results = process_batch(
             directory_path=input_dir,
-            algorithm=args.algorithm,
+            detector_name=args.detector_name,
             beats_args=beats_args,
             detector_kwargs=detector_kwargs,
             no_progress=args.no_progress,
