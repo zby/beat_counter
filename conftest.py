@@ -46,23 +46,23 @@ def force_cpu_for_tests():
     """
     Force CPU usage for all tests by patching the device parameter used in beat_this_detector.
     
-    This fixture sets an environment variable and patches the get_beat_detector function
+    This fixture sets an environment variable and patches the build function
     to ensure that any BeatThisDetector instances created during tests will use CPU.
     """
     # Set environment variable to indicate CPU usage
     os.environ['BEAT_DETECTION_FORCE_CPU'] = '1'
     
     # Apply patch for BeatThisDetector initialization
-    import beat_detection.core
-    original_get_detector = beat_detection.core.get_beat_detector
+    from beat_detection.core.registry import build
+    original_build = build
     
-    def patched_get_detector(*args, **kwargs):
+    def patched_build(*args, **kwargs):
         # Force 'device' parameter to 'cpu' for any BeatThisDetector
         if 'device' not in kwargs:
             kwargs['device'] = 'cpu'
-        return original_get_detector(*args, **kwargs)
+        return original_build(*args, **kwargs)
     
-    with patch('beat_detection.core.registry.get', patched_get_detector):
+    with patch('beat_detection.core.registry.build', patched_build):
         yield 
 
 def pytest_collection_modifyitems(items):

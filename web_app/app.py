@@ -295,7 +295,7 @@ async def index_route(
 async def upload_audio_route(
     request: Request,
     file: UploadFile = File(...),
-    algorithm: str = Form("madmom"),
+    detector_name: str = Form("madmom"),
     beats_per_bar: Optional[int] = Form(None),
     storage: FileMetadataStorage = Depends(get_storage),
     config: Config = Depends(get_config_dependency),
@@ -323,10 +323,10 @@ async def upload_audio_route(
         raise HTTPException(status_code=500, detail=f"Error saving uploaded file: {e}")
 
     try:
-        # Pass algorithm and beats_per_bar to the task
+        # Pass detector_name and beats_per_bar to the task
         task = detect_beats_task.delay(
             file_id,
-            algorithm=algorithm,
+            detector_name=detector_name,
             beats_per_bar=beats_per_bar if beats_per_bar else None
         )
         if not task or not task.id:
@@ -877,7 +877,7 @@ def initialize_fastapi_app(config_to_use: Config) -> FastAPI:
 async def upload_audio_route(
     request: Request,
     file: UploadFile = File(...),
-    algorithm: str = Form("madmom"),
+    detector_name: str = Form("madmom"),
     beats_per_bar: Optional[int] = Form(None),
     storage: FileMetadataStorage = Depends(get_storage),
     config: Config = Depends(get_config_dependency),
@@ -900,7 +900,7 @@ async def upload_audio_route(
         "video_generation_error": None,
         "beats_file": None,
         "video_file": None,
-        "algorithm": algorithm,
+        "algorithm": detector_name,
         "beats_per_bar_override": beats_per_bar,
         "analysis_params": {
             "beats_per_bar_override": beats_per_bar,
@@ -914,7 +914,7 @@ async def upload_audio_route(
 
     detect_beats_task.delay(
         file_id=job_id,
-        algorithm=algorithm,
+        detector_name=detector_name,
         beats_per_bar=beats_per_bar,
         # Pass other relevant params from config if defaults in task are not sufficient
         # min_bpm=config.celery.min_bpm (example if such config existed)

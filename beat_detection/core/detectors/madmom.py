@@ -14,6 +14,8 @@ from beat_detection.core.registry import register
 from beat_detection.core.detectors.base import BaseBeatDetector, DetectorConfig
 import beat_detection.utils.constants as constants
 
+MADMOM_DEFAULT_FPS = 100
+
 @register("madmom")
 class MadmomBeatDetector(BaseBeatDetector):
     """Detect beats and downbeats in audio files using Madmom."""
@@ -34,7 +36,11 @@ class MadmomBeatDetector(BaseBeatDetector):
         """
         super().__init__(cfg)
 
-        # --- Input Validation (Applied from the config object) ---
+        # Determine effective FPS for madmom post-processing
+        # Priority: cfg.fps if provided, otherwise MADMOM_DEFAULT_FPS
+        self._madmom_postprocessor_fps = self.cfg.fps if self.cfg.fps is not None else MADMOM_DEFAULT_FPS
+
+        # --- Input Validation (Applied from the config object and postprocessor_fps) ---
         if self.cfg.beats_per_bar is not None:
             if not isinstance(self.cfg.beats_per_bar, (list, tuple)):
                 raise BeatCalculationError(
@@ -65,11 +71,12 @@ class MadmomBeatDetector(BaseBeatDetector):
                 raise BeatCalculationError(
                     f"Invalid max_bpm: {self.cfg.max_bpm}. Must be > min_bpm ({self.cfg.min_bpm}) if both are provided."
                 )
-        if self.cfg.fps is not None:
-            if not isinstance(self.cfg.fps, int) or self.cfg.fps <= 0:
-                raise BeatCalculationError(
-                    f"Invalid fps: {self.cfg.fps}. Must be a positive integer if provided."
-                )
+        
+        # Validate the postprocessor_fps (whether from cfg.fps or default)
+        if not isinstance(self._madmom_postprocessor_fps, int) or self._madmom_postprocessor_fps <= 0:
+            raise BeatCalculationError(
+                f"Invalid postprocessor FPS for Madmom: {self._madmom_postprocessor_fps}. Must be a positive integer."
+            )
         # --- End Validation ---
 
         self.downbeat_processor = RNNDownBeatProcessor()
@@ -80,11 +87,11 @@ class MadmomBeatDetector(BaseBeatDetector):
             dbn_kwargs['min_bpm'] = float(self.cfg.min_bpm)
         if self.cfg.max_bpm is not None:
             dbn_kwargs['max_bpm'] = float(self.cfg.max_bpm)
-        if self.cfg.fps is not None:
-            dbn_kwargs['fps'] = int(self.cfg.fps)
+        
+        # Use the validated postprocessor_fps for the DBN tracker
+        dbn_kwargs['fps'] = int(self._madmom_postprocessor_fps)
 
         self.downbeat_tracker = DBNDownBeatTrackingProcessor(**dbn_kwargs)
-
 
     def detect_beats(self, audio_path: str | Path) -> RawBeats:
         """

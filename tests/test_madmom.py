@@ -3,6 +3,7 @@ import os  # Import os for file operations
 from pathlib import Path
 from beat_detection.core.registry import build
 from beat_detection.core.beats import BeatCalculationError
+from beat_detection.core.detectors.madmom import MADMOM_DEFAULT_FPS # Import the constant
 import numpy as np
 
 # Define the path to the test *fixtures* directory
@@ -106,28 +107,29 @@ def test_madmom_invalid_audio_file():
 
 def test_madmom_detector_constructor():
     """Test that the detector can be instantiated with various parameters."""
-    # Default constructor
+    # Default constructor (no fps specified, uses MADMOM_DEFAULT_FPS internally)
     detector = build("madmom")
     assert detector is not None
+    assert detector.cfg.fps is None
     
-    # With min/max BPM
+    # With min/max BPM (no fps specified, uses MADMOM_DEFAULT_FPS internally)
     detector = build("madmom", min_bpm=90, max_bpm=180)
+    assert detector.cfg.fps is None
     assert detector.cfg.min_bpm == 90
     assert detector.cfg.max_bpm == 180
     
-    # With custom fps
+    # With custom fps (explicitly provided in cfg)
     detector = build("madmom", fps=200)
     assert detector.cfg.fps == 200
     
-    # With custom beats_per_bar
+    # With custom beats_per_bar (no fps specified, uses MADMOM_DEFAULT_FPS internally)
     detector = build("madmom", beats_per_bar=[3, 4])
+    assert detector.cfg.fps is None
     assert detector.cfg.beats_per_bar == [3, 4]
 
 
 # Keep the main block for potentially running tests directly (though pytest is preferred)
 if __name__ == "__main__":
     # Note: Running this directly won't use pytest fixtures correctly.
-    # Use `pytest tests/test_madmom.py` instead.
+    # Use `pytest tests/test_madmom.py`
     print("Please run these tests using pytest.")
-    # Attempting to run might fail due to fixture dependencies.
-    pass

@@ -15,7 +15,7 @@ from celery.signals import worker_init, worker_process_init
 from web_app.config import Config, ConfigurationError # Ensure Config and ConfigurationError are imported
 from web_app.storage import FileMetadataStorage
 from web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
-from beat_detection.core import get_beat_detector, extract_beats
+from beat_detection.core import extract_beats
 from beat_detection.core.video import BeatVideoGenerator
 from beat_detection.core.beats import Beats, BeatCalculationError, RawBeats
 from beat_detection.core.detector_protocol import BeatDetector
@@ -163,7 +163,7 @@ def celery_worker_init_handler(**kwargs):
 def _perform_beat_detection(
     storage: FileMetadataStorage,
     file_id: str,
-    algorithm: str,
+    detector_name: str,
     min_bpm: int,
     max_bpm: int,
     tolerance_percent: float,
@@ -218,7 +218,7 @@ def _perform_beat_detection(
         beats_obj = extract_beats(
             audio_file_path=audio_path_str,
             output_path=output_path_str, 
-            algorithm=algorithm,
+            detector_name=detector_name,
             beats_args=beats_constructor_args,
             **detector_kwargs
         )
@@ -238,7 +238,7 @@ def _perform_beat_detection(
         metadata_update = {
             "beat_detection_status": "success",
             "beat_detection_error": None,
-            "algorithm": algorithm,
+            "detector_name": detector_name,
             "detected_beats_per_bar": beats_obj.beats_per_bar,
             "total_beats": len(beats_obj.timestamps),
             "detected_tempo_bpm": beats_obj.overall_stats.tempo_bpm,
@@ -274,7 +274,7 @@ def _perform_beat_detection(
 def detect_beats_task(
     self: Task,
     file_id: str,
-    algorithm: str = "madmom",
+    detector_name: str = "madmom",
     min_bpm: int = 60,
     max_bpm: int = 200,
     tolerance_percent: float = 10.0,
@@ -314,7 +314,7 @@ def detect_beats_task(
         _perform_beat_detection(
             storage=storage,
             file_id=file_id,
-            algorithm=algorithm,
+            detector_name=detector_name,
             min_bpm=min_bpm,
             max_bpm=max_bpm,
             tolerance_percent=tolerance_percent,

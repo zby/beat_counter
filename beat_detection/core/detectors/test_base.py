@@ -12,7 +12,7 @@ def test_config_defaults():
     cfg = DetectorConfig()
     assert cfg.min_bpm == 60
     assert cfg.max_bpm == 240
-    assert cfg.fps == 100
+    assert cfg.fps is None
     assert cfg.beats_per_bar == constants.SUPPORTED_BEATS_PER_BAR
 
 

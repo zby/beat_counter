@@ -366,7 +366,7 @@ def test_upload_valid_audio(
     assert analysis_params.get("beats_per_bar_override") is None, "bpb_override should be None (default)"
     assert analysis_params.get("tolerance_percent") == 10.0, "tolerance_percent should be 10.0 (default)"
     assert analysis_params.get("min_measures") == 1, "min_measures should be 1 (default)"
-    assert metadata.get("algorithm") == "madmom", "algorithm should be madmom (default)"
+    assert metadata.get("detector_name") == "madmom", "detector_name should be madmom (default)"
     # ---- End analysis_params check ---- #
 
     # --- Explicitly ensure the mock beats file exists before checking status --- #
@@ -462,7 +462,7 @@ def uploaded_file_id(
     assert analysis_params_fixture.get("beats_per_bar_override") is None
     assert analysis_params_fixture.get("tolerance_percent") == 10.0
     assert analysis_params_fixture.get("min_measures") == 1
-    assert metadata_after_upload.get("algorithm") == "madmom"
+    assert metadata_after_upload.get("detector_name") == "madmom"
     # --- End analysis_params check --- #
 
     # --- End immediate check --- #

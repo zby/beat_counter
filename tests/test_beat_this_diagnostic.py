@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from beat_detection.core import get_beat_detector
+from beat_detection.core.registry import build
 
 # -----------------------------------------------------------------------------
 # Test data with additional diagnostics
@@ -58,7 +58,7 @@ def test_beat_this_diagnostic():
 
         # --- Diagnose detector ---
         print_diagnostic("Initializing beat_this detector...")
-        detector = get_beat_detector("beat_this")
+        detector = build("beat_this")
         print_diagnostic(f"Detector type: {type(detector)}")
         print_diagnostic(f"Detector methods: {dir(detector)}")
         print_diagnostic(f"detect_beats method: {inspect.signature(detector.detect_beats)}")

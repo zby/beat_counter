@@ -18,7 +18,7 @@ class DetectorConfig:
     """
     min_bpm: int = 60
     max_bpm: int = 240
-    fps: int = 100
+    fps: Optional[int] = None
     beats_per_bar: Optional[Union[List[int], Tuple[int, ...]]] = field(
         default_factory=lambda: constants.SUPPORTED_BEATS_PER_BAR
     )

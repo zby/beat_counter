@@ -113,14 +113,17 @@ class BeatThisDetector(BaseBeatDetector):
             checkpoint_path=checkpoint,
             device=resolved_device,
             float16=use_float16,
-            dbn=use_dbn,
+            dbn=use_dbn,  # This dbn is for File2Beats internal, if it uses one. We override frames2beats next.
         )
         
-        # Get the proper FPS value - use BEAT_THIS_FPS as fallback if needed
-        fps = getattr(self.cfg, 'fps', BEAT_THIS_FPS)
+        # The CustomBeatTrackingProcessor needs to be initialized with the FPS
+        # of the beat_this model's output frames, which is BEAT_THIS_FPS (50).
+        # The self.cfg.fps is a general configuration FPS, which might be different (e.g., 100 for madmom)
+        # and shouldn't dictate how beat_this model's frames are interpreted here.
+        post_processor_fps = BEAT_THIS_FPS
         
         custom_postprocessor = CustomBeatTrackingProcessor(
-            fps=fps,
+            fps=post_processor_fps,
             beats_per_bar=self.cfg.beats_per_bar,
             min_bpm=self.cfg.min_bpm,
             max_bpm=self.cfg.max_bpm,

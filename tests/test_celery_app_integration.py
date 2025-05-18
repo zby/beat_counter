@@ -23,7 +23,7 @@ from web_app.celery_app import (
     _perform_beat_detection,
     _perform_video_generation
 )  # Import tasks and the new helper function
-from beat_detection.core import get_beat_detector
+from beat_detection.core.registry import build  # Updated import
 from beat_detection.core.beats import Beats, RawBeats
 from web_app.config import Config
 from web_app.storage import FileMetadataStorage
@@ -113,7 +113,7 @@ def sample_beats_file(sample_audio_file, temp_storage_integration):
     # --- 1. Perform Beat Detection ---
     print(f"\nGenerating beats for {audio_path} using 'madmom' detector...")
     try:
-        detector = get_beat_detector("madmom") # Use madmom for consistency or choose another
+        detector = build("madmom") # Use madmom for consistency or choose another
         raw_beats: RawBeats = detector.detect_beats(str(audio_path)) # NEW
         assert raw_beats is not None, "Beat detection did not return a RawBeats object."
         assert len(raw_beats.timestamps) > 0, "Beat detection returned no timestamps."
@@ -201,7 +201,7 @@ def test_detect_beats_task_integration_success(
     result = _perform_beat_detection(
         storage=storage,
         file_id=file_id,
-        algorithm="madmom",
+        detector_name="madmom",
         min_bpm=min_bpm,
         max_bpm=max_bpm,
         beats_per_bar=beats_per_bar,
