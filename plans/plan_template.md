@@ -30,6 +30,8 @@ _No tests – administrative._
 
 ### Unit tests
 
+[Unit tests should be colocated with code]
+
 * `[test file path]`
   ```python
   [sample test code]
@@ -43,6 +45,8 @@ _No tests – administrative._
 ---
 
 ## Integration Tests
+
+[Integration tests in this project go into the tests directory]
 
 - [Update existing integration tests to accommodate refactored code]
 - [Note: New features may require additional integration tests]
