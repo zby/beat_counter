@@ -12,7 +12,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from beat_detection.core.beats import Beats
-from beat_detection.core.registry import get as get_detector
+from beat_detection.core.registry import build
 from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.utils.file_utils import find_audio_files, get_output_path
 from beat_detection.genre_db import GenreDB, parse_genre_from_path
@@ -21,7 +21,7 @@ from beat_detection.genre_db import GenreDB, parse_genre_from_path
 def extract_beats(
     audio_file_path: str,
     output_path: Optional[str] = None,
-    algorithm: str = "madmom",
+    detector_name: str = "madmom",
     beats_args: Optional[Dict[str, Any]] = None,
     **kwargs: Any
 ) -> Beats:
@@ -40,14 +40,14 @@ def extract_beats(
         Path where the detected beat times will be saved (one time per line).
         If None, defaults to the audio file path with the extension replaced by '.beats'.
         Defaults to None.
-    algorithm : str
-        Name of the beat detection algorithm to use (passed to get_beat_detector).
+    detector_name : str
+        Name of the beat detection algorithm to use (passed to registry.build).
         Defaults to "madmom".
     beats_args : Optional[Dict[str, Any]], optional
         Arguments to pass to the Beats constructor. Defaults to {}.
     **kwargs : Any
         Additional keyword arguments to pass to the detector constructor
-        (passed to get_beat_detector).
+        (passed to registry.build).
 
     Returns
     -------
@@ -57,7 +57,7 @@ def extract_beats(
     Raises
     ------
     ValueError
-        If the requested algorithm is not supported (raised by get_beat_detector).
+        If the requested algorithm is not supported (raised by registry.build).
     FileNotFoundError
         If the audio_file_path does not exist.
     IOError
@@ -77,10 +77,10 @@ def extract_beats(
     # Determine the stats output path
     stats_output_path = os.path.splitext(final_output_path)[0] + "._beat_stats"
 
-    logging.info(f"Starting beat detection for {audio_file_path} using {algorithm}...")
+    logging.info(f"Starting beat detection for {audio_file_path} using {detector_name}...")
 
     try:
-        detector = get_detector(algorithm=algorithm, **kwargs)
+        detector = build(detector_name, **kwargs)
         raw_beats = detector.detect_beats(audio_file_path)
 
         # Save raw beats to the output file
@@ -113,7 +113,7 @@ def extract_beats(
 
 def process_batch(
     directory_path: str | Path,
-    algorithm: str = "madmom",
+    detector_name: str = "madmom",
     beats_args: Optional[Dict[str, Any]] = None,
     detector_kwargs: Optional[Dict[str, Any]] = None,
     no_progress: bool = False,
@@ -129,7 +129,7 @@ def process_batch(
     ----------
     directory_path : str | Path
         The root directory to scan for audio files.
-    algorithm : str, optional
+    detector_name : str, optional
         Beat detection algorithm to use, by default "madmom".
     beats_args : Optional[Dict[str, Any]], optional
         Arguments to pass to the Beats constructor, by default None.
@@ -199,39 +199,42 @@ def process_batch(
         # Apply genre-specific parameters if enabled
         if use_genre_defaults and genre_db is not None:
             try:
-                # Try to get genre from path
                 genre = parse_genre_from_path(full_path_str)
-                logging.info(f"Detected genre from path for {audio_file.name}: {genre}")
-                
-                # Apply genre defaults to detector kwargs and beats args
-                file_detector_kwargs = genre_db.detector_kwargs_for_genre(genre, existing=file_detector_kwargs)
-                file_beats_args = genre_db.beats_kwargs_for_genre(genre, existing=file_beats_args)
-                
-                logging.info(f"Applied genre defaults for '{genre}' to {audio_file.name}")
-                logging.debug(f"Genre-specific detector kwargs: {file_detector_kwargs}")
-                logging.debug(f"Genre-specific beats args: {file_beats_args}")
+                # Apply genre defaults to detector and Beats kwargs
+                file_detector_kwargs = genre_db.detector_kwargs_for_genre(
+                    genre, existing=file_detector_kwargs
+                )
+                file_beats_args = genre_db.beats_kwargs_for_genre(
+                    genre, existing=file_beats_args
+                )
+                logging.info(f"Applied genre '{genre}' defaults for {relative_path_str}")
             except ValueError:
-                # No genre in path, use base arguments
-                logging.debug(f"No genre detected in path for {audio_file.name}, using base arguments")
-
+                # No genre in path, just use defaults (no warning needed)
+                pass
+        
         try:
-            # extract_beats handles saving the .beats file next to the audio file by default
-            beats_obj = extract_beats(
+            # Process this audio file and get Beats object
+            beats = extract_beats(
                 audio_file_path=full_path_str,
                 output_path=None, # Let extract_beats handle default output
-                algorithm=algorithm,
+                detector_name=detector_name,
                 beats_args=file_beats_args,
                 **file_detector_kwargs,
             )
-            results.append((relative_path_str, beats_obj))
-            if pbar is None: # Log success only if not using progress bar
-                logging.info(f"Successfully processed {relative_path_str}")
+            results.append((relative_path_str, beats))
         except Exception as e:
+            # Log the error (extract_beats already logged the specifics)
+            logging.error(f"Failed to process {relative_path_str}")
             results.append((relative_path_str, None))
-            # Always log errors
-            logging.error(f"Failed to process {relative_path_str}: {e}")
-
+    
     if pbar:
         pbar.close()
-
+    
+    # Log final summary
+    success_count = sum(1 for _, beats in results if beats is not None)
+    logging.info(
+        f"Processed {len(results)} files: {success_count} succeeded, "
+        f"{len(results) - success_count} failed."
+    )
+    
     return results 
