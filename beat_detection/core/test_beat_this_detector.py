@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from beat_detection.core.detectors.beat_this import BeatThisDetector
+from beat_detection.core.detectors.base import DetectorConfig
 from beat_detection.core.beats import RawBeats
 
 
@@ -28,7 +29,9 @@ def _make_mock_detector(beats: np.ndarray, downbeats: np.ndarray) -> BeatThisDet
             return beats, downbeats
 
     with patch("beat_detection.core.detectors.beat_this.File2Beats", DummyProcessor):
-        return BeatThisDetector()
+        # Create a default config for the detector
+        cfg = DetectorConfig()
+        return BeatThisDetector(cfg)
 
 
 # -----------------------------------------------------------------------------

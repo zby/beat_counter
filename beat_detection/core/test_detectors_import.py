@@ -7,7 +7,7 @@ import pytest
 
 # Explicitly import to ensure registration
 from beat_detection.core.detectors import madmom, beat_this
-from beat_detection.core.registry import _DETECTORS, get
+from beat_detection.core.registry import _DETECTORS, build
 
 def test_registry_contains_detectors():
     """Test that the registry contains all expected detectors."""
@@ -18,7 +18,7 @@ def test_registry_contains_detectors():
 def test_all_detectors_instantiable():
     """Test that all registered detectors can be instantiated."""
     for name in _DETECTORS:
-        detector = get(name)
+        detector = build(name)
         # Check that we got an instance of a class, not the class itself
         assert not inspect.isclass(detector)
         # Verify it's an instance of the registered detector class

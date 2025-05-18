@@ -8,8 +8,8 @@ from unittest.mock import patch, MagicMock
 import tempfile
 from pathlib import Path
 
-from beat_detection.core import get_beat_detector, extract_beats
-from beat_detection.core.registry import _DETECTORS
+from beat_detection.core.registry import build, _DETECTORS
+from beat_detection.core import extract_beats
 from beat_detection.core.detector_protocol import BeatDetector
 from beat_detection.core.beats import Beats, RawBeats
 import numpy as np
@@ -22,8 +22,8 @@ def test_detector_registry_contents():
     assert "beat_this" in _DETECTORS
 
 # Tests for extract_beats functionality (moved to pipeline module)
-@patch("beat_detection.core.pipeline.get_detector")
-def test_extract_beats_with_mocked_detector(mock_get_detector):
+@patch("beat_detection.core.pipeline.build")
+def test_extract_beats_with_mocked_detector(mock_build):
     """Test extract_beats with a mocked detector."""
     # Create a mock detector that returns a RawBeats object with enough beats for 5 measures (at least 20 beats)
     # Generate 20 regular beats with proper counts for 4/4 time
@@ -37,18 +37,18 @@ def test_extract_beats_with_mocked_detector(mock_get_detector):
         beat_counts=beat_counts,
         clip_length=10.5
     )
-    mock_get_detector.return_value = mock_detector
+    mock_build.return_value = mock_detector
     
     # Create a temporary file to use as the audio file
     with tempfile.NamedTemporaryFile(suffix=".wav") as temp_file:
         # Call extract_beats
         result = extract_beats(
             audio_file_path=temp_file.name,
-            algorithm="mock_detector"
+            detector_name="mock_detector"
         )
         
-        # Check that get_detector was called with the correct algorithm
-        mock_get_detector.assert_called_once_with(algorithm="mock_detector")
+        # Check that build was called with the correct detector_name
+        mock_build.assert_called_once_with("mock_detector")
         
         # Check that detect_beats was called with the correct file path
         mock_detector.detect_beats.assert_called_once_with(temp_file.name)
