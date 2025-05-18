@@ -38,9 +38,19 @@ _No tests – administrative._
   ```
 * [Test performance expectation]
 
+Run the new tests and iterate on fixing errors.
+
+After fixing errors commit changes.
+
 ---
 
 [Continue with Steps 2-N following the same structure]
+
+---
+
+## Check for accidental changes
+
+Run `git diff main` and check if there are no accidental changes and if all changes adhere to our project rules.
 
 ---
 
@@ -50,6 +60,8 @@ _No tests – administrative._
 
 - [Update existing integration tests to accommodate refactored code]
 - [Note: New features may require additional integration tests]
+- Run all integration tests and fix errors if encountered
+- If there were changes in code outside of tests run unit tests again
 
 ### Example integration test
 ```python
@@ -63,10 +75,18 @@ _Note: Refactors typically only require updating existing integration tests, not
 
 ---
 
+## Check Unit tests
+
+Run all unit tests again - just for check.
+
+---
+
 ## Final Step — Documentation & CHANGELOG
 
 - [Documentation updates]
 - [CHANGELOG entries]
+
+Commit the changes.
 
 ---
 

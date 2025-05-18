@@ -191,21 +191,26 @@ The core beat detection API is organized in a modular structure:
 
 ```python
 # Get a beat detector (main entry point)
-from beat_detection.core import get_beat_detector
+from beat_detection.core.registry import build
+from beat_detection.core.detectors.base import DetectorConfig
 
-# Create a detector instance
-detector = get_beat_detector("madmom")  # or "beat_this"
+# Create a detector instance using kwargs (automatically converts to config)
+detector = build("madmom", min_bpm=80, max_bpm=160)  # or "beat_this"
+
+# Create a detector with explicit config (preferred approach)
+config = DetectorConfig(min_bpm=80, max_bpm=160, fps=100)
+detector = build("madmom", config=config)
 
 # Detect beats in an audio file
 raw_beats = detector.detect_beats("path/to/audio.mp3")
 
 # Process a batch of files
 from beat_detection.core import process_batch
-results = process_batch("path/to/directory", algorithm="madmom")
+results = process_batch("path/to/directory", detector_name="madmom")
 
 # Extract beats from a single file (high-level API)
 from beat_detection.core import extract_beats
-beats = extract_beats("path/to/audio.mp3", algorithm="madmom")
+beats = extract_beats("path/to/audio.mp3", detector_name="madmom", min_bpm=80, max_bpm=160)
 ```
 
 ### Creating Custom Beat Detectors
@@ -214,18 +219,23 @@ You can create and register custom beat detector implementations:
 
 ```python
 from beat_detection.core.registry import register
-from beat_detection.core.detectors.base import BaseBeatDetector
+from beat_detection.core.detectors.base import BaseBeatDetector, DetectorConfig
 from beat_detection.core.beats import RawBeats
 
 @register("my_custom_detector")
 class MyCustomDetector(BaseBeatDetector):
+    def __init__(self, cfg: DetectorConfig):
+        super().__init__(cfg)
+        # Your initialization code here
+        
     def detect_beats(self, audio_path: str) -> RawBeats:
         # Your implementation here
+        # Access config via self.cfg.min_bpm, self.cfg.max_bpm, etc.
         pass
 
 # Then use it like any other detector
-from beat_detection.core import get_beat_detector
-detector = get_beat_detector("my_custom_detector")
+from beat_detection.core.registry import build
+detector = build("my_custom_detector", min_bpm=90, max_bpm=180)
 ```
 
 ## Testing

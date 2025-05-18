@@ -15,6 +15,11 @@ All notable changes to this project will be documented in this file.
 - Enhanced `process_batch()` function to support genre-specific parameters with the `use_genre_defaults` option
 - Refactored duplicated code between pipeline and experiment orchestrator modules
 - Improved file path handling with new utility functions
+- **BREAKING CHANGE**: Replaced `**kwargs` with typed `DetectorConfig` dataclass:
+  - All detector implementations now accept a typed configuration object instead of arbitrary keyword arguments
+  - The `build()` function in the registry replaces the deprecated `get()` function
+  - `build()` accepts either a DetectorConfig object or kwargs that are transformed into a config
+  - Direct instantiation of detectors requires a DetectorConfig object
 
 ### Added
 - New registry system allowing easier registration of beat detectors
@@ -22,6 +27,9 @@ All notable changes to this project will be documented in this file.
 - `get_output_path()` utility function for standardized output path generation
 - New `reproducibility` module for experiment documentation and reproducibility
 - Genre-based parameter application directly in the core pipeline module
+- New `DetectorConfig` dataclass for strongly-typed configuration with proper validation
+- Comprehensive unit tests for all detector implementations with typed configs
+- Mypy strict type checking support throughout the codebase
 
 ### Removed
 - `beat_detection.core.factory` module (functionality moved to `registry.py` and `pipeline.py`)
