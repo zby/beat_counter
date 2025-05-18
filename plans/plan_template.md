@@ -25,8 +25,8 @@ _No tests – administrative._
 
 | Files | Action |
 |-------|--------|
-| `[path/to/file]` `[+/±/→/×]` | [specific action description] |
-| `[additional files]` `[+/±/→/×]` | [specific action description] |
+| `[path/to/file]` | `±` [specific action description] |
+| `[additional files]` | `+` [specific action description] |
 
 ### Unit tests
 
@@ -44,7 +44,27 @@ After fixing errors commit changes.
 
 ---
 
-[Continue with Steps 2-N following the same structure]
+## Step 2 — [Second logical step]
+
+| Files | Action |
+|-------|--------|
+| `[path/to/file]` | `±` [specific action description] |
+| `[additional files]` | `+` [specific action description] |
+
+### Unit tests
+
+* `[test file path]`
+  ```python
+  [sample test code]
+  ```
+
+Run the new tests and iterate on fixing errors.
+
+After fixing errors commit changes.
+
+---
+
+[Continue with Steps 3-N following the same structure]
 
 ---
 
@@ -61,7 +81,6 @@ Run `git diff main` and check if there are no accidental changes and if all chan
 - [Update existing integration tests to accommodate refactored code]
 - [Note: New features may require additional integration tests]
 - Run all integration tests and fix errors if encountered
-- If there were changes in code outside of tests run unit tests again
 
 ### Example integration test
 ```python
@@ -105,4 +124,4 @@ Commit the changes.
 
 1. [Verification step 1]
 2. [Verification step 2]
-3. [Verification step 3] 
+3. [Verification step 3]
