@@ -2,12 +2,40 @@
 Base class for beat detectors with common functionality.
 """
 
+from dataclasses import dataclass, field
+from typing import Optional, Union, List, Tuple
 from pathlib import Path
 from pydub import AudioSegment
 from beat_detection.core.beats import BeatCalculationError
+import beat_detection.utils.constants as constants
+
+
+@dataclass(slots=True, frozen=True)
+class DetectorConfig:
+    """Unified configuration for all beat detectors.
+    
+    Analysis of the existing detectors shows they share these common parameters.
+    """
+    min_bpm: int = 60
+    max_bpm: int = 240
+    fps: int = 100
+    beats_per_bar: Optional[Union[List[int], Tuple[int, ...]]] = field(
+        default_factory=lambda: constants.SUPPORTED_BEATS_PER_BAR
+    )
+
 
 class BaseBeatDetector:
     """Base class for beat detectors with common functionality."""
+    
+    def __init__(self, cfg: DetectorConfig) -> None:
+        """Initialize the detector with a configuration object.
+        
+        Parameters:
+        -----------
+        cfg : DetectorConfig
+            Configuration object with detector parameters.
+        """
+        self.cfg = cfg
 
     def _get_audio_duration(self, audio_path: str | Path) -> float:
         """Get the duration of an audio file in seconds.
