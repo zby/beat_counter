@@ -19,12 +19,12 @@ from jose import jwt
 from fastapi import Request, HTTPException, status
 
 # Local imports
-# Removed problematic import: from web_app.config import get_users
+# Removed problematic import: from beat_counter.web_app.config import get_users
 # No direct config import needed here anymore for users data.
 # UserManager will expect user data to be passed in.
 
 # If UserManager is changed to accept List[User], then: 
-# from web_app.config import User 
+# from beat_counter.web_app.config import User 
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

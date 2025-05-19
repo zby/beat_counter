@@ -3,9 +3,9 @@
 
 import argparse
 from pathlib import Path
-from web_app.storage import FileMetadataStorage
-from web_app.config import get_config
-from web_app.app import UPLOAD_DIR
+from beat_counter.web_app.storage import FileMetadataStorage
+from beat_counter.web_app.config import get_config
+from beat_counter.web_app.app import UPLOAD_DIR
 
 
 def get_file_status(file_id: str) -> None:

@@ -6,7 +6,7 @@ import argparse
 import json
 import inspect
 from fastapi import Request, Depends
-from web_app.app import create_app
+from beat_counter.web_app.app import create_app
 
 
 async def display_file_status(file_id: str) -> None:
