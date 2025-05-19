@@ -1,0 +1,15 @@
+{
+  "tempo_bpm": 133.3,
+  "mean_interval": 0.451,
+  "median_interval": 0.45,
+  "std_interval": 0.005,
+  "min_interval": 0.44,
+  "max_interval": 0.46,
+  "irregular_beats_count": 0,
+  "total_beats": 20,
+  "irregularity_percent": 0.0,
+  "irregular_beat_indices": [],
+  "filename": "audio.mp3",
+  "detected_meter": 4,
+  "duration": 9.36
+}

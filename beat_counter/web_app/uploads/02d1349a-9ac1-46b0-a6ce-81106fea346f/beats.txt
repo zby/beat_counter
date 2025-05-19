@@ -1,0 +1,26 @@
+# Beat timestamps in seconds with downbeat flags
+# Format: timestamp downbeat_flag(1=yes,0=no)
+# INTRO_END_IDX=0
+# ENDING_START_IDX=21
+# DETECTED_METER=4
+0.330 0
+0.770 1
+1.230 0
+1.690 0
+2.140 0
+2.590 1
+3.040 0
+3.490 0
+3.940 0
+4.390 1
+4.840 0
+5.290 0
+5.750 0
+6.200 1
+6.650 0
+7.100 0
+7.550 0
+8.000 1
+8.450 0
+8.900 0
+9.360 1
