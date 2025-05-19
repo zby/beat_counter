@@ -1,4 +1,4 @@
-# Beat Detection Web Application
+# Beat Counter Web Application
 
 A web application for audio beat detection and visualization. This application allows users to:
 
@@ -68,7 +68,7 @@ uv pip install ".[dev,beat_this_algo]"
 ### Development Server
 
 ```bash
-python -m web_app.app
+python -m beat_counter.web_app.app
 ```
 
 ### Configuration
@@ -191,8 +191,8 @@ The core beat detection API is organized in a modular structure:
 
 ```python
 # Get a beat detector (main entry point)
-from beat_detection.core.registry import build
-from beat_detection.core.detectors.base import DetectorConfig
+from beat_counter.core.registry import build
+from beat_counter.core.detectors.base import DetectorConfig
 
 # Create a detector instance using kwargs (automatically converts to config)
 detector = build("madmom", min_bpm=80, max_bpm=160)  # or "beat_this"
@@ -205,11 +205,11 @@ detector = build("madmom", config=config)
 raw_beats = detector.detect_beats("path/to/audio.mp3")
 
 # Process a batch of files
-from beat_detection.core import process_batch
+from beat_counter.core import process_batch
 results = process_batch("path/to/directory", detector_name="madmom")
 
 # Extract beats from a single file (high-level API)
-from beat_detection.core import extract_beats
+from beat_counter.core import extract_beats
 beats = extract_beats("path/to/audio.mp3", detector_name="madmom", min_bpm=80, max_bpm=160)
 ```
 
@@ -218,9 +218,9 @@ beats = extract_beats("path/to/audio.mp3", detector_name="madmom", min_bpm=80, m
 You can create and register custom beat detector implementations:
 
 ```python
-from beat_detection.core.registry import register
-from beat_detection.core.detectors.base import BaseBeatDetector, DetectorConfig
-from beat_detection.core.beats import RawBeats
+from beat_counter.core.registry import register
+from beat_counter.core.detectors.base import BaseBeatDetector, DetectorConfig
+from beat_counter.core.beats import RawBeats
 
 @register("my_custom_detector")
 class MyCustomDetector(BaseBeatDetector):
@@ -234,13 +234,13 @@ class MyCustomDetector(BaseBeatDetector):
         pass
 
 # Then use it like any other detector
-from beat_detection.core.registry import build
+from beat_counter.core.registry import build
 detector = build("my_custom_detector", min_bpm=90, max_bpm=180)
 ```
 
 ## Testing
 
-The project uses pytest for testing. Tests are located in the `tests/` and `beat_detection/tests/` directories.
+The project uses pytest for testing. Tests are located in the `tests/` and `beat_counter/tests/` directories.
 
 ### Running Tests
 
