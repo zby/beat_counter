@@ -12,14 +12,14 @@ import logging
 
 from celery import Celery, states, Task
 from celery.signals import worker_init, worker_process_init
-from web_app.config import Config, ConfigurationError # Ensure Config and ConfigurationError are imported
-from web_app.storage import FileMetadataStorage
-from web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
-from beat_detection.core import extract_beats
-from beat_detection.core.video import BeatVideoGenerator
-from beat_detection.core.beats import Beats, BeatCalculationError, RawBeats
-from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.genre_db import GenreDB, parse_genre_from_path
+from beat_counter.web_app.config import Config, ConfigurationError # Ensure Config and ConfigurationError are imported
+from beat_counter.web_app.storage import FileMetadataStorage
+from beat_counter.web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
+from beat_counter.core import extract_beats
+from beat_counter.core.video import BeatVideoGenerator
+from beat_counter.core.beats import Beats, BeatCalculationError, RawBeats
+from beat_counter.core.detector_protocol import BeatDetector
+from beat_counter.genre_db import GenreDB, parse_genre_from_path
 import numpy as np
 
 # Set up logger
@@ -51,7 +51,7 @@ class AppContext:
 # Create a basic Celery app instance globally. It will be configured later.
 # The name here is a placeholder and will be updated during initialization.
 # `include` ensures tasks in this module are found.
-app = Celery("beat_detection_app_unconfigured", include=["web_app.celery_app"])
+app = Celery("beat_detection_app_unconfigured", include=["beat_counter.web_app.celery_app"])
 
 # Global variable to track if initialization has occurred, primarily for safety/assertion.
 _celery_app_initialized = False
@@ -61,7 +61,7 @@ def initialize_celery_app(app_config: Config) -> Celery:
     global app, _celery_app_initialized
 
     if not isinstance(app_config, Config):
-        raise TypeError("app_config must be an instance of web_app.config.Config")
+        raise TypeError("app_config must be an instance of beat_counter.web_app.config.Config")
 
     if _celery_app_initialized:
         # Optionally, decide how to handle re-initialization. For now, log a warning.

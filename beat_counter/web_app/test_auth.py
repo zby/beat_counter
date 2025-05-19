@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock  # For mocking request if needed
 
 # Assuming auth.py is adjacent or path is set correctly
-from web_app.auth import (
+from beat_counter.web_app.auth import (
     UserManager,
     SECRET_KEY,
     ALGORITHM,

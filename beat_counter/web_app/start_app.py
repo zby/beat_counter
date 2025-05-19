@@ -13,9 +13,9 @@ import logging # Added for logging
 from typing import Optional
 
 # Imports for configuration and Celery initialization
-from web_app.config import Config, ConfigurationError
-from web_app.celery_app import initialize_celery_app, app as celery_app_instance # Import celery_app_instance for check
-from web_app.app import initialize_fastapi_app # Import the new FastAPI app initializer
+from beat_counter.web_app.config import Config, ConfigurationError
+from beat_counter.web_app.celery_app import initialize_celery_app, app as celery_app_instance # Import celery_app_instance for check
+from beat_counter.web_app.app import initialize_fastapi_app # Import the new FastAPI app initializer
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO) # Basic logging config for the starter script
@@ -88,7 +88,7 @@ def main():
     # Start the server
     logger.info(f"Starting FastAPI application on {args.host}:{args.port} (Reload: {args.reload})")
     uvicorn.run(
-        "web_app.app:app", 
+        "beat_counter.web_app.app:app", 
         host=args.host, 
         port=args.port, 
         reload=args.reload, 

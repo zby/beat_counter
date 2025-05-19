@@ -34,12 +34,12 @@ from celery.result import AsyncResult
 from celery import states
 
 # Local imports
-from web_app.config import Config, User # Import User for type safety
-from web_app.storage import FileMetadataStorage
-from web_app.auth import UserManager
+from beat_counter.web_app.config import Config, User # Import User for type safety
+from beat_counter.web_app.storage import FileMetadataStorage
+from beat_counter.web_app.auth import UserManager
 
 # Import tasks directly from celery_app
-from web_app.celery_app import app as celery_app, detect_beats_task, generate_video_task
+from beat_counter.web_app.celery_app import app as celery_app, detect_beats_task, generate_video_task
 
 # Constants for task states
 ANALYZING = "ANALYZING"

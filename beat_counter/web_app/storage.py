@@ -11,7 +11,7 @@ import time
 import tempfile
 from pydub import AudioSegment
 from pydub.exceptions import CouldntDecodeError
-from web_app.config import StorageConfig
+from beat_counter.web_app.config import StorageConfig
 
 # Set up logger
 logger = logging.getLogger(__name__)

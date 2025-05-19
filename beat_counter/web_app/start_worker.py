@@ -30,7 +30,7 @@ sys.path.insert(0, str(APP_ROOT_DIR))
 
 # Import Config after setting up the path
 try:
-    from web_app.config import Config
+    from beat_counter.web_app.config import Config
 except ImportError as e:
     logger.error(
         f"Failed to import Config: {e}. Ensure APP_ROOT_DIR is correct and dependencies are installed."
@@ -118,13 +118,13 @@ def run_worker(worker_args: List[str], app_root_dir: pathlib.Path) -> None:
     logger.info(f"Set BEAT_COUNTER_APP_DIR to: {app_root_dir}")
 
     # Construct the command using the correct Celery app path
-    # The Celery app instance is located in web_app/celery_app.py
+    # The Celery app instance is located in beat_counter/web_app/celery_app.py
     cmd = [
         sys.executable,  # Use the current Python interpreter
         "-m",
         "celery",
         "-A",
-        "web_app.celery_app",  # Point to the module containing the Celery app instance
+        "beat_counter.web_app.celery_app",  # Point to the module containing the Celery app instance
         "worker",
     ] + worker_args
 

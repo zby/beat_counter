@@ -8,8 +8,8 @@ from datetime import datetime
 import io
 from pydub import AudioSegment
 import numpy as np
-from web_app.storage import FileMetadataStorage
-from web_app.config import StorageConfig
+from beat_counter.web_app.storage import FileMetadataStorage
+from beat_counter.web_app.config import StorageConfig
 
 
 @pytest.fixture

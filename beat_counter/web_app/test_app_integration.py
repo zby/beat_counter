@@ -30,10 +30,10 @@ from celery.result import AsyncResult
 from unittest.mock import patch, MagicMock  # Ensure MagicMock is imported
 
 # Import the specific task function to patch its methods
-# from web_app.celery_app import AppContext # AppContext is still used by Celery app internally, but test doesn't directly init it here for Celery anymore.
+# from beat_counter.web_app.celery_app import AppContext # AppContext is still used by Celery app internally, but test doesn't directly init it here for Celery anymore.
 
 # Import app creation function and components
-from web_app.app import (
+from beat_counter.web_app.app import (
     ANALYZING,
     ANALYZED,
     ANALYZING_FAILURE,
@@ -42,15 +42,15 @@ from web_app.app import (
     VIDEO_ERROR,
     ERROR,
 )
-from web_app.config import Config, StorageConfig, AppConfig, CeleryConfig, User
-from web_app.storage import FileMetadataStorage  # Import the class for type hinting
-from web_app.auth import UserManager
+from beat_counter.web_app.config import Config, StorageConfig, AppConfig, CeleryConfig, User
+from beat_counter.web_app.storage import FileMetadataStorage  # Import the class for type hinting
+from beat_counter.web_app.auth import UserManager
 
 # Import RawBeats
-from beat_detection.core.beats import RawBeats, Beats
+from beat_counter.core.beats import RawBeats, Beats
 
 # Import Celery app instance and initialization function
-from web_app.celery_app import app as actual_celery_app, initialize_celery_app, AppContext
+from beat_counter.web_app.celery_app import app as actual_celery_app, initialize_celery_app, AppContext
 
 # --- Test Fixtures ---
 
@@ -154,9 +154,9 @@ def test_client(
                          # as initialize_fastapi_app will use test_config to set them up.
 ) -> Generator[TestClient, None, None]:
     # Initialize the FastAPI application using the test_config.
-    # This will set up the global app, _global_config, and _app_context in web_app.app.
+    # This will set up the global app, _global_config, and _app_context in beat_counter.web_app.app.
     # It uses the same `test_config` that `configure_celery_for_test` used, ensuring consistency.
-    from web_app.app import app as fastapi_global_app, initialize_fastapi_app
+    from beat_counter.web_app.app import app as fastapi_global_app, initialize_fastapi_app
     
     initialized_app = initialize_fastapi_app(test_config)
     
@@ -182,7 +182,7 @@ def test_client(
 
     # Cleanup after tests finish with this client instance
     # Access storage via the initialized app context if needed for robust cleanup path
-    from web_app.app import _app_context as web_app_global_context
+    from beat_counter.web_app.app import _app_context as web_app_global_context
     cleanup_storage = web_app_global_context.get("storage")
     if cleanup_storage and hasattr(cleanup_storage, 'base_upload_dir'):
         print(f"Cleaning up storage directory: {cleanup_storage.base_upload_dir}")
@@ -252,7 +252,7 @@ def mock_extract_beats():
         pytest.fail(f"Failed to create real Beats object in mock fixture: {e}")
 
     # Patch extract_beats directly
-    patch_target = "web_app.celery_app.extract_beats"
+    patch_target = "beat_counter.web_app.celery_app.extract_beats"
     try:
         with patch(patch_target) as mock_extract_beats_func:
             # Configure the mock function to return our real Beats object
@@ -293,7 +293,7 @@ def test_index_authenticated(test_client: TestClient):
 
 
 def test_index_unauthenticated(test_config: Config):
-    from web_app.app import initialize_fastapi_app
+    from beat_counter.web_app.app import initialize_fastapi_app
     
     initialized_app = initialize_fastapi_app(test_config)
     
@@ -487,7 +487,7 @@ def test_status_analyzed(
     assert "beat_error" not in data or data["beat_error"] is None
 
 
-@patch("web_app.celery_app.generate_video_task.delay")
+@patch("beat_counter.web_app.celery_app.generate_video_task.delay")
 def test_confirm_analysis_success(
     mock_generate_video_delay,  # Mock object from patch
     test_client: TestClient,
@@ -563,7 +563,7 @@ def test_confirm_analysis_not_ready(
 
 
 # New test for the enhanced status endpoint with progress information
-@patch("web_app.app.AsyncResult")
+@patch("beat_counter.web_app.app.AsyncResult")
 def test_status_analyzing_with_progress(
     mock_AsyncResult,
     test_client: TestClient,
@@ -615,7 +615,7 @@ def test_status_analyzing_with_progress(
     )
 
     # Manually test the get_task_status_direct function to verify it extracts the progress correctly
-    from web_app.app import get_task_status_direct
+    from beat_counter.web_app.app import get_task_status_direct
 
     task_status = get_task_status_direct(mock_beat_task_id)
     print(f"Task status direct result: {task_status}")
@@ -643,7 +643,7 @@ def test_status_analyzing_with_progress(
     assert data["task_progress"]["status"] == "Analyzing waveforms..."
 
 
-@patch("web_app.app.AsyncResult")
+@patch("beat_counter.web_app.app.AsyncResult")
 def test_status_generating_video_with_progress(
     mock_AsyncResult,
     test_client: TestClient,
@@ -720,7 +720,7 @@ def test_status_generating_video_with_progress(
     assert data["video_task_progress"] == data["task_progress"]
 
 
-@patch("web_app.app.AsyncResult")
+@patch("beat_counter.web_app.app.AsyncResult")
 def test_status_analyzing_failure_with_error(
     mock_AsyncResult,
     test_client: TestClient,
@@ -791,7 +791,7 @@ def test_status_analyzing_failure_with_error(
     )  # Progress shouldn't be included in failure state
 
 
-@patch("web_app.app.AsyncResult")
+@patch("beat_counter.web_app.app.AsyncResult")
 def test_status_video_error_with_error(
     mock_AsyncResult,
     test_client: TestClient,
