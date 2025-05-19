@@ -16,17 +16,17 @@ from typing import Dict, Any, Optional, List, Tuple
 
 import yaml
 
-from beat_detection.core import process_batch, extract_beats
-from beat_detection.utils.file_utils import find_audio_files
-from beat_detection.core.video import generate_batch_videos
-from beat_detection.core.beats import Beats
-from beat_detection.genre_db import GenreDB
-from beat_detection.utils.reproducibility import get_git_info, save_reproducibility_info
+from beat_counter.core import process_batch, extract_beats
+from beat_counter.utils.file_utils import find_audio_files
+from beat_counter.core.video import generate_batch_videos
+from beat_counter.core.beats import Beats
+from beat_counter.genre_db import GenreDB
+from beat_counter.utils.reproducibility import get_git_info, save_reproducibility_info
 from tqdm import tqdm
 
 
 # This function has been refactored into the enhanced process_batch function
-# in beat_detection/core/pipeline.py with the use_genre_defaults parameter
+# in beat_counter/core/pipeline.py with the use_genre_defaults parameter
 
 
 def run_experiment(config_file: Path, input_dir: Optional[Path] = None, 

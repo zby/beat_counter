@@ -12,7 +12,7 @@ import sys
 import json
 from pathlib import Path
 
-from beat_detection.utils.beats_compare import compare_beats_files, compare_beats_data, format_comparison_output
+from beat_counter.utils.beats_compare import compare_beats_files, compare_beats_data, format_comparison_output
 
 
 def _determine_if_details_indicate_difference(comparison_details: dict) -> bool:

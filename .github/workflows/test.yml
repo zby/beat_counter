@@ -1,4 +1,4 @@
-name: Beat Detection App Tests
+name: Beat Counter App Tests
 
 on:
   pull_request:
