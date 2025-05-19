@@ -3,7 +3,7 @@
 Simple CLI tool to test the GenreDB implementation with the actual database file.
 """
 
-from beat_detection.genre_db import GenreDB
+from beat_counter.genre_db import GenreDB
 
 def main():
     """Load and display genre information from the actual database file."""

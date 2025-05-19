@@ -17,16 +17,16 @@ from typing import Dict, Any
 import logging  # Import logging
 from unittest.mock import MagicMock, patch, PropertyMock
 
-from web_app.config import StorageConfig
-from web_app.storage import FileMetadataStorage
-from web_app.celery_app import (
+from beat_counter.web_app.config import StorageConfig
+from beat_counter.web_app.storage import FileMetadataStorage
+from beat_counter.web_app.celery_app import (
     _perform_beat_detection,
     _perform_video_generation
 )  # Import tasks and the new helper function
-from beat_detection.core.registry import build  # Updated import
-from beat_detection.core.beats import Beats, RawBeats
-from web_app.config import Config
-from web_app.storage import FileMetadataStorage
+from beat_counter.core.registry import build  # Updated import
+from beat_counter.core.beats import Beats, RawBeats
+from beat_counter.web_app.config import Config
+from beat_counter.web_app.storage import FileMetadataStorage
 
 # --- Fixtures ---
 

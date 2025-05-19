@@ -12,12 +12,12 @@ from unittest.mock import MagicMock
 import torch
 import logging
 
-from beat_detection.core.registry import build
-from beat_detection.core import extract_beats
-from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.core.beats import RawBeats, Beats, BeatCalculationError
-from beat_detection.core.detectors.madmom import MADMOM_DEFAULT_FPS
-from beat_detection.genre_db import GenreDB
+from beat_counter.core.registry import build
+from beat_counter.core import extract_beats
+from beat_counter.core.detector_protocol import BeatDetector
+from beat_counter.core.beats import RawBeats, Beats, BeatCalculationError
+from beat_counter.core.detectors.madmom import MADMOM_DEFAULT_FPS
+from beat_counter.genre_db import GenreDB
 
 # -----------------------------------------------------------------------------
 # Test data and fixtures

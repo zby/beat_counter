@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import patch
 
 # Import the classes and exception to be tested
-from web_app.config import Config, ConfigurationError, AppConfig, StorageConfig, CeleryConfig, User
+from beat_counter.web_app.config import Config, ConfigurationError, AppConfig, StorageConfig, CeleryConfig, User
 
 @pytest.fixture
 def temp_config_files_factory():

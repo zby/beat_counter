@@ -2,9 +2,9 @@ import pytest
 import numpy as np
 from pathlib import Path
 
-from beat_detection.core.beats import Beats, RawBeats, BeatCalculationError
-from beat_detection.core.video import BeatVideoGenerator
-from beat_detection.cli.generate_video import main as generate_video_main
+from beat_counter.core.beats import Beats, RawBeats, BeatCalculationError
+from beat_counter.core.video import BeatVideoGenerator
+from beat_counter.cli.generate_video import main as generate_video_main
 
 # Define paths relative to the tests directory, using the fixtures subdir
 TEST_FIXTURES_DIR = Path(__file__).parent / "fixtures"

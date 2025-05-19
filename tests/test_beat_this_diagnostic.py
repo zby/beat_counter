@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from beat_detection.core.registry import build
+from beat_counter.core.registry import build
 
 # -----------------------------------------------------------------------------
 # Test data with additional diagnostics
