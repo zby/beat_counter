@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
   - The `build()` function in the registry replaces the deprecated `get()` function
   - `build()` accepts either a DetectorConfig object or kwargs that are transformed into a config
   - Direct instantiation of detectors requires a DetectorConfig object
+- Renamed `beat_detection` directory to `beat_counter` and moved `web_app` directory into `beat_counter/web_app/` to standardize project structure and improve clarity.
 
 ### Added
 - New registry system allowing easier registration of beat detectors
