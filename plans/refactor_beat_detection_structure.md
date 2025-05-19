@@ -49,41 +49,149 @@ _No specific unit tests for this step, as it's a structural change. Subsequent s
 
 ---
 
-## Step 2 — Update Imports and References
-
-This is a critical step and requires careful searching and updating across the entire codebase.
+## Step 2 — Update Core Python Imports for `beat_detection`
 
 | Files                 | Action |
 |-----------------------|--------|
-| `**/*.py`             | `±` Update import statements from `beat_detection.*` to `beat_counter.*` and `web_app.*` to `beat_counter.web_app.*`. |
-| `**/*.md`             | `±` Update any documentation or examples referencing old paths. |
-| `pyproject.toml`      | `±` Check and update any path-specific configurations (e.g., package includes, script paths). |
-| `.github/workflows/*` | `±` Check and update CI/CD pipeline configurations, script paths, or PYTHONPATH adjustments. |
-| `tests/**/*.py`       | `±` Update import statements and file paths used in tests. |
-| `scripts/*`           | `±` Check any utility scripts for hardcoded paths. |
-| `docs/*`              | `±` Update documentation if paths are mentioned. |
+| `beat_counter/**/*.py`| `±` Update import statements from `beat_detection.*` to `beat_counter.*`. |
 
 ### Actions
-1.  **Global Search and Replace:**
-    *   Search for `from beat_detection` and replace with `from beat_counter`.
-    *   Search for `import beat_detection` and replace with `import beat_counter`.
-    *   Search for `from web_app` and replace with `from beat_counter.web_app`.
-    *   Search for `import web_app` and replace with `import beat_counter.web_app`.
-    *   Search for paths like `"beat_detection/"` and update to `"beat_counter/"`.
-    *   Search for paths like `"web_app/"` and update to `"beat_counter/web_app/"`.
-2.  **Review `sys.path` modifications:** Check for any scripts or modules that manipulate `sys.path` and update them accordingly.
-3.  **Review `pyproject.toml`:** Ensure that package discovery, script definitions, or tool configurations correctly reflect the new structure.
-4.  **Review CI/CD workflows:** Update any paths in GitHub Actions workflows or other CI scripts.
+1. **Update imports in core modules:**
+   * Search for `from beat_detection` and replace with `from beat_counter` in core modules.
+   * Search for `import beat_detection` and replace with `import beat_counter` in core modules.
+   * Search for paths like `"beat_detection/"` and update to `"beat_counter/"`.
 
 ### Unit tests
+- No new unit tests specifically for this step. Core module imports will be verified when running tests in a later step.
 
-- No new unit tests specifically for this step. Existing unit tests will be run in the next step to verify changes.
-
-After fixing errors and ensuring all references are updated, commit changes: `git commit -m "feat: Update imports and references for beat_counter structure"`
+After updating core module imports, commit changes: `git commit -m "refactor: Update beat_detection imports in core modules"`
 
 ---
 
-## Step 3 — Run All Tests
+## Step 3 — Update Core Python Imports for `web_app`
+
+| Files                 | Action |
+|-----------------------|--------|
+| `beat_counter/**/*.py`| `±` Update import statements from `web_app.*` to `beat_counter.web_app.*`. |
+
+### Actions
+1. **Update imports in core modules:**
+   * Search for `from web_app` and replace with `from beat_counter.web_app` in core modules.
+   * Search for `import web_app` and replace with `import beat_counter.web_app` in core modules.
+   * Search for paths like `"web_app/"` and update to `"beat_counter/web_app/"`.
+
+### Unit tests
+- No new unit tests specifically for this step. Core module imports will be verified when running tests in a later step.
+
+After updating core module imports, commit changes: `git commit -m "refactor: Update web_app imports in core modules"`
+
+---
+
+## Step 4 — Update Test Imports for `beat_detection`
+
+| Files                 | Action |
+|-----------------------|--------|
+| `tests/**/*.py`       | `±` Update import statements and file paths related to `beat_detection`. |
+
+### Actions
+1. **Update imports in test files:**
+   * Search for `from beat_detection` and replace with `from beat_counter` in test files.
+   * Search for `import beat_detection` and replace with `import beat_counter` in test files.
+   * Update test fixtures that reference the `beat_detection` path.
+
+### Unit tests
+- No new unit tests specifically for this step, as we're updating the existing test files themselves.
+
+After updating test imports, commit changes: `git commit -m "refactor: Update beat_detection imports in test files"`
+
+---
+
+## Step 5 — Update Test Imports for `web_app`
+
+| Files                 | Action |
+|-----------------------|--------|
+| `tests/**/*.py`       | `±` Update import statements and file paths related to `web_app`. |
+
+### Actions
+1. **Update imports in test files:**
+   * Search for `from web_app` and replace with `from beat_counter.web_app` in test files.
+   * Search for `import web_app` and replace with `import beat_counter.web_app` in test files.
+   * Update test fixtures that reference the `web_app` path.
+
+### Unit tests
+- No new unit tests specifically for this step, as we're updating the existing test files themselves.
+
+After updating test imports, commit changes: `git commit -m "refactor: Update web_app imports in test files"`
+
+---
+
+## Step 6 — Update Configuration Files
+
+| Files                 | Action |
+|-----------------------|--------|
+| `pyproject.toml`      | `±` Check and update any path-specific configurations (e.g., package includes, script paths). |
+| `setup.py` (if exists)| `±` Update package references and paths. |
+| `setup.cfg` (if exists)| `±` Update any configuration referencing old paths. |
+
+### Actions
+1. **Review and update configuration files:**
+   * Check `pyproject.toml` for any references to `beat_detection` or `web_app` paths.
+   * Update package discovery settings to reflect the new structure.
+   * Update any script definitions that reference the old paths.
+   * Check for any tool configurations (pytest, black, etc.) that might reference the old paths.
+
+### Unit tests
+- No specific unit tests for this step, as configuration changes will be validated when running the full test suite later.
+
+After updating configuration files, commit changes: `git commit -m "refactor: Update configuration files for beat_counter structure"`
+
+---
+
+## Step 7 — Update CI/CD and Scripts
+
+| Files                 | Action |
+|-----------------------|--------|
+| `.github/workflows/*` | `±` Check and update CI/CD pipeline configurations and script paths. |
+| `scripts/*`           | `±` Check any utility scripts for hardcoded paths. |
+| Any files with `sys.path` modifications | `±` Review and update path manipulations. |
+
+### Actions
+1. **Review and update CI/CD and scripts:**
+   * Update any GitHub Actions workflows or other CI scripts that reference the old paths.
+   * Check utility scripts in the `scripts/` directory for hardcoded paths.
+   * Review any files that modify `sys.path` and update path references.
+   * Update any PYTHONPATH adjustments in scripts or workflow files.
+
+### Unit tests
+- No specific unit tests for this step, but CI pipeline will validate changes when run.
+
+After updating CI/CD and scripts, commit changes: `git commit -m "refactor: Update CI/CD workflows and scripts for beat_counter structure"`
+
+---
+
+## Step 8 — Update Documentation
+
+| Files                 | Action |
+|-----------------------|--------|
+| `**/*.md`             | `±` Update any documentation or examples referencing old paths. |
+| `docs/*`              | `±` Update documentation if paths are mentioned. |
+| Jupyter notebooks (if any) | `±` Check and update import statements and paths. |
+
+### Actions
+1. **Review and update documentation:**
+   * Update any markdown files that reference the old paths.
+   * Check documentation in `docs/` directory for mentions of the old structure.
+   * Update code examples in documentation to use the new import paths.
+   * Check Jupyter notebooks if they exist and update imports/paths.
+
+### Unit tests
+- No specific unit tests for documentation changes.
+
+After updating documentation, commit changes: `git commit -m "docs: Update documentation with new beat_counter structure"`
+
+---
+
+## Step 9 — Run All Tests
 
 ### Unit tests
 
@@ -92,7 +200,7 @@ After fixing errors and ensuring all references are updated, commit changes: `gi
   # (Command to run unit tests, e.g., pytest)
   pytest
   ```
-- Address any failing tests. These failures will likely be due to incorrect import paths or references missed in Step 2.
+- Address any failing tests. These failures will likely be due to incorrect import paths or references missed in previous steps.
 
 ### Integration Tests
 
@@ -107,14 +215,14 @@ After fixing errors and all tests pass, commit changes: `git commit -m "test: Ve
 
 ---
 
-## Check for accidental changes
+## Step 10 — Check for accidental changes
 
 Run `git diff main --stat` and `git diff main` and carefully review if there are no accidental changes and if all changes adhere to our project rules.
 Pay close attention to changes in files that were not expected to be modified.
 
 ---
 
-## Final Step — Documentation & CHANGELOG
+## Step 11 — Documentation & CHANGELOG
 
 - **Documentation Updates**:
     - Review all project documentation (`README.md`, files in `docs/`, etc.) for mentions of `beat_detection` or the old `web_app` path and update them.
