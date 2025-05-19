@@ -1,4 +1,0 @@
-{
-  "beat_detection_status": "error",
-  "beat_detection_error": "could not convert string to float: 'sample_audio_123'"
-}
