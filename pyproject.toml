@@ -53,13 +53,13 @@ dev = [
 ]
 
 [project.scripts]
-detect-beats = "beat_detection.cli.detect_beats:main"
-detect-beats-batch = "beat_detection.cli.detect_beats_batch:main"
-generate-video = "beat_detection.cli.generate_video:main"
-generate-video-batch = "beat_detection.cli.generate_video_batch:main"
+detect-beats = "beat_counter.cli.detect_beats:main"
+detect-beats-batch = "beat_counter.cli.detect_beats_batch:main"
+generate-video = "beat_counter.cli.generate_video:main"
+generate-video-batch = "beat_counter.cli.generate_video_batch:main"
 
 [tool.setuptools]
-packages = ["web_app", "beat_detection", "beat_detection.core", "beat_detection.core.detectors", "beat_detection.utils", "beat_detection.cli"]
+packages = ["beat_counter", "beat_counter.core", "beat_counter.core.detectors", "beat_counter.utils", "beat_counter.cli", "beat_counter.web_app"]
 
 [tool.black]
 line-length = 88
@@ -71,7 +71,7 @@ profile = "black"
 line_length = 88
 
 [tool.pytest.ini_options]
-testpaths = ["web_app", "beat_detection", "tests"]
+testpaths = ["beat_counter", "tests"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
 markers = [
