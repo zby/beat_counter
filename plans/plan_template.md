@@ -17,6 +17,10 @@ This refactor [explain purpose and benefits].
 - [List administrative tasks like branch creation]
 - [CI configuration]
 
+Make sure that all unit tests pass.
+Make sure that all integration tests (all tests marked as `slow`) pass.
+Only if the tests pass we can go on with the plan.
+
 _No tests – administrative._
 
 ---
