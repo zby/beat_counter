@@ -20,6 +20,10 @@ def _determine_if_details_indicate_difference(comparison_details: dict) -> bool:
     Determines if the comparison_details from compare_beats_data indicate any difference.
     This is a helper to set the exit code.
     """
+    # Check beats per bar if it exists
+    if comparison_details.get("beats_per_bar_diff", False):
+        return True
+        
     # Check beat counts
     beat_summary = comparison_details.get("beat_counts_summary", {})
     if beat_summary.get("status") != "match":
@@ -84,12 +88,24 @@ def _compare_two_files(file1_path: Path, file2_path: Path, tolerance: float, lim
     beat_counts1 = data1.get('beat_counts', [])
     timestamps2 = data2.get('timestamps', [])
     beat_counts2 = data2.get('beat_counts', [])
-
+    
+    # Get beats per bar information if it exists
+    beats_per_bar1 = data1.get('beats_per_bar')
+    beats_per_bar2 = data2.get('beats_per_bar')
+    
     comparison_details = compare_beats_data(
         timestamps1, beat_counts1,
         timestamps2, beat_counts2,
         match_threshold=tolerance
     )
+    
+    # Add beats per bar comparison
+    if beats_per_bar1 is not None or beats_per_bar2 is not None:
+        if beats_per_bar1 != beats_per_bar2:
+            comparison_details["beats_per_bar_diff"] = {
+                "file1_value": beats_per_bar1,
+                "file2_value": beats_per_bar2
+            }
     
     report_options = {
         "file1_name": str(file1_path),
@@ -103,6 +119,14 @@ def _compare_two_files(file1_path: Path, file2_path: Path, tolerance: float, lim
         num_context_lines=2,
         **report_options
     )
+    
+    # Display beats per bar difference prominently if it exists
+    if comparison_details.get("beats_per_bar_diff"):
+        beats_diff = comparison_details["beats_per_bar_diff"]
+        print("\n⚠️ IMPORTANT DIFFERENCE: Beats per bar mismatch ⚠️")
+        print(f"  File 1 ({file1_path.name}): {beats_diff['file1_value']}")
+        print(f"  File 2 ({file2_path.name}): {beats_diff['file2_value']}")
+        print("")
     
     print("\nComparison Report:")
     for report_line in formatted_report.splitlines():
@@ -219,6 +243,13 @@ def _summarize_diff(differences: dict, exp1_label: str, exp2_label: str, *, use_
         return f"{(value/denom*100):.1f}%"
 
     parts = []
+    
+    # --- beats per bar (highest priority) ---------------------------------
+    beats_per_bar_diff = differences.get("beats_per_bar_diff")
+    if beats_per_bar_diff:
+        file1_value = beats_per_bar_diff.get("file1_value")
+        file2_value = beats_per_bar_diff.get("file2_value")
+        parts.append(f"BEATS PER BAR MISMATCH: {file1_value} vs {file2_value}")
 
     # --- timestamps -------------------------------------------------------
     ts_diff = differences.get("timestamps")
