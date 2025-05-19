@@ -11,11 +11,11 @@ from typing import Dict, Type, Optional, Any, List, Tuple
 from pathlib import Path
 from tqdm import tqdm
 
-from beat_detection.core.beats import Beats
-from beat_detection.core.registry import build
-from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.utils.file_utils import find_audio_files, get_output_path
-from beat_detection.genre_db import GenreDB, parse_genre_from_path
+from beat_counter.core.beats import Beats
+from beat_counter.core.registry import build
+from beat_counter.core.detector_protocol import BeatDetector
+from beat_counter.utils.file_utils import find_audio_files, get_output_path
+from beat_counter.genre_db import GenreDB, parse_genre_from_path
 
 
 def extract_beats(

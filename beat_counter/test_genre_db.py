@@ -1,12 +1,12 @@
 """
 Unit tests for GenreDB class and genre utilities.
-Run with: python -m pytest beat_detection/test_genre_db.py -v
+Run with: python -m pytest beat_counter/test_genre_db.py -v
 """
 
 import pytest
 from pathlib import Path
 import tempfile
-from beat_detection.genre_db import GenreDB, parse_genre_from_path
+from beat_counter.genre_db import GenreDB, parse_genre_from_path
 
 
 class TestParseGenreFromPath:

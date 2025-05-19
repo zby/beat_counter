@@ -4,8 +4,8 @@ import pytest
 from pathlib import Path
 
 # Assuming RawBeats is importable from this location
-# Removed: from beat_detection.core.beats import RawBeats
-from beat_detection.core.beats import RawBeats # Import from beats.py now
+# Removed: from beat_counter.core.beats import RawBeats
+from beat_counter.core.beats import RawBeats # Import from beats.py now
 
 # Define default parameters for fixtures and tests
 # Removed: DEFAULT_BPB = 4

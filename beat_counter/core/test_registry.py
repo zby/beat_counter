@@ -6,8 +6,8 @@ import pytest
 import warnings
 from unittest.mock import patch, MagicMock
 
-from beat_detection.core.registry import register, build, get
-from beat_detection.core.detectors.base import DetectorConfig
+from beat_counter.core.registry import register, build, get
+from beat_counter.core.detectors.base import DetectorConfig
 
 
 # Test detector class
@@ -20,12 +20,12 @@ class MockDetector:
 def test_register():
     """Test detector registration."""
     # Create a local registry for testing
-    with patch('beat_detection.core.registry._DETECTORS', {}):
+    with patch('beat_counter.core.registry._DETECTORS', {}):
         # Register the test detector
         register_name = "test_detector"
         decorated = register(register_name)(MockDetector)
         
-        from beat_detection.core.registry import _DETECTORS
+        from beat_counter.core.registry import _DETECTORS
         assert register_name in _DETECTORS
         assert _DETECTORS[register_name] == MockDetector
         assert decorated == MockDetector
@@ -33,7 +33,7 @@ def test_register():
 
 def test_build_with_config():
     """Test building a detector with an explicit config object."""
-    with patch('beat_detection.core.registry._DETECTORS', {"test_detector": MockDetector}):
+    with patch('beat_counter.core.registry._DETECTORS', {"test_detector": MockDetector}):
         # Create a config
         config = DetectorConfig(min_bpm=90, max_bpm=180)
         
@@ -47,7 +47,7 @@ def test_build_with_config():
 
 def test_build_with_kwargs():
     """Test building a detector from kwargs to create a config."""
-    with patch('beat_detection.core.registry._DETECTORS', {"test_detector": MockDetector}):
+    with patch('beat_counter.core.registry._DETECTORS', {"test_detector": MockDetector}):
         # Build detector with kwargs that should go into config
         detector = build("test_detector", min_bpm=90, max_bpm=180, extra_arg="value")
         
@@ -60,7 +60,7 @@ def test_build_with_kwargs():
 
 def test_get_deprecated():
     """Test that get() calls build() and emits a deprecation warning."""
-    with patch('beat_detection.core.registry.build') as mock_build, \
+    with patch('beat_counter.core.registry.build') as mock_build, \
          warnings.catch_warnings(record=True) as recorded_warnings:
         
         # Configure mock
@@ -83,7 +83,7 @@ def test_get_deprecated():
 
 def test_build_algorithm_not_found():
     """Test that build() raises an error for unknown algorithms."""
-    with patch('beat_detection.core.registry._DETECTORS', {}):
+    with patch('beat_counter.core.registry._DETECTORS', {}):
         with pytest.raises(ValueError) as excinfo:
             build("nonexistent")
         

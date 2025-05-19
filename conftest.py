@@ -50,10 +50,10 @@ def force_cpu_for_tests():
     to ensure that any BeatThisDetector instances created during tests will use CPU.
     """
     # Set environment variable to indicate CPU usage
-    os.environ['BEAT_DETECTION_FORCE_CPU'] = '1'
+    os.environ['BEAT_COUNTER_FORCE_CPU'] = '1'
     
     # Apply patch for BeatThisDetector initialization
-    from beat_detection.core.registry import build
+    from beat_counter.core.registry import build
     original_build = build
     
     def patched_build(*args, **kwargs):
@@ -62,7 +62,7 @@ def force_cpu_for_tests():
             kwargs['device'] = 'cpu'
         return original_build(*args, **kwargs)
     
-    with patch('beat_detection.core.registry.build', patched_build):
+    with patch('beat_counter.core.registry.build', patched_build):
         yield 
 
 def pytest_collection_modifyitems(items):

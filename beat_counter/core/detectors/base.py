@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from typing import Optional, Union, List, Tuple
 from pathlib import Path
 from pydub import AudioSegment
-from beat_detection.core.beats import BeatCalculationError
-import beat_detection.utils.constants as constants
+from beat_counter.core.beats import BeatCalculationError
+import beat_counter.utils.constants as constants
 
 
 @dataclass(slots=True, frozen=True)

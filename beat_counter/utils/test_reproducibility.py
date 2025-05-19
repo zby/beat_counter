@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from beat_detection.utils.reproducibility import get_git_info, save_reproducibility_info
+from beat_counter.utils.reproducibility import get_git_info, save_reproducibility_info
 
 
 @patch('subprocess.check_output')

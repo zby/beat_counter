@@ -28,8 +28,8 @@ import sys
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from beat_detection.core import extract_beats
-from beat_detection.genre_db import GenreDB, parse_genre_from_path
+from beat_counter.core import extract_beats
+from beat_counter.genre_db import GenreDB, parse_genre_from_path
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""

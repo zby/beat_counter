@@ -9,9 +9,9 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from beat_detection.core.detectors.beat_this import BeatThisDetector
-from beat_detection.core.detectors.base import DetectorConfig
-from beat_detection.core.beats import RawBeats
+from beat_counter.core.detectors.beat_this import BeatThisDetector
+from beat_counter.core.detectors.base import DetectorConfig
+from beat_counter.core.beats import RawBeats
 
 
 # -----------------------------------------------------------------------------
@@ -28,7 +28,7 @@ def _make_mock_detector(beats: np.ndarray, downbeats: np.ndarray) -> BeatThisDet
         def __call__(self, _audio_path: str):  # noqa: D401 – mimic __call__ interface
             return beats, downbeats
 
-    with patch("beat_detection.core.detectors.beat_this.File2Beats", DummyProcessor):
+    with patch('beat_counter.core.detectors.beat_this.File2Beats', DummyProcessor):
         # Create a default config for the detector
         cfg = DetectorConfig()
         return BeatThisDetector(cfg)

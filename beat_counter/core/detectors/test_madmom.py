@@ -5,8 +5,8 @@ Tests for the madmom beat detector implementation.
 import pytest
 from unittest.mock import patch, MagicMock, ANY
 
-from beat_detection.core.detectors.madmom import MadmomBeatDetector
-from beat_detection.core.detectors.base import DetectorConfig
+from beat_counter.core.detectors.madmom import MadmomBeatDetector
+from beat_counter.core.detectors.base import DetectorConfig
 
 
 def test_madmom_detector_with_config():

@@ -91,7 +91,7 @@ def save_reproducibility_info(
     # Save the genre database if requested
     if save_genre_db:
         try:
-            from beat_detection.genre_db import GenreDB
+            from beat_counter.genre_db import GenreDB
             # Determine the default genre CSV path
             default_csv_path = Path(__file__).parent.parent.parent / "data" / "dance_music_genres.csv"
             

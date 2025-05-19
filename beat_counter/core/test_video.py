@@ -8,12 +8,12 @@ import pathlib
 import pytest
 from unittest.mock import patch, MagicMock, call
 
-from beat_detection.core.video import (
+from beat_counter.core.video import (
     BeatVideoGenerator,
     generate_single_video_from_files,
     generate_batch_videos,
 )
-from beat_detection.core.beats import Beats, RawBeats
+from beat_counter.core.beats import Beats, RawBeats
 
 
 class TestGenerateSingleVideoFromFiles:
@@ -30,9 +30,9 @@ class TestGenerateSingleVideoFromFiles:
         beats_file.write_text('{"timestamps": [1.0, 2.0, 3.0], "audio_file": "test_audio.mp3"}')
         return audio_file, beats_file, output_file
 
-    @patch("beat_detection.core.video.RawBeats.load_from_file")
-    @patch("beat_detection.core.video.Beats")
-    @patch("beat_detection.core.video.BeatVideoGenerator")
+    @patch('beat_counter.core.video.RawBeats.load_from_file')
+    @patch('beat_counter.core.video.Beats')
+    @patch('beat_counter.core.video.BeatVideoGenerator')
     def test_successful_generation(self, mock_generator_class, mock_beats_class, mock_load, mock_paths):
         """Test successful video generation with default parameters."""
         audio_file, beats_file, output_file = mock_paths
@@ -76,9 +76,9 @@ class TestGenerateSingleVideoFromFiles:
             sample_beats=None
         )
 
-    @patch("beat_detection.core.video.RawBeats.load_from_file")
-    @patch("beat_detection.core.video.Beats")
-    @patch("beat_detection.core.video.BeatVideoGenerator")
+    @patch('beat_counter.core.video.RawBeats.load_from_file')
+    @patch('beat_counter.core.video.Beats')
+    @patch('beat_counter.core.video.BeatVideoGenerator')
     def test_custom_parameters(self, mock_generator_class, mock_beats_class, mock_load, mock_paths):
         """Test video generation with custom parameters."""
         audio_file, beats_file, output_file = mock_paths
@@ -158,7 +158,7 @@ class TestGenerateSingleVideoFromFiles:
                 verbose=False
             )
 
-    @patch("beat_detection.core.video.RawBeats.load_from_file")
+    @patch('beat_counter.core.video.RawBeats.load_from_file')
     def test_raw_beats_loading_error(self, mock_load, mock_paths):
         """Test error handling when RawBeats loading fails."""
         audio_file, beats_file, _ = mock_paths
@@ -174,8 +174,8 @@ class TestGenerateSingleVideoFromFiles:
                 verbose=False
             )
 
-    @patch("beat_detection.core.video.RawBeats.load_from_file")
-    @patch("beat_detection.core.video.Beats")
+    @patch('beat_counter.core.video.RawBeats.load_from_file')
+    @patch('beat_counter.core.video.Beats')
     def test_beats_reconstruction_error(self, mock_beats_class, mock_load, mock_paths):
         """Test error handling when Beats reconstruction fails."""
         audio_file, beats_file, _ = mock_paths
@@ -195,9 +195,9 @@ class TestGenerateSingleVideoFromFiles:
                 verbose=False
             )
 
-    @patch("beat_detection.core.video.RawBeats.load_from_file")
-    @patch("beat_detection.core.video.Beats")
-    @patch("beat_detection.core.video.BeatVideoGenerator")
+    @patch('beat_counter.core.video.RawBeats.load_from_file')
+    @patch('beat_counter.core.video.Beats')
+    @patch('beat_counter.core.video.BeatVideoGenerator')
     def test_default_output_path(self, mock_generator_class, mock_beats_class, mock_load, mock_paths):
         """Test that default output path is correctly constructed."""
         audio_file, beats_file, _ = mock_paths
@@ -268,8 +268,8 @@ class TestGenerateBatchVideos:
         
         return input_dir
 
-    @patch("beat_detection.core.video.find_audio_files")
-    @patch("beat_detection.core.video.generate_single_video_from_files")
+    @patch('beat_counter.core.video.find_audio_files')
+    @patch('beat_counter.core.video.generate_single_video_from_files')
     def test_batch_processing(self, mock_generate_single, mock_find_audio, mock_directory_structure):
         """Test batch processing of multiple files."""
         input_dir = mock_directory_structure
@@ -344,8 +344,8 @@ class TestGenerateBatchVideos:
             )
         ], any_order=True)
 
-    @patch("beat_detection.core.video.find_audio_files")
-    @patch("beat_detection.core.video.generate_single_video_from_files")
+    @patch('beat_counter.core.video.find_audio_files')
+    @patch('beat_counter.core.video.generate_single_video_from_files')
     def test_batch_with_custom_output_dir(self, mock_generate_single, mock_find_audio, mock_directory_structure, tmp_path):
         """Test batch processing with custom output directory."""
         input_dir = mock_directory_structure
@@ -387,7 +387,7 @@ class TestGenerateBatchVideos:
         for actual, expected in zip(output_paths_in_calls, expected_output_files):
             assert actual == expected
 
-    @patch("beat_detection.core.video.find_audio_files")
+    @patch('beat_counter.core.video.find_audio_files')
     def test_no_audio_files(self, mock_find_audio, mock_directory_structure):
         """Test behavior when no audio files are found."""
         input_dir = mock_directory_structure
@@ -405,8 +405,8 @@ class TestGenerateBatchVideos:
         # Should return empty list
         assert results == []
 
-    @patch("beat_detection.core.video.find_audio_files")
-    @patch("beat_detection.core.video.generate_single_video_from_files")
+    @patch('beat_counter.core.video.find_audio_files')
+    @patch('beat_counter.core.video.generate_single_video_from_files')
     def test_handle_missing_beats_file(self, mock_generate_single, mock_find_audio, mock_directory_structure):
         """Test that missing beats files are properly handled."""
         input_dir = mock_directory_structure

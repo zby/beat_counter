@@ -6,8 +6,8 @@ import inspect
 import pytest
 
 # Explicitly import to ensure registration
-from beat_detection.core.detectors import madmom, beat_this
-from beat_detection.core.registry import _DETECTORS, build
+from beat_counter.core.detectors import madmom, beat_this
+from beat_counter.core.registry import _DETECTORS, build
 
 def test_registry_contains_detectors():
     """Test that the registry contains all expected detectors."""

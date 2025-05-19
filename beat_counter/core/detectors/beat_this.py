@@ -17,10 +17,10 @@ from beat_this.model.postprocessor import Postprocessor
 from madmom.features.downbeats import DBNDownBeatTrackingProcessor
 from pydub import AudioSegment
 
-from beat_detection.core.beats import RawBeats, BeatCalculationError
-from beat_detection.core.registry import register
-from beat_detection.core.detectors.base import BaseBeatDetector, DetectorConfig
-import beat_detection.utils.constants as constants
+from beat_counter.core.beats import RawBeats, BeatCalculationError
+from beat_counter.core.registry import register
+from beat_counter.core.detectors.base import BaseBeatDetector, DetectorConfig
+import beat_counter.utils.constants as constants
 
 from typing import Optional, List, Tuple, Union
 
@@ -99,7 +99,7 @@ class BeatThisDetector(BaseBeatDetector):
         super().__init__(cfg)
 
         # Check if we need to force CPU usage via environment variable
-        force_cpu = os.environ.get('BEAT_DETECTION_FORCE_CPU') == '1'
+        force_cpu = os.environ.get('BEAT_COUNTER_FORCE_CPU') == '1'
         
         # Select GPU if available unless the caller overrides the *device* string or force_cpu is set
         resolved_device = (

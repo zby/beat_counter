@@ -16,11 +16,11 @@ from moviepy import (
     TextClip,
     ColorClip,
 )
-from beat_detection.core.beats import Beats, RawBeats
+from beat_counter.core.beats import Beats, RawBeats
 import logging
 from pathlib import Path
 from tqdm import tqdm
-from beat_detection.utils.file_utils import find_audio_files
+from beat_counter.utils.file_utils import find_audio_files
 
 # Video dimensions constants
 DEFAULT_VIDEO_WIDTH = 720

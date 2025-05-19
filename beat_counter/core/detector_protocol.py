@@ -4,7 +4,7 @@ Core beat detection functionality and protocols.
 
 from typing import Protocol, runtime_checkable
 from pathlib import Path
-from beat_detection.core.beats import RawBeats
+from beat_counter.core.beats import RawBeats
 
 
 @runtime_checkable

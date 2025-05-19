@@ -411,7 +411,7 @@ def test_upload_unauthenticated(
     test_config: Config,
     generated_sample_audio: Dict[str, Any]
 ):
-    from web_app.app import initialize_fastapi_app
+    from beat_counter.web_app.app import initialize_fastapi_app
 
     initialized_app = initialize_fastapi_app(test_config)
     client = TestClient(initialized_app)

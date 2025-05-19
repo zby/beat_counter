@@ -7,8 +7,8 @@ import numpy as np
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
-from beat_detection.core.pipeline import process_batch, extract_beats
-from beat_detection.core.beats import RawBeats, Beats
+from beat_counter.core.pipeline import process_batch, extract_beats
+from beat_counter.core.beats import RawBeats, Beats
 
 
 def test_extract_beats_calls_build():
@@ -36,10 +36,10 @@ def test_extract_beats_calls_build():
     mock_beats = MagicMock()
     
     # Patch multiple functions to avoid validation
-    with patch('beat_detection.core.pipeline.build', return_value=mock_detector) as mock_build, \
+    with patch('beat_counter.core.pipeline.build', return_value=mock_detector) as mock_build, \
          patch('pathlib.Path.is_file', return_value=True), \
-         patch('beat_detection.core.pipeline.get_output_path', return_value='test.beats'), \
-         patch('beat_detection.core.pipeline.Beats', return_value=mock_beats) as mock_beats_class, \
+         patch('beat_counter.core.pipeline.get_output_path', return_value='test.beats'), \
+         patch('beat_counter.core.pipeline.Beats', return_value=mock_beats) as mock_beats_class, \
          patch('builtins.open', MagicMock()), \
          patch('json.dump'):
         
@@ -66,9 +66,9 @@ def test_process_batch_calls_extract_beats():
     """Test that process_batch calls extract_beats with the correct arguments."""
     mock_audio_files = [Path('/path/to/audio1.mp3'), Path('/path/to/audio2.mp3')]
     
-    with patch('beat_detection.core.pipeline.Path.is_dir', return_value=True), \
-         patch('beat_detection.core.pipeline.find_audio_files', return_value=mock_audio_files), \
-         patch('beat_detection.core.pipeline.extract_beats') as mock_extract_beats, \
+    with patch('beat_counter.core.pipeline.Path.is_dir', return_value=True), \
+         patch('beat_counter.core.pipeline.find_audio_files', return_value=mock_audio_files), \
+         patch('beat_counter.core.pipeline.extract_beats') as mock_extract_beats, \
          patch('pathlib.Path.relative_to', side_effect=lambda x: Path(os.path.basename(x))):
         
         # Mock extract_beats to return a MagicMock

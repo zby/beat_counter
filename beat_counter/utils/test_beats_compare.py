@@ -3,7 +3,7 @@ Unit tests for the beat_detection.utils.beats_compare module.
 """
 
 import pytest
-from beat_detection.utils.beats_compare import compare_beats_data, format_comparison_output
+from beat_counter.utils.beats_compare import compare_beats_data, format_comparison_output
 
 # Test data for compare_beats_data
 TS_EMPTY = []

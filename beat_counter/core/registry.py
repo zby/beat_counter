@@ -6,8 +6,8 @@ This module provides functions to register and retrieve beat detector implementa
 import warnings
 from typing import Dict, Type, Callable, Any
 
-from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.core.detectors.base import DetectorConfig
+from beat_counter.core.detector_protocol import BeatDetector
+from beat_counter.core.detectors.base import DetectorConfig
 
 # Registry of available detectors
 _DETECTORS: Dict[str, Type[BeatDetector]] = {}

@@ -3,8 +3,8 @@ Tests for the base detector module.
 """
 
 import pytest
-from beat_detection.core.detectors.base import DetectorConfig, BaseBeatDetector
-import beat_detection.utils.constants as constants
+from beat_counter.core.detectors.base import DetectorConfig, BaseBeatDetector
+import beat_counter.utils.constants as constants
 
 
 def test_config_defaults():

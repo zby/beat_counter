@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from typing import Optional
 
-from beat_detection.core.beats import Beats, BeatStatistics, BeatCalculationError, RawBeats
+from beat_counter.core.beats import Beats, BeatStatistics, BeatCalculationError, RawBeats
 from conftest import assert_raises
 
 

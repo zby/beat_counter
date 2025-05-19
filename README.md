@@ -267,14 +267,13 @@ By default, the tests will use GPU if available for beat detection algorithms th
 
 #### Force CPU Usage
 
-For CI/CD environments without GPUs (such as GitHub Actions) or to replicate CI failures locally, you can force CPU usage by setting the `BEAT_DETECTION_FORCE_CPU` environment variable:
+For CI/CD environments without GPUs (such as GitHub Actions) or to replicate CI failures locally, you can force CPU usage by setting the `BEAT_COUNTER_FORCE_CPU` environment variable:
 
 ```bash
-# Run all tests on CPU regardless of GPU availability
-BEAT_DETECTION_FORCE_CPU=1 python -m pytest
+BEAT_COUNTER_FORCE_CPU=1 python -m pytest
 
-# Run specific tests on CPU
-BEAT_DETECTION_FORCE_CPU=1 python -m pytest tests/test_beat_this.py
+# Or for specific tests:
+BEAT_COUNTER_FORCE_CPU=1 python -m pytest tests/test_beat_this.py
 ```
 
 This ensures consistent test behavior across different environments. The application automatically detects this environment variable and forces CPU usage for all detector initializations.

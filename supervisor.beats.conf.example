@@ -1,5 +1,5 @@
 [program:beats_web]
-command=/home/admin/beat_counter/.venv/bin/uvicorn web_app.asgi:app --host 127.0.0.1 --port 8000
+command=/home/admin/beat_counter/.venv/bin/uvicorn beat_counter.web_app.asgi:app --host 127.0.0.1 --port 8000
 directory=/home/admin/beat_counter
 user=www-data
 autostart=true
@@ -9,7 +9,7 @@ stdout_logfile=/home/admin/beat_counter/logs/web.out.log
 environment=PYTHONPATH="/home/admin/beat_counter",BEAT_COUNTER_APP_DIR="/home/admin/beat_counter"
 
 [program:beats_celery]
-command=/home/admin/beat_counter/.venv/bin/celery -A web_app.celery_app worker -Q beat_detection,video_generation --loglevel=info
+command=/home/admin/beat_counter/.venv/bin/celery -A beat_counter.web_app.celery_app worker -Q beat_counter,video_generation --loglevel=info
 directory=/home/admin/beat_counter
 user=www-data
 autostart=true

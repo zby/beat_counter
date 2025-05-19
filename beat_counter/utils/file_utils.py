@@ -6,7 +6,7 @@ import os
 import pathlib
 from typing import List, Optional, Union, Tuple, Callable
 
-from beat_detection.utils.constants import AUDIO_EXTENSIONS
+from beat_counter.utils.constants import AUDIO_EXTENSIONS
 
 
 def find_audio_files(

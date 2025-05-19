@@ -9,10 +9,10 @@ from typing import Optional, List, Tuple, Union
 
 from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatProcessor
 
-from beat_detection.core.beats import RawBeats, BeatCalculationError
-from beat_detection.core.registry import register
-from beat_detection.core.detectors.base import BaseBeatDetector, DetectorConfig
-import beat_detection.utils.constants as constants
+from beat_counter.core.beats import RawBeats, BeatCalculationError
+from beat_counter.core.registry import register
+from beat_counter.core.detectors.base import BaseBeatDetector, DetectorConfig
+import beat_counter.utils.constants as constants
 
 MADMOM_DEFAULT_FPS = 100
 

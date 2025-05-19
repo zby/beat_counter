@@ -30,10 +30,10 @@ import pathlib
 import sys
 from typing import List, Tuple, Optional, Dict, Any
 
-from beat_detection.core import extract_beats
-from beat_detection.core.beats import Beats
-from beat_detection.core.pipeline import process_batch
-from beat_detection.genre_db import GenreDB, parse_genre_from_path
+from beat_counter.core import extract_beats
+from beat_counter.core.beats import Beats
+from beat_counter.core.pipeline import process_batch
+from beat_counter.genre_db import GenreDB, parse_genre_from_path
 from tqdm import tqdm
 
 
@@ -158,8 +158,8 @@ def process_batch_with_genre_defaults(
     # Pre-initialize the GenreDB to avoid re-loading CSV for each file
     genre_db = GenreDB()
     
-    from beat_detection.core import extract_beats
-    from beat_detection.utils.file_utils import find_audio_files
+    from beat_counter.core import extract_beats
+    from beat_counter.utils.file_utils import find_audio_files
     from tqdm import tqdm
     
     if not directory_path.is_dir():

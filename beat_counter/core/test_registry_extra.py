@@ -8,10 +8,10 @@ from unittest.mock import patch, MagicMock
 import tempfile
 from pathlib import Path
 
-from beat_detection.core.registry import build, _DETECTORS
-from beat_detection.core import extract_beats
-from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.core.beats import Beats, RawBeats
+from beat_counter.core.registry import build, _DETECTORS
+from beat_counter.core import extract_beats
+from beat_counter.core.detector_protocol import BeatDetector
+from beat_counter.core.beats import Beats, RawBeats
 import numpy as np
 
 # Additional tests for the registry that weren't covered in test_registry.py
@@ -22,7 +22,7 @@ def test_detector_registry_contents():
     assert "beat_this" in _DETECTORS
 
 # Tests for extract_beats functionality (moved to pipeline module)
-@patch("beat_detection.core.pipeline.build")
+@patch('beat_counter.core.pipeline.build')
 def test_extract_beats_with_mocked_detector(mock_build):
     """Test extract_beats with a mocked detector."""
     # Create a mock detector that returns a RawBeats object with enough beats for 5 measures (at least 20 beats)

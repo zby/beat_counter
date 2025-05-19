@@ -19,7 +19,7 @@ import sys
 import pathlib
 from typing import Tuple, List
 
-from beat_detection.core.video import (
+from beat_counter.core.video import (
     generate_batch_videos,  # New centralized batch function
     DEFAULT_VIDEO_WIDTH,
     DEFAULT_VIDEO_HEIGHT,
@@ -27,7 +27,7 @@ from beat_detection.core.video import (
 )
 
 # Re-use the parsing function from single-file script for resolution
-from beat_detection.cli.generate_video import parse_resolution
+from beat_counter.cli.generate_video import parse_resolution
 
 
 def parse_args() -> argparse.Namespace:

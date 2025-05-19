@@ -19,7 +19,7 @@ import argparse
 from typing import Optional, Union, Tuple, List
 import sys
 
-from beat_detection.core.video import (
+from beat_counter.core.video import (
     generate_single_video_from_files,  # Use the new function
     DEFAULT_VIDEO_RESOLUTION,
     DEFAULT_VIDEO_WIDTH,

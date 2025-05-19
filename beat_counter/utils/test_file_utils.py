@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from beat_detection.utils.file_utils import get_output_path
+from beat_counter.utils.file_utils import get_output_path
 
 
 def test_get_output_path_with_default_extension():

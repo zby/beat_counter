@@ -6,11 +6,11 @@ from unittest.mock import patch, MagicMock
 from typing import Dict, Type, Any
 import inspect
 
-from beat_detection.core.registry import build, _DETECTORS
-from beat_detection.core.detector_protocol import BeatDetector
-from beat_detection.core.detectors.madmom import MadmomBeatDetector
-from beat_detection.core.detectors.beat_this import BeatThisDetector
-from beat_detection.core.detectors.base import DetectorConfig
+from beat_counter.core.registry import build, _DETECTORS
+from beat_counter.core.detector_protocol import BeatDetector
+from beat_counter.core.detectors.madmom import MadmomBeatDetector
+from beat_counter.core.detectors.beat_this import BeatThisDetector
+from beat_counter.core.detectors.base import DetectorConfig
 
 # Define a simple MockDetector for testing patching
 class MockDetector(BeatDetector):
@@ -67,7 +67,7 @@ def test_detector_registry():
 
 # Test that build uses the DETECTOR_REGISTRY
 # Patch the registry within the registry module where build uses it
-@patch("beat_detection.core.registry._DETECTORS", {
+@patch('beat_counter.core.registry._DETECTORS', {
     "mock_detector": MockDetector
 })
 def test_get_beat_detector_mocked_registry():
@@ -80,7 +80,7 @@ def test_get_beat_detector_mocked_registry():
 
 
 # Test kwargs passing
-@patch("beat_detection.core.registry._DETECTORS", {
+@patch('beat_counter.core.registry._DETECTORS', {
     "mock_detector_with_params": MockDetector # Use the same mock class
 })
 def test_get_beat_detector_filtered_kwargs_mocked_registry():
