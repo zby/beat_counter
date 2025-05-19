@@ -104,10 +104,9 @@ Run all unit tests again - just for check.
 
 ---
 
-## Final Step — Documentation & CHANGELOG
+## Final Step — Documentation
 
 - [Documentation updates]
-- [CHANGELOG entries]
 
 Commit the changes.
 
