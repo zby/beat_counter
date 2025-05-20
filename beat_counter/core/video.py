@@ -602,6 +602,14 @@ def generate_single_video_from_files(
         raise FileNotFoundError(f"Audio file not found: {audio_file}")
     if not beats_file.is_file():
         raise FileNotFoundError(f"Beats file not found: {beats_file}")
+        
+    # Check for stats file - required for video generation
+    stats_file = Path(str(beats_file).replace(".beats", "._beat_stats"))
+    if not stats_file.is_file():
+        raise FileNotFoundError(
+            f"Beat statistics file not found: {stats_file}. "
+            f"This indicates beat validation failed - cannot generate video."
+        )
 
     # Load Raw Beats Data
     try:

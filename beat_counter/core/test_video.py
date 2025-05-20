@@ -33,9 +33,13 @@ class TestGenerateSingleVideoFromFiles:
     @patch('beat_counter.core.video.RawBeats.load_from_file')
     @patch('beat_counter.core.video.Beats')
     @patch('beat_counter.core.video.BeatVideoGenerator')
-    def test_successful_generation(self, mock_generator_class, mock_beats_class, mock_load, mock_paths):
+    @patch('pathlib.Path.is_file')
+    def test_successful_generation(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_paths):
         """Test successful video generation with default parameters."""
         audio_file, beats_file, output_file = mock_paths
+        
+        # Mock that all files exist (to get past the checks)
+        mock_is_file.return_value = True
         
         # Configure mocks
         mock_raw_beats = MagicMock()
@@ -79,9 +83,13 @@ class TestGenerateSingleVideoFromFiles:
     @patch('beat_counter.core.video.RawBeats.load_from_file')
     @patch('beat_counter.core.video.Beats')
     @patch('beat_counter.core.video.BeatVideoGenerator')
-    def test_custom_parameters(self, mock_generator_class, mock_beats_class, mock_load, mock_paths):
+    @patch('pathlib.Path.is_file')
+    def test_custom_parameters(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_paths):
         """Test video generation with custom parameters."""
         audio_file, beats_file, output_file = mock_paths
+        
+        # Mock that all files exist (to get past the checks)
+        mock_is_file.return_value = True
         
         # Configure mocks
         mock_raw_beats = MagicMock()
@@ -159,9 +167,13 @@ class TestGenerateSingleVideoFromFiles:
             )
 
     @patch('beat_counter.core.video.RawBeats.load_from_file')
-    def test_raw_beats_loading_error(self, mock_load, mock_paths):
+    @patch('pathlib.Path.is_file')
+    def test_raw_beats_loading_error(self, mock_is_file, mock_load, mock_paths):
         """Test error handling when RawBeats loading fails."""
         audio_file, beats_file, _ = mock_paths
+        
+        # Mock that all files exist (to get past the checks)
+        mock_is_file.return_value = True
         
         # Configure mock to raise an exception
         mock_load.side_effect = Exception("Failed to load beats")
@@ -176,9 +188,13 @@ class TestGenerateSingleVideoFromFiles:
 
     @patch('beat_counter.core.video.RawBeats.load_from_file')
     @patch('beat_counter.core.video.Beats')
-    def test_beats_reconstruction_error(self, mock_beats_class, mock_load, mock_paths):
+    @patch('pathlib.Path.is_file')
+    def test_beats_reconstruction_error(self, mock_is_file, mock_beats_class, mock_load, mock_paths):
         """Test error handling when Beats reconstruction fails."""
         audio_file, beats_file, _ = mock_paths
+        
+        # Mock that all files exist (to get past the checks)
+        mock_is_file.return_value = True
         
         # Configure mocks
         mock_raw_beats = MagicMock()
@@ -198,9 +214,13 @@ class TestGenerateSingleVideoFromFiles:
     @patch('beat_counter.core.video.RawBeats.load_from_file')
     @patch('beat_counter.core.video.Beats')
     @patch('beat_counter.core.video.BeatVideoGenerator')
-    def test_default_output_path(self, mock_generator_class, mock_beats_class, mock_load, mock_paths):
+    @patch('pathlib.Path.is_file')
+    def test_default_output_path(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_paths):
         """Test that default output path is correctly constructed."""
         audio_file, beats_file, _ = mock_paths
+        
+        # Mock that all files exist (to get past the checks)
+        mock_is_file.return_value = True
         
         # Configure mocks
         mock_raw_beats = MagicMock()
@@ -230,6 +250,23 @@ class TestGenerateSingleVideoFromFiles:
             output_path=expected_default_output,
             sample_beats=None
         )
+
+    def test_stats_file_not_found(self, tmp_path):
+        """Test error handling when stats file is missing."""
+        # Create audio and beats files but no stats file
+        audio_file = tmp_path / "test_audio.mp3"
+        beats_file = tmp_path / "test_audio.beats"
+        
+        audio_file.write_text("mock audio content")
+        beats_file.write_text('{"timestamps": [1.0, 2.0, 3.0], "audio_file": "test_audio.mp3"}')
+        
+        # Test stats file not found
+        with pytest.raises(FileNotFoundError, match="Beat statistics file not found"):
+            generate_single_video_from_files(
+                audio_file=audio_file,
+                beats_file=beats_file,
+                verbose=False
+            )
 
 
 class TestGenerateBatchVideos:

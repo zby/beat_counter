@@ -29,6 +29,8 @@
 Write tests that verify correct behavior but don't spend time writing tests for edge cases that should simply raise appropriate exceptions according to our fail-fast principle.
 
 Please colocate unit tests together with tested code and put heavier tests into the '/tests/' directory.
+The tests in the `/tests/` directory are automatically marked as `slow` - they are not automatically run by pytest, you need to explicite tell pytest to run them like:
+`pytest -m slow`.
 
 ## Code Formatting and Linting
 

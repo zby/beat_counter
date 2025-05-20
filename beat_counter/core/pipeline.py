@@ -24,7 +24,7 @@ def extract_beats(
     detector_name: str = "madmom",
     beats_args: Optional[Dict[str, Any]] = None,
     **kwargs: Any
-) -> Beats:
+) -> Optional[Beats]:
     """
     Detects beats in an audio file using the specified algorithm and saves them.
 
@@ -51,8 +51,9 @@ def extract_beats(
 
     Returns
     -------
-    Beats
-        The Beats object containing the detected beat times.
+    Optional[Beats]
+        The Beats object containing the detected beat times, or None if beat validation failed
+        but raw beats were successfully saved.
 
     Raises
     ------
@@ -63,7 +64,9 @@ def extract_beats(
     IOError
         If there's an error writing to the output_path.
     Exception
-        Catches and logs any other exceptions during processing, then re-raises.
+        Catches and logs any detector/extraction exceptions, then re-raises them.
+        Note that Beats validation exceptions are caught internally and will
+        result in a None return value rather than being raised.
     """
     # Check if audio file exists
     audio_path = Path(audio_file_path)
@@ -79,15 +82,21 @@ def extract_beats(
 
     logging.info(f"Starting beat detection for {audio_file_path} using {detector_name}...")
 
+    # Step 1: Extract raw beats - failures here are critical
     try:
         detector = build(detector_name, **kwargs)
         raw_beats = detector.detect_beats(audio_file_path)
-
-        # Save raw beats to the output file
-        raw_beats.save_to_file(final_output_path)
-
-        # Create Beats object to validate raw_beats structure and infer parameters
-        _beats_args = beats_args or {}
+    except Exception as exc:
+        logging.exception("Beat detection failed for %s: %s", audio_file_path, exc)
+        raise # Re-raise the exception after logging
+    
+    # Step 2: Save the raw beats immediately regardless of future steps
+    raw_beats.save_to_file(final_output_path)
+    logging.info(f"Saved raw beats to {final_output_path}")
+    
+    # Step 3: Try to create Beats object and save statistics - this may fail but won't affect saved raw beats
+    _beats_args = beats_args or {}
+    try:
         beats_obj = Beats(raw_beats, **_beats_args)
         
         # Save beat statistics to ._beat_stats file
@@ -105,10 +114,14 @@ def extract_beats(
             f"Beats saved to {final_output_path}. Statistics saved to {stats_output_path}."
         )
         return beats_obj
-
-    except Exception as exc:
-        logging.exception("Beat detection failed for %s: %s", audio_file_path, exc)
-        raise # Re-raise the exception after logging
+        
+    except Exception as beats_validation_exc:
+        # Log validation error but don't re-raise - raw beats were saved successfully
+        logging.error(f"Beat validation failed for {audio_file_path}: {beats_validation_exc}")
+        logging.info(f"Raw beats were still saved to {final_output_path}")
+        
+        # Return None to indicate partial success
+        return None
 
 
 def process_batch(

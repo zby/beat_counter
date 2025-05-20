@@ -145,10 +145,14 @@ detect-beats-batch path/to/audio/directory/
 
 #### Video Generation (Single File)
 
-Generates a beat visualization video for a single audio file. It requires a corresponding `.beats.json` file (containing `RawBeats` data) located next to the audio file. It reconstructs the full beat analysis using parameters provided on the command line.
+Generates a beat visualization video for a single audio file. It requires:
+1. A corresponding `.beats` file (containing raw beat data)  
+2. A corresponding `._beat_stats` file (containing validated beat statistics)
+
+The `._beat_stats` file is generated when the beat analysis succeeds. If beat validation fails, the raw `.beats` file will still be created, but the `._beat_stats` file will not, and video generation will fail with a clear error message.
 
 ```bash
-# Generate video for an audio file (requires audio.beats.json to exist)
+# Generate video for an audio file (requires both .beats and ._beat_stats files to exist)
 # Uses default reconstruction parameters (tolerance=10.0, min_measures=5)
 generate-video path/to/your/audio.mp3
 
@@ -164,10 +168,10 @@ generate-video path/to/your/audio.mp3 --resolution 1920x1080 --fps 60
 
 #### Video Generation (Batch)
 
-Generates beat visualization videos for multiple audio files in a directory, using their corresponding `.beats` files.
+Generates beat visualization videos for multiple audio files in a directory, using their corresponding `.beats` and `._beat_stats` files. Files without valid `._beat_stats` files will be skipped with error messages.
 
 ```bash
-# Generate videos for all audio files in a directory (requires corresponding .beats files)
+# Generate videos for all audio files in a directory (requires corresponding .beats and ._beat_stats files)
 generate-video-batch path/to/audio/directory/
 ```
 
@@ -209,9 +213,29 @@ from beat_counter.core import process_batch
 results = process_batch("path/to/directory", detector_name="madmom")
 
 # Extract beats from a single file (high-level API)
+# Returns Beats object if validation succeeds, None if only raw beats were saved
 from beat_counter.core import extract_beats
 beats = extract_beats("path/to/audio.mp3", detector_name="madmom", min_bpm=80, max_bpm=160)
+
+# Check if beat extraction succeeded with validation
+if beats is None:
+    print("Beat validation failed, but raw beats were saved to .beats file")
+else:
+    print(f"Beat detection succeeded with {len(beats.timestamps)} beats at {beats.regular_tempo_bpm} BPM")
 ```
+
+### Error Handling in Beat Processing
+
+The beat processing system implements a fail-fast approach with graceful error handling:
+
+1. **Raw Beat Extraction**: Always saves detected beats to a `.beats` file, even if validation fails.
+2. **Beat Analysis & Validation**: When successful, creates a `._beat_stats` file containing validated stats.
+3. **Video Generation**: Requires both `.beats` and `._beat_stats` files. Will fail with a clear error message if the stats file is missing.
+
+This approach ensures:
+- Raw beat data is always preserved
+- Only validated beat data is used for video generation
+- Clear error messages indicate validation failures
 
 ### Creating Custom Beat Detectors
 
