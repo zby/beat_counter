@@ -20,7 +20,7 @@ from typing import Optional, Union, Tuple, List
 import sys
 
 from beat_counter.core.video import (
-    generate_single_video_from_files,  # Use the new function
+    generate_single_video_from_files,
     DEFAULT_VIDEO_RESOLUTION,
     DEFAULT_VIDEO_WIDTH,
     DEFAULT_VIDEO_HEIGHT,
@@ -118,6 +118,7 @@ def main():
     try:
         output_file = pathlib.Path(args.output_file) if args.output_file else None
         
+        # Generate the video
         generate_single_video_from_files(
             audio_file=audio_path,
             beats_file=beats_path,

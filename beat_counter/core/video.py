@@ -538,6 +538,75 @@ class BeatVideoGenerator:
 
 
 # ---------------------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------------------
+
+def prepare_beats_from_file(
+    beats_file: Path, 
+    tolerance_percent: float = 10.0, 
+    min_measures: int = 5
+) -> Beats:
+    """
+    Prepare a Beats object from a beats file.
+    
+    This function handles loading RawBeats from a file, checking for the corresponding
+    stats file, and instantiating a Beats object.
+    
+    Parameters
+    ----------
+    beats_file : Path
+        Path to the .beats JSON file.
+    tolerance_percent : float, optional
+        Tolerance percentage for reconstructing Beats stats/sections. Defaults to 10.0.
+    min_measures : int, optional
+        Minimum measures for reconstructing Beats stats/sections. Defaults to 5.
+        
+    Returns
+    -------
+    Beats
+        The constructed Beats object.
+        
+    Raises
+    ------
+    FileNotFoundError
+        If the beats file or stats file does not exist.
+    RuntimeError
+        If loading raw beats or reconstructing the Beats object fails.
+    """
+    if not beats_file.is_file():
+        raise FileNotFoundError(f"Beats file not found: {beats_file}")
+        
+    # Check for stats file - required for video generation
+    stats_file = Path(str(beats_file).replace(".beats", "._beat_stats"))
+    if not stats_file.is_file():
+        raise FileNotFoundError(
+            f"Beat statistics file not found: {stats_file}. "
+            f"This indicates beat validation failed - cannot generate video."
+        )
+
+    # Load Raw Beats Data
+    try:
+        raw_beats = RawBeats.load_from_file(beats_file)
+    except Exception as e:
+        # Use logging for errors
+        logging.error(f"Failed to load raw beats from {beats_file}: {e}")
+        raise RuntimeError(f"Failed to load raw beats from {beats_file}: {e}") from e
+
+    # Reconstruct Beats object
+    try:
+        beats = Beats(
+            raw_beats=raw_beats,
+            beats_per_bar=None,  # Infer from pattern
+            tolerance_percent=tolerance_percent,
+            min_measures=min_measures
+        )
+        return beats
+    except Exception as e:
+        logging.error(f"Failed to reconstruct Beats object: {e}")
+        raise RuntimeError(f"Failed to reconstruct Beats object: {e}") from e
+
+
+# ---------------------------------------------------------------------------
 # High-level Generation Functions (Moved from CLI)
 # ---------------------------------------------------------------------------
 
@@ -596,40 +665,23 @@ def generate_single_video_from_files(
     """
     if not audio_file.is_file():
         raise FileNotFoundError(f"Audio file not found: {audio_file}")
-    if not beats_file.is_file():
-        raise FileNotFoundError(f"Beats file not found: {beats_file}")
-        
-    # Check for stats file - required for video generation
-    stats_file = Path(str(beats_file).replace(".beats", "._beat_stats"))
-    if not stats_file.is_file():
-        raise FileNotFoundError(
-            f"Beat statistics file not found: {stats_file}. "
-            f"This indicates beat validation failed - cannot generate video."
-        )
 
-    # Load Raw Beats Data
+    # Prepare beats object from file
     try:
-        raw_beats = RawBeats.load_from_file(beats_file)
-        if verbose:
-            print(f"Loaded raw beats data from {beats_file} with {len(raw_beats.timestamps)} beats")
-    except Exception as e:
-        # Use logging for errors, even if verbose is False
-        logging.error(f"Failed to load raw beats from {beats_file}: {e}")
-        raise RuntimeError(f"Failed to load raw beats from {beats_file}: {e}") from e
-
-    # Reconstruct Beats object
-    try:
-        beats = Beats(
-            raw_beats=raw_beats,
-            beats_per_bar=None,  # Infer from pattern
+        beats = prepare_beats_from_file(
+            beats_file=beats_file,
             tolerance_percent=tolerance_percent,
             min_measures=min_measures
         )
+        
         if verbose:
             print(f"Reconstructed Beats: bpb={beats.beats_per_bar}, tol={tolerance_percent}%, min_meas={min_measures}")
     except Exception as e:
-        logging.error(f"Failed to reconstruct Beats object: {e}")
-        raise RuntimeError(f"Failed to reconstruct Beats object: {e}") from e
+        # If there's an error in prepare_beats_from_file, it will be propagated
+        # with the original exception type (FileNotFoundError or RuntimeError)
+        if verbose:
+            print(f"Error preparing beats: {e}")
+        raise
 
     # Determine output video path
     if output_file is None:
@@ -745,32 +797,40 @@ def generate_batch_videos(
     results: List[Tuple[str, bool, Optional[Path]]] = []
 
     for audio_file in file_iterator:
-        relative_path_str = str(audio_file.relative_to(input_dir))
+        # Display file name in progress bar description if using tqdm
         if pbar:
-            pbar.set_description(f"Processing {audio_file.name}")
-        elif verbose:
-            print(f"\nProcessing: {relative_path_str}")
+            rel_path = audio_file.relative_to(input_dir) if audio_file.is_relative_to(input_dir) else audio_file.name
+            pbar.set_description(f"Processing {rel_path}")
 
+        # Determine path for beats file
         beats_file = audio_file.with_suffix(".beats")
-        single_output_file: Optional[Path] = None
-
-        try:
-            # Remove the check for beats file existence - let generate_single_video_from_files handle it
+        
+        # Track if this file was processed successfully
+        success = False
+        output_video_path = None
+        
+        # Skip if beats file doesn't exist
+        if not beats_file.is_file():
+            if verbose:
+                print(f"Skipping {audio_file} - no beats file found at {beats_file}")
+            results.append((str(audio_file), False, None))
+            continue
+        
+        # Determine output file path
+        single_output_file = None
+        if output_dir is not None:
+            # Calculate relative path of audio file to input_dir
+            rel_path = audio_file.relative_to(input_dir) if audio_file.is_relative_to(input_dir) else audio_file.name
             
-            # Determine the specific output file path for this audio file
-            if output_dir:
-                # Ensure output dir exists (should be done once, but safe here)
-                output_dir.mkdir(parents=True, exist_ok=True)
-                # Maintain relative structure within output_dir if input was recursive
-                relative_audio_dir = audio_file.parent.relative_to(input_dir)
-                specific_output_dir = output_dir / relative_audio_dir
-                specific_output_dir.mkdir(parents=True, exist_ok=True)
-                single_output_file = specific_output_dir / f"{audio_file.stem}_counter.mp4"
-            else:
-                # If output_dir is None, generate_single_video_from_files handles default
-                single_output_file = None
-
-            # Call the single-file processing function
+            # Create output path at the same relative location
+            output_path = output_dir / rel_path.parent
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            # Set new output file name
+            single_output_file = output_path / f"{audio_file.stem}_counter.mp4"
+        
+        try:
+            # Generate single video
             output_video_path = generate_single_video_from_files(
                 audio_file=audio_file,
                 beats_file=beats_file,
@@ -782,23 +842,26 @@ def generate_batch_videos(
                 min_measures=min_measures,
                 verbose=verbose, # Pass verbose flag
             )
-            results.append((relative_path_str, True, output_video_path))
-            if pbar is None and verbose:
-                 print(f"Successfully generated video for {relative_path_str}")
-
-        except FileNotFoundError as e:
-            # Specifically catch missing beats file or audio file (less likely here)
+            success = True
+            
             if verbose:
-                logging.warning(f"Skipping {relative_path_str}: {e}")
-            results.append((relative_path_str, False, None))
+                print(f"Successfully generated video: {output_video_path}")
+                
+        except FileNotFoundError as e:
+            logging.warning(f"Skipping {audio_file}: {e}")
+            if verbose:
+                print(f"Skipping {audio_file}: {e}")
         except Exception as e:
-            # Catch errors during loading, reconstruction, or video generation
-            logging.error(f"Error processing {relative_path_str}: {e}")
-            # Optionally log traceback for debugging
-            # logging.exception(f"Traceback for error processing {relative_path_str}:")
-            results.append((relative_path_str, False, None))
-
-    if pbar:
-        pbar.close()
-
+            logging.error(f"Error processing {audio_file}: {e}")
+            if verbose:
+                print(f"Error processing {audio_file}: {e}")
+        
+        # Record results
+        results.append((str(audio_file), success, output_video_path))
+    
+    # Final summary
+    if verbose:
+        success_count = sum(1 for _, success, _ in results if success)
+        print(f"Completed video generation: {success_count}/{len(results)} successful")
+    
     return results
