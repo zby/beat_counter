@@ -13,8 +13,137 @@ from beat_counter.core.video import (
     generate_single_video_from_files,
     generate_batch_videos,
     prepare_beats_from_file,
+    write_video_clip,
 )
 from beat_counter.core.beats import Beats, RawBeats
+
+
+class TestBeatVideoGenerator:
+    """Test the BeatVideoGenerator class."""
+    
+    @patch('beat_counter.core.video.VideoClip')
+    def test_generate_video_returns_clip(self, mock_video_clip):
+        """Test that generate_video returns a VideoClip object."""
+        # Setup mocks
+        mock_audio_clip = MagicMock()
+        mock_audio_clip.duration = 10.0  # Required for function to work
+        
+        mock_beats = MagicMock()
+        mock_beats.timestamps = [1.0, 2.0, 3.0, 4.0]
+        mock_beats.get_info_at_time.return_value = (1, 0.5, 0)  # beat_count, time_since_beat, beat_idx
+        mock_beats.beats_per_bar = 4
+        
+        mock_video = MagicMock()
+        mock_video_clip.return_value = mock_video
+        mock_video.with_audio.return_value = mock_video  # Return self from with_audio
+        
+        # Create generator and call generate_video
+        generator = BeatVideoGenerator()
+        
+        # Patch the internal methods that would normally do frame generation
+        with patch.object(generator, '_fill_frame_cache'), \
+             patch.object(generator, 'create_counter_frame'):
+            
+            result = generator.generate_video(
+                audio_clip=mock_audio_clip,
+                beats=mock_beats
+            )
+        
+        # Verify the result is a VideoClip
+        assert result == mock_video
+        
+        # Verify internal interactions
+        mock_video_clip.assert_called_once()  # VideoClip constructor was called
+        mock_video.with_audio.assert_called_once_with(mock_audio_clip)  # Audio was attached
+    
+    @patch('beat_counter.core.video.VideoClip')
+    def test_generate_video_with_sample_beats(self, mock_video_clip):
+        """Test that generate_video handles sample_beats parameter correctly."""
+        # Setup mocks
+        mock_audio_clip = MagicMock()
+        mock_audio_clip.duration = 10.0  # Set initial duration
+        
+        mock_beats = MagicMock()
+        mock_beats.timestamps = [1.0, 2.0, 3.0, 4.0, 5.0]
+        mock_beats.get_info_at_time.return_value = (1, 0.5, 0)
+        mock_beats.beats_per_bar = 4
+        
+        mock_video = MagicMock()
+        mock_video_clip.return_value = mock_video
+        mock_video.with_audio.return_value = mock_video
+        
+        # Create generator and call generate_video with sample_beats=2
+        generator = BeatVideoGenerator()
+        
+        with patch.object(generator, '_fill_frame_cache'), \
+             patch.object(generator, 'create_counter_frame'):
+            
+            result = generator.generate_video(
+                audio_clip=mock_audio_clip,
+                beats=mock_beats,
+                sample_beats=2  # Limit to first 2 beats
+            )
+        
+        # Verify that audio duration was modified to end shortly after the second beat
+        assert mock_audio_clip.duration == 3.0  # Second beat (2.0) + 1.0 second
+        
+        # Verify the result was returned correctly
+        assert result == mock_video
+
+
+class TestWriteVideoClip:
+    """Test the write_video_clip function."""
+    
+    def test_write_video_clip(self):
+        """Test that write_video_clip correctly calls write_videofile on the clip."""
+        # Create mocks
+        mock_video_clip = MagicMock()
+        mock_output_path = "output/test_video.mp4"
+        test_fps = 30
+        test_codec = "libx264"
+        test_audio_codec = "aac"
+        
+        # Call the function
+        result = write_video_clip(
+            video_clip=mock_video_clip,
+            output_path=mock_output_path,
+            fps=test_fps,
+            codec=test_codec,
+            audio_codec=test_audio_codec,
+            logger="bar",
+        )
+        
+        # Verify the results
+        assert result == mock_output_path
+        mock_video_clip.write_videofile.assert_called_once_with(
+            mock_output_path,
+            fps=test_fps,
+            codec=test_codec,
+            audio_codec=test_audio_codec,
+            logger="bar",
+        )
+    
+    def test_write_video_clip_with_progress_callback(self):
+        """Test that write_video_clip correctly handles progress callbacks."""
+        # Create mocks
+        mock_video_clip = MagicMock()
+        mock_output_path = "output/test_video.mp4"
+        mock_callback = MagicMock()
+        
+        # Call the function with a progress callback
+        result = write_video_clip(
+            video_clip=mock_video_clip,
+            output_path=mock_output_path,
+            progress_callback=mock_callback,
+        )
+        
+        # Verify the results
+        assert result == mock_output_path
+        assert mock_callback.call_count == 2
+        # First call with "Starting video encoding" and 0.8
+        mock_callback.assert_any_call("Starting video encoding", 0.8)
+        # Second call with "Video encoding complete" and 1.0
+        mock_callback.assert_any_call("Video encoding complete", 1.0)
 
 
 class TestPrepareBeatFromFile:
@@ -169,17 +298,23 @@ class TestGenerateSingleVideoFromFiles:
         mock_audio = MagicMock()
         mock_audio_clip.return_value = mock_audio
         
+        # Set up the generator to return a mock VideoClip instead of a string
+        mock_video_clip = MagicMock()  # Create a mock VideoClip
         mock_generator = MagicMock()
-        mock_generator.generate_video.return_value = str(output_file)
+        mock_generator.generate_video.return_value = mock_video_clip
         mock_generator_class.return_value = mock_generator
         
-        # Call the function
-        result = generate_single_video_from_files(
-            audio_file=audio_file,
-            beats_file=beats_file,
-            output_file=output_file,
-            verbose=True
-        )
+        # Mock the write_video_clip function to return the output file path
+        with patch('beat_counter.core.video.write_video_clip') as mock_write_video:
+            mock_write_video.return_value = str(output_file)
+            
+            # Call the function
+            result = generate_single_video_from_files(
+                audio_file=audio_file,
+                beats_file=beats_file,
+                output_file=output_file,
+                verbose=True
+            )
         
         # Verify the result
         assert result == output_file
@@ -195,7 +330,6 @@ class TestGenerateSingleVideoFromFiles:
         mock_generator.generate_video.assert_called_once_with(
             audio_clip=mock_audio,
             beats=mock_beats,
-            output_path=output_file,
             sample_beats=None
         )
 
@@ -217,8 +351,10 @@ class TestGenerateSingleVideoFromFiles:
         mock_audio = MagicMock()
         mock_audio_clip.return_value = mock_audio
         
+        # Set up the generator to return a mock VideoClip instead of a string
+        mock_video_clip = MagicMock()  # Create a mock VideoClip
         mock_generator = MagicMock()
-        mock_generator.generate_video.return_value = str(output_file)
+        mock_generator.generate_video.return_value = mock_video_clip
         mock_generator_class.return_value = mock_generator
         
         # Custom parameters
@@ -228,18 +364,22 @@ class TestGenerateSingleVideoFromFiles:
         custom_min_measures = 10
         custom_sample_beats = 5
         
-        # Call the function
-        result = generate_single_video_from_files(
-            audio_file=audio_file,
-            beats_file=beats_file,
-            output_file=output_file,
-            resolution=custom_resolution,
-            fps=custom_fps,
-            tolerance_percent=custom_tolerance,
-            min_measures=custom_min_measures,
-            sample_beats=custom_sample_beats,
-            verbose=False
-        )
+        # Mock the write_video_clip function to return the output file path
+        with patch('beat_counter.core.video.write_video_clip') as mock_write_video:
+            mock_write_video.return_value = str(output_file)
+            
+            # Call the function
+            result = generate_single_video_from_files(
+                audio_file=audio_file,
+                beats_file=beats_file,
+                output_file=output_file,
+                resolution=custom_resolution,
+                fps=custom_fps,
+                tolerance_percent=custom_tolerance,
+                min_measures=custom_min_measures,
+                sample_beats=custom_sample_beats,
+                verbose=False
+            )
         
         # Verify that parameters were passed correctly
         mock_prepare_beats.assert_called_once_with(
@@ -255,7 +395,6 @@ class TestGenerateSingleVideoFromFiles:
         mock_generator.generate_video.assert_called_once_with(
             audio_clip=mock_audio,
             beats=mock_beats,
-            output_path=output_file,
             sample_beats=custom_sample_beats
         )
 
@@ -318,26 +457,36 @@ class TestGenerateSingleVideoFromFiles:
         mock_audio = MagicMock()
         mock_audio_clip.return_value = mock_audio
         
+        # Set up the generator to return a mock VideoClip instead of a string
+        mock_video_clip = MagicMock()  # Create a mock VideoClip
         mock_generator = MagicMock()
-        expected_default_output = audio_file.with_name(f"{audio_file.stem}_counter.mp4")
-        mock_generator.generate_video.return_value = str(expected_default_output)
+        mock_generator.generate_video.return_value = mock_video_clip
         mock_generator_class.return_value = mock_generator
         
-        # Call function without specifying output_file
-        result = generate_single_video_from_files(
-            audio_file=audio_file,
-            beats_file=beats_file,
-            output_file=None,  # Use default
-            verbose=False
-        )
+        expected_default_output = audio_file.with_name(f"{audio_file.stem}_counter.mp4")
+        
+        # Mock the write_video_clip function to return the expected default output path
+        with patch('beat_counter.core.video.write_video_clip') as mock_write_video:
+            mock_write_video.return_value = str(expected_default_output)
+            
+            # Call function without specifying output_file
+            result = generate_single_video_from_files(
+                audio_file=audio_file,
+                beats_file=beats_file,
+                output_file=None,  # Use default
+                verbose=False
+            )
         
         # Verify default output path was used
         assert result == expected_default_output
-        mock_generator.generate_video.assert_called_once_with(
-            audio_clip=mock_audio,
-            beats=mock_beats,
+        # Verify write_video_clip was called with the right path
+        mock_write_video.assert_called_once_with(
+            video_clip=mock_video_clip,
             output_path=expected_default_output,
-            sample_beats=None
+            fps=100,
+            codec='libx264',
+            audio_codec='aac',
+            logger='bar',
         )
 
 

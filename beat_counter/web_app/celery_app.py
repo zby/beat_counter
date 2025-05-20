@@ -16,7 +16,7 @@ from beat_counter.web_app.config import Config, ConfigurationError # Ensure Conf
 from beat_counter.web_app.storage import FileMetadataStorage
 from beat_counter.web_app.utils.task_utils import IOCapture, create_progress_updater, safe_error
 from beat_counter.core import extract_beats
-from beat_counter.core.video import BeatVideoGenerator
+from beat_counter.core.video import BeatVideoGenerator, generate_single_video_from_files
 from beat_counter.core.beats import Beats, BeatCalculationError, RawBeats
 from beat_counter.core.detector_protocol import BeatDetector
 from beat_counter.genre_db import GenreDB, parse_genre_from_path
@@ -383,9 +383,9 @@ def _perform_video_generation(
                 f"No beats file found for file_id: {file_id} at path: {beats_file_path}"
             )
 
-        audio_path = str(audio_file_path.resolve())
-        beats_path = str(beats_file_path.resolve())
-        video_output = str(video_output_path.resolve())
+        audio_path = audio_file_path.resolve()
+        beats_path = beats_file_path.resolve()
+        video_output = video_output_path.resolve()
 
         logger.debug(f"Audio path: {audio_path}")
         logger.debug(f"Beats path: {beats_path}")
@@ -397,19 +397,10 @@ def _perform_video_generation(
         os.chdir(str(job_dir))
         logger.info(f"Changed working directory to: {job_dir}")
 
-        # --- Load Data (Simplified Raw Beats and Analysis Params) ---
-        update_progress("Loading beat data and parameters", 0.01)
-        raw_beats: RawBeats = None
-        beats_per_bar_override: Optional[int] = None
-        tolerance_percent: Optional[float] = None
-        min_measures: Optional[int] = None
+        # --- Load metadata to get analysis parameters ---
+        update_progress("Loading analysis parameters", 0.01)
+        
         try:
-            # Load Simplified Raw Beats (no beats_per_bar)
-            raw_beats = RawBeats.load_from_file(beats_path)
-            logger.info(f"Loaded simplified RawBeats object from {beats_path}")
-            if not raw_beats.timestamps.size > 0:
-                raise ValueError("Loaded RawBeats object contains no timestamps.")
-
             # Load metadata to get analysis parameters
             metadata = storage.get_metadata(file_id)
             if not metadata:
@@ -427,11 +418,10 @@ def _perform_video_generation(
                 )
 
             # Extract parameters
-            beats_per_bar_override = analysis_params.get("beats_per_bar_override") # Optional
             tolerance_percent = analysis_params.get("tolerance_percent")
             min_measures = analysis_params.get("min_measures")
 
-            # tolerance_percent and min_measures are required by Beats constructor
+            # tolerance_percent and min_measures are required
             if tolerance_percent is None:
                  raise ValueError(
                      f"Missing 'tolerance_percent' within 'analysis_params' in metadata for {file_id}"
@@ -442,47 +432,36 @@ def _perform_video_generation(
                  )
 
             logger.info(
-                f"Loaded analysis params: bpb_override={beats_per_bar_override}, tol%={tolerance_percent}, min_meas={min_measures}"
+                f"Loaded analysis params: tol%={tolerance_percent}, min_meas={min_measures}"
             )
 
-        except FileNotFoundError:
-            logger.error(f"Raw Beats file not found for loading: {beats_path}")
-            raise  # Re-raise the specific error
         except Exception as load_e:
-            logger.error(f"Failed to load data or parameters from {beats_path} or metadata: {load_e}")
-            raise ValueError(f"Failed to load data/params: {load_e}") from load_e
-
-        # --- Construct Beats Object ---
-        update_progress("Constructing beat analysis object", 0.03)
-        try:
-            # Use the analysis parameters from metadata when constructing Beats
-            beats = Beats(
-                raw_beats=raw_beats, # Pass the loaded simplified RawBeats
-                beats_per_bar=beats_per_bar_override, # Pass the optional override
-                tolerance_percent=float(tolerance_percent),
-                min_measures=int(min_measures)
-            )
-            logger.info(f"Successfully constructed Beats object for {file_id}")
-        except Exception as construct_e:
-            logger.error(f"Failed to construct Beats object: {construct_e}", exc_info=True)
-            raise ValueError(f"Beats construction failed: {construct_e}") from construct_e
+            logger.error(f"Failed to load parameters from metadata: {load_e}")
+            raise ValueError(f"Failed to load parameters: {load_e}") from load_e
 
         # --- Generate Video ---
-        video_generator = BeatVideoGenerator()
-
+        # Use the high-level function that handles all the details
         update_progress("Starting video rendering", 0.05)
-        logger.info("Starting actual video generation process using reconstructed Beats object...")
+        logger.info("Starting video generation process...")
 
-        # Call generate_video with audio path, RECONSTRUCTED Beats object, and output path
-        generated_video_file = video_generator.generate_video(
-            audio_path=audio_path,
-            beats=beats,  # Pass the RECONSTRUCTED Beats object
-            output_path=video_output,
-        )
-        logger.info(
-            f"Video generation process finished. Output: {generated_video_file}"
-        )
+        # Create a custom progress callback that forwards to our update_progress
+        def video_progress_callback(message, progress):
+            # Map the progress from 0.05 to 1.0 (since we're already at 0.05)
+            adjusted_progress = 0.05 + (progress * 0.95)
+            update_progress(message, adjusted_progress)
 
+        # Call the helper function that works with files
+        generated_video_file = generate_single_video_from_files(
+            audio_file=audio_path,
+            beats_file=beats_path, 
+            output_file=video_output,
+            tolerance_percent=float(tolerance_percent),
+            min_measures=int(min_measures),
+            verbose=True,
+            # You can add a progress_callback parameter if generate_single_video_from_files supports it
+        )
+        
+        logger.info(f"Video generation process finished. Output: {generated_video_file}")
         update_progress("Video generation complete", 1.0)
         return
 

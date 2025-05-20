@@ -402,9 +402,8 @@ class BeatVideoGenerator:
         self,
         audio_clip: AudioFileClip,
         beats: Beats,
-        output_path: Union[str, pathlib.Path],
         sample_beats: Optional[int] = None,
-    ) -> str:
+    ) -> VideoClip:
         """
         Generate a beat visualization video.
 
@@ -414,19 +413,14 @@ class BeatVideoGenerator:
             The audio clip to use in the video
         beats : Beats
             Beats object containing beat information
-        output_path : str or pathlib.Path
-            Path where to save the output video
         sample_beats : int, optional
             Number of beats to process (for testing/quick preview)
 
         Returns:
         --------
-        str
-            Path to the generated video file
+        VideoClip
+            The generated video clip with audio
         """
-        # Ensure output path is a string
-        output_file_str = str(output_path)
-
         # Get beat timestamps array from beats object
         beat_timestamps = beats.timestamps
 
@@ -515,26 +509,12 @@ class BeatVideoGenerator:
         # Set audio
         video = video.with_audio(audio_clip)
 
-        # Report progress - writing video file
-        if self.progress_callback:
-            print("DEBUG: Calling progress callback - Starting video encoding")
-            self.progress_callback("Starting video encoding", 0.1)
-
-        # Write video file without callback
-        video.write_videofile(
-            output_file_str,
-            fps=self.fps,
-            codec=CODEC,
-            audio_codec=AUDIO_CODEC,
-            logger="bar",
-        )
-
-        # Report progress - completed
+        # Report progress - completed video creation
         if self.progress_callback:
             print("DEBUG: Calling progress callback - Video generation complete")
-            self.progress_callback("Video generation complete", 1.0)
+            self.progress_callback("Video generation complete", 0.8)
 
-        return output_file_str
+        return video
 
 
 # ---------------------------------------------------------------------------
@@ -702,13 +682,23 @@ def generate_single_video_from_files(
         # Load audio file
         audio_clip = AudioFileClip(str(audio_file))
         
-        # Pass progress callback if needed in the future
-        generated_path_str = video_gen.generate_video(
+        # Create the video clip (without writing to file)
+        video_clip = video_gen.generate_video(
             audio_clip=audio_clip,
             beats=beats,
-            output_path=final_output_path,
             sample_beats=sample_beats,
         )
+        
+        # Write the video clip to file
+        generated_path_str = write_video_clip(
+            video_clip=video_clip,
+            output_path=final_output_path,
+            fps=fps,
+            codec=CODEC,
+            audio_codec=AUDIO_CODEC,
+            logger="bar",
+        )
+        
         generated_path = Path(generated_path_str)
         if verbose:
             print(f"Saved video to {generated_path}")
@@ -865,3 +855,61 @@ def generate_batch_videos(
         print(f"Completed video generation: {success_count}/{len(results)} successful")
     
     return results
+
+def write_video_clip(
+    video_clip: VideoClip,
+    output_path: Union[str, pathlib.Path],
+    fps: int = DEFAULT_FPS,
+    codec: str = CODEC,
+    audio_codec: str = AUDIO_CODEC,
+    logger: str = "bar",
+    progress_callback: Optional[Callable[[str, float], None]] = None,
+) -> str:
+    """
+    Write a VideoClip to a file.
+    
+    Parameters
+    ----------
+    video_clip : VideoClip
+        The video clip to write to a file
+    output_path : Union[str, pathlib.Path]
+        Path where to save the output video
+    fps : int, optional
+        Frames per second for the output video, by default DEFAULT_FPS
+    codec : str, optional
+        Video codec to use, by default CODEC
+    audio_codec : str, optional
+        Audio codec to use, by default AUDIO_CODEC
+    logger : str, optional
+        Logger to use for MoviePy, by default "bar"
+    progress_callback : Optional[Callable[[str, float], None]], optional
+        Callback function for progress updates, by default None
+    
+    Returns
+    -------
+    str
+        Path to the generated video file
+    """
+    # Ensure output path is a string
+    output_file_str = str(output_path)
+    
+    # Report progress if callback is provided
+    if progress_callback:
+        print("DEBUG: Calling progress callback - Starting video encoding")
+        progress_callback("Starting video encoding", 0.8)
+        
+    # Write video file
+    video_clip.write_videofile(
+        output_file_str,
+        fps=fps,
+        codec=codec,
+        audio_codec=audio_codec,
+        logger=logger,
+    )
+    
+    # Report completion if callback is provided
+    if progress_callback:
+        print("DEBUG: Calling progress callback - Video encoding complete")
+        progress_callback("Video encoding complete", 1.0)
+    
+    return output_file_str

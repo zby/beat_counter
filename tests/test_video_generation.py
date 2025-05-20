@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 
 from beat_counter.core.beats import Beats, RawBeats, BeatCalculationError
-from beat_counter.core.video import BeatVideoGenerator
+from beat_counter.core.video import BeatVideoGenerator, generate_single_video_from_files
 from beat_counter.cli.generate_video import main as generate_video_main
 
 # Define paths relative to the tests directory, using the fixtures subdir
@@ -35,44 +35,19 @@ def test_generate_video_from_saved_beats(tmp_path):
     if not INPUT_BEATS_FILE.is_file():
         pytest.fail(f"Input beats file not found: {INPUT_BEATS_FILE}")
 
-    # --- Load and Reconstruct (Steps required for video generation) ---
-    reconstructed_beats: Beats = None
-    try:
-        # Load the simplified RawBeats data
-        loaded_raw_beats = RawBeats.load_from_file(INPUT_BEATS_FILE)
-        assert loaded_raw_beats is not None, "Failed to load RawBeats."
-        assert len(loaded_raw_beats.timestamps) > 0, "Loaded RawBeats has no timestamps."
-
-        # Construct the full Beats object, passing None for beats_per_bar to trigger inference
-        reconstructed_beats = Beats(
-            raw_beats=loaded_raw_beats,
-            beats_per_bar=None, # Let the constructor infer from raw_beats.beat_counts
-            tolerance_percent=TEST_TOLERANCE_PERCENT,
-            min_measures=TEST_MIN_MEASURES,
-        )
-        assert reconstructed_beats is not None, "Failed to reconstruct Beats."
-        # Optional: Verify the inferred value if known/expected for the fixture file
-        # assert reconstructed_beats.beats_per_bar == 4, "Inferred beats_per_bar mismatch"
-
-    except BeatCalculationError as e:
-         pytest.fail(f"Beats reconstruction failed: {e}")
-    except FileNotFoundError:
-         pytest.fail(f"Could not find input file: {INPUT_BEATS_FILE}")
-    except Exception as e:
-        pytest.fail(
-            f"Setup failed: Could not load/reconstruct Beats from {INPUT_BEATS_FILE}: {e}"
-        )
-
     # --- Video Generation ---
     try:
-        video_generator = BeatVideoGenerator()
-        output_path_str = video_generator.generate_video(
-            audio_path=TEST_AUDIO_FILE,
-            beats=reconstructed_beats,
-            output_path=output_video_file, # Save to test-specific temp dir
+        # Use the high-level function that works directly with files
+        output_video_path = generate_single_video_from_files(
+            audio_file=TEST_AUDIO_FILE,
+            beats_file=INPUT_BEATS_FILE,
+            output_file=output_video_file,
+            tolerance_percent=TEST_TOLERANCE_PERCENT,
+            min_measures=TEST_MIN_MEASURES,
+            verbose=True
         )
         # Ensure the returned path is the same Path object we passed in
-        assert Path(output_path_str) == output_video_file, "Output path mismatch"
+        assert output_video_path == output_video_file, "Output path mismatch"
 
         # Print the path immediately after successful generation
         print(

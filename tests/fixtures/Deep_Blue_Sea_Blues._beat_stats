@@ -1,0 +1,71 @@
+{
+    "version": "1.0",
+    "beats_per_bar": 4,
+    "overall_stats": {
+        "tempo_bpm": 79.6,
+        "irregularity_percent": 3.2,
+        "confidence_score": 0.91,
+        "total_beats": 580,
+        "total_measures": 145
+    },
+    "section_stats": [
+        {
+            "start_time": 0.0,
+            "end_time": 60.0,
+            "section_id": 0,
+            "tempo_bpm": 79.2,
+            "irregularity_percent": 3.5
+        },
+        {
+            "start_time": 60.0,
+            "end_time": 120.0,
+            "section_id": 1,
+            "tempo_bpm": 80.1,
+            "irregularity_percent": 2.8
+        },
+        {
+            "start_time": 120.0,
+            "end_time": 180.0,
+            "section_id": 2,
+            "tempo_bpm": 79.4,
+            "irregularity_percent": 3.3
+        }
+    ],
+    "beat_intervals": [
+        0.76,
+        0.78,
+        0.78,
+        0.76,
+        0.76,
+        0.72,
+        0.76,
+        0.76,
+        0.76,
+        0.76,
+        0.74,
+        0.72,
+        0.74,
+        0.74,
+        0.76,
+        0.84,
+        0.9,
+        0.82,
+        0.76,
+        0.8,
+        0.86,
+        0.82,
+        0.8,
+        0.76,
+        0.8,
+        0.76,
+        0.78,
+        0.78,
+        0.76,
+        0.8
+    ],
+    "irregular_beat_indices": [15, 16, 17, 20, 21, 143, 256, 389, 482],
+    "analysis_params": {
+        "tolerance_percent": 15.0,
+        "min_measures": 10
+    }
+} 
