@@ -30,11 +30,12 @@ class TestGenerateSingleVideoFromFiles:
         beats_file.write_text('{"timestamps": [1.0, 2.0, 3.0], "audio_file": "test_audio.mp3"}')
         return audio_file, beats_file, output_file
 
+    @patch('beat_counter.core.video.AudioFileClip')
     @patch('beat_counter.core.video.RawBeats.load_from_file')
     @patch('beat_counter.core.video.Beats')
     @patch('beat_counter.core.video.BeatVideoGenerator')
     @patch('pathlib.Path.is_file')
-    def test_successful_generation(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_paths):
+    def test_successful_generation(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_audio_clip, mock_paths):
         """Test successful video generation with default parameters."""
         audio_file, beats_file, output_file = mock_paths
         
@@ -48,6 +49,9 @@ class TestGenerateSingleVideoFromFiles:
         
         mock_beats = MagicMock()
         mock_beats_class.return_value = mock_beats
+        
+        mock_audio = MagicMock()
+        mock_audio_clip.return_value = mock_audio
         
         mock_generator = MagicMock()
         mock_generator.generate_video.return_value = str(output_file)
@@ -72,19 +76,21 @@ class TestGenerateSingleVideoFromFiles:
             tolerance_percent=10.0,
             min_measures=5
         )
+        mock_audio_clip.assert_called_once_with(str(audio_file))
         mock_generator_class.assert_called_once()
         mock_generator.generate_video.assert_called_once_with(
-            audio_path=audio_file,
+            audio_clip=mock_audio,
             beats=mock_beats,
             output_path=output_file,
             sample_beats=None
         )
 
+    @patch('beat_counter.core.video.AudioFileClip')
     @patch('beat_counter.core.video.RawBeats.load_from_file')
     @patch('beat_counter.core.video.Beats')
     @patch('beat_counter.core.video.BeatVideoGenerator')
     @patch('pathlib.Path.is_file')
-    def test_custom_parameters(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_paths):
+    def test_custom_parameters(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_audio_clip, mock_paths):
         """Test video generation with custom parameters."""
         audio_file, beats_file, output_file = mock_paths
         
@@ -98,6 +104,9 @@ class TestGenerateSingleVideoFromFiles:
         
         mock_beats = MagicMock()
         mock_beats_class.return_value = mock_beats
+        
+        mock_audio = MagicMock()
+        mock_audio_clip.return_value = mock_audio
         
         mock_generator = MagicMock()
         mock_generator.generate_video.return_value = str(output_file)
@@ -130,12 +139,13 @@ class TestGenerateSingleVideoFromFiles:
             tolerance_percent=custom_tolerance,
             min_measures=custom_min_measures
         )
+        mock_audio_clip.assert_called_once_with(str(audio_file))
         mock_generator_class.assert_called_once_with(
             resolution=custom_resolution, 
             fps=custom_fps
         )
         mock_generator.generate_video.assert_called_once_with(
-            audio_path=audio_file,
+            audio_clip=mock_audio,
             beats=mock_beats,
             output_path=output_file,
             sample_beats=custom_sample_beats
@@ -211,11 +221,12 @@ class TestGenerateSingleVideoFromFiles:
                 verbose=False
             )
 
+    @patch('beat_counter.core.video.AudioFileClip')
     @patch('beat_counter.core.video.RawBeats.load_from_file')
     @patch('beat_counter.core.video.Beats')
     @patch('beat_counter.core.video.BeatVideoGenerator')
     @patch('pathlib.Path.is_file')
-    def test_default_output_path(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_paths):
+    def test_default_output_path(self, mock_is_file, mock_generator_class, mock_beats_class, mock_load, mock_audio_clip, mock_paths):
         """Test that default output path is correctly constructed."""
         audio_file, beats_file, _ = mock_paths
         
@@ -228,6 +239,9 @@ class TestGenerateSingleVideoFromFiles:
         
         mock_beats = MagicMock()
         mock_beats_class.return_value = mock_beats
+        
+        mock_audio = MagicMock()
+        mock_audio_clip.return_value = mock_audio
         
         mock_generator = MagicMock()
         expected_default_output = audio_file.with_name(f"{audio_file.stem}_counter.mp4")
@@ -245,7 +259,7 @@ class TestGenerateSingleVideoFromFiles:
         # Verify default output path was used
         assert result == expected_default_output
         mock_generator.generate_video.assert_called_once_with(
-            audio_path=audio_file,
+            audio_clip=mock_audio,
             beats=mock_beats,
             output_path=expected_default_output,
             sample_beats=None

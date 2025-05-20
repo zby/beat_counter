@@ -400,7 +400,7 @@ class BeatVideoGenerator:
 
     def generate_video(
         self,
-        audio_path: Union[str, pathlib.Path],
+        audio_clip: AudioFileClip,
         beats: Beats,
         output_path: Union[str, pathlib.Path],
         sample_beats: Optional[int] = None,
@@ -410,8 +410,8 @@ class BeatVideoGenerator:
 
         Parameters:
         -----------
-        audio_path : str or pathlib.Path
-            Path to the audio file
+        audio_clip : AudioFileClip
+            The audio clip to use in the video
         beats : Beats
             Beats object containing beat information
         output_path : str or pathlib.Path
@@ -424,8 +424,7 @@ class BeatVideoGenerator:
         str
             Path to the generated video file
         """
-        # Ensure paths are strings
-        audio_file_str = str(audio_path)
+        # Ensure output path is a string
         output_file_str = str(output_path)
 
         # Get beat timestamps array from beats object
@@ -446,17 +445,14 @@ class BeatVideoGenerator:
             print("DEBUG: Calling progress callback - Loading audio file")
             self.progress_callback("Loading audio file", 0.05)
 
-        # Load audio file
-        audio = AudioFileClip(audio_file_str)
-
         # If we're using a sample, trim the audio
         if max_time is not None:
             # In MoviePy 2.1.2, AudioFileClip doesn't have subclip method
             # Instead, we can create a new clip with the desired duration
-            original_duration = audio.duration
+            original_duration = audio_clip.duration
             if max_time < original_duration:
                 # Use the clip's duration property directly
-                audio.duration = max_time
+                audio_clip.duration = max_time
 
         # Report progress - preparing frames
         if self.progress_callback:
@@ -472,9 +468,9 @@ class BeatVideoGenerator:
         # Create a function that returns the frame at time t
         def make_frame(t):
             # Calculate approximate progress based on current time position
-            if self.progress_callback and audio.duration > 0:
+            if self.progress_callback and audio_clip.duration > 0:
                 # Map time to progress between 30% and 80%
-                progress = 0.3 + (t / audio.duration) * 0.5
+                progress = 0.3 + (t / audio_clip.duration) * 0.5
 
                 # Find which beat we're currently processing
                 _, _, beat_idx = beats.get_info_at_time(t)
@@ -514,10 +510,10 @@ class BeatVideoGenerator:
             self.progress_callback("Creating video clip", 0.3)
 
         # Create video clip
-        video = VideoClip(make_frame, duration=audio.duration)
+        video = VideoClip(make_frame, duration=audio_clip.duration)
 
         # Set audio
-        video = video.with_audio(audio)
+        video = video.with_audio(audio_clip)
 
         # Report progress - writing video file
         if self.progress_callback:
@@ -651,9 +647,12 @@ def generate_single_video_from_files(
 
     # Generate video
     try:
+        # Load audio file
+        audio_clip = AudioFileClip(str(audio_file))
+        
         # Pass progress callback if needed in the future
         generated_path_str = video_gen.generate_video(
-            audio_path=audio_file,
+            audio_clip=audio_clip,
             beats=beats,
             output_path=final_output_path,
             sample_beats=sample_beats,
