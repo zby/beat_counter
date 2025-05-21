@@ -104,7 +104,7 @@ def run_experiment(experiment_dir: Path, cli_use_genre_defaults: Optional[bool] 
                 "but 'use_genre_defaults' is enabled."
             )
         try:
-            genre_db_instance = GenreDB(db_path=genre_csv_path)
+            genre_db_instance = GenreDB(csv_path=genre_csv_path)
             logging.info(f"Successfully loaded GenreDB instance from {genre_csv_path}")
         except Exception as e:
             logging.error(f"Failed to initialize GenreDB from {genre_csv_path}: {e}")
