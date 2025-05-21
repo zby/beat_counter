@@ -141,4 +141,67 @@ def test_process_batch_calls_extract_beats():
         args, kwargs = mock_extract_beats.call_args_list[1]
         assert kwargs['audio_file_path'] == str(mock_audio_files[1])
         assert kwargs['detector_name'] == "beat_this"
-        assert kwargs['min_bpm'] == 90 
+        assert kwargs['min_bpm'] == 90
+
+
+def test_process_batch_without_genre_db():
+    """Test that process_batch works correctly without a genre_db instance."""
+    mock_audio_files = [Path('/path/to/by_genre/rock/audio1.mp3')]
+    
+    # Here we'll create a separate mock for parse_genre_from_path to check if it gets called
+    parse_genre_mock = MagicMock(return_value="rock")
+    
+    with patch('beat_counter.core.pipeline.Path.is_dir', return_value=True), \
+         patch('beat_counter.core.pipeline.find_audio_files', return_value=mock_audio_files), \
+         patch('beat_counter.core.pipeline.extract_beats') as mock_extract_beats, \
+         patch('beat_counter.core.pipeline.parse_genre_from_path', parse_genre_mock), \
+         patch('pathlib.Path.relative_to', side_effect=lambda x: Path(os.path.basename(x))):
+        
+        # Mock extract_beats to return a MagicMock
+        mock_extract_beats.return_value = MagicMock()
+        
+        # Call process_batch without a genre_db instance
+        results = process_batch("/path/to/dir", no_progress=True)
+        
+        # Verify extract_beats was called once
+        assert mock_extract_beats.call_count == 1
+        
+        # Verify that genre parsing was NOT attempted (since no genre_db was provided)
+        # parse_genre_from_path should not have been called
+        parse_genre_mock.assert_not_called()
+
+
+def test_process_batch_with_genre_db():
+    """Test that process_batch applies genre-specific parameters when a genre_db is provided."""
+    mock_audio_files = [Path('/path/to/by_genre/rock/audio1.mp3')]
+    
+    # Create a mock GenreDB instance
+    mock_genre_db = MagicMock()
+    mock_genre_db.detector_kwargs_for_genre.return_value = {"min_bpm": 120}
+    mock_genre_db.beats_kwargs_for_genre.return_value = {"beats_per_bar": 4}
+    
+    with patch('beat_counter.core.pipeline.Path.is_dir', return_value=True), \
+         patch('beat_counter.core.pipeline.find_audio_files', return_value=mock_audio_files), \
+         patch('beat_counter.core.pipeline.extract_beats') as mock_extract_beats, \
+         patch('beat_counter.core.pipeline.parse_genre_from_path', return_value="rock"), \
+         patch('pathlib.Path.relative_to', side_effect=lambda x: Path(os.path.basename(x))):
+        
+        # Mock extract_beats to return a MagicMock
+        mock_extract_beats.return_value = MagicMock()
+        
+        # Base detector and beats kwargs
+        detector_kwargs = {"min_bpm": 90}
+        beats_args = {}
+        
+        # Call process_batch with a genre_db
+        process_batch("/path/to/dir", detector_kwargs=detector_kwargs, 
+                      beats_args=beats_args, no_progress=True, genre_db=mock_genre_db)
+        
+        # Verify that genre_db methods were called with the right arguments
+        mock_genre_db.detector_kwargs_for_genre.assert_called_once_with("rock", existing=detector_kwargs)
+        mock_genre_db.beats_kwargs_for_genre.assert_called_once_with("rock", existing=beats_args)
+        
+        # Check that extract_beats got the updated kwargs
+        args, kwargs = mock_extract_beats.call_args
+        assert kwargs['beats_args'] == {"beats_per_bar": 4}
+        assert kwargs['min_bpm'] == 120 

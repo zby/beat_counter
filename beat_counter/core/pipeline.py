@@ -130,7 +130,7 @@ def process_batch(
     beats_args: Optional[Dict[str, Any]] = None,
     detector_kwargs: Optional[Dict[str, Any]] = None,
     no_progress: bool = False,
-    use_genre_defaults: bool = False,
+    genre_db: Optional[GenreDB] = None,
 ) -> List[Tuple[str, Optional[Beats]]]:
     """
     Processes all audio files in a directory tree for beat detection.
@@ -150,9 +150,9 @@ def process_batch(
         Arguments to pass to the beat detector constructor, by default None.
     no_progress : bool, optional
         If True, disable the progress bar, by default False.
-    use_genre_defaults : bool, optional
-        If True, try to detect genre from file path and apply genre-specific parameters,
-        by default False.
+    genre_db : Optional[GenreDB], optional
+        If provided, used for genre-specific parameter lookups, by default None.
+        If None, no genre-specific parameters will be applied.
 
     Returns
     -------
@@ -188,10 +188,8 @@ def process_batch(
     _beats_args = beats_args or {}
     _detector_kwargs = detector_kwargs or {}
     
-    # Pre-initialize the GenreDB if using genre defaults
-    genre_db = None
-    if use_genre_defaults:
-        genre_db = GenreDB()
+    # Log if genre DB is provided
+    if genre_db is not None:
         logging.info("Genre-based defaults enabled. Will check paths for genre information.")
 
     for audio_file in file_iterator:
@@ -209,8 +207,8 @@ def process_batch(
         file_beats_args = _beats_args.copy()
         file_detector_kwargs = _detector_kwargs.copy()
         
-        # Apply genre-specific parameters if enabled
-        if use_genre_defaults and genre_db is not None:
+        # Apply genre-specific parameters if a GenreDB instance was provided
+        if genre_db is not None:
             try:
                 genre = parse_genre_from_path(full_path_str)
                 # Apply genre defaults to detector and Beats kwargs
