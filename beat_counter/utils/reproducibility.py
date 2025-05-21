@@ -51,8 +51,7 @@ def save_reproducibility_info(
     output_dir: Path, 
     git_info: Dict[str, str], 
     config_file: Optional[Path] = None, 
-    config: Optional[Dict[str, Any]] = None,
-    save_genre_db: bool = True
+    config: Optional[Dict[str, Any]] = None
 ) -> None:
     """
     Save reproducibility information to the experiment directory.
@@ -67,8 +66,6 @@ def save_reproducibility_info(
         Path to the experiment configuration file.
     config : Optional[Dict[str, Any]], optional
         The configuration dictionary that will be saved (possibly modified from original).
-    save_genre_db : bool, optional
-        Whether to save a copy of the genre database, by default True.
     """
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -87,17 +84,3 @@ def save_reproducibility_info(
                 yaml.dump(config, f)
         except ImportError:
             logging.warning("PyYAML not available, skipping config saving")
-    
-    # Save the genre database if requested
-    if save_genre_db:
-        try:
-            from beat_counter.genre_db import GenreDB
-            # Determine the default genre CSV path
-            default_csv_path = Path(__file__).parent.parent.parent / "data" / "dance_music_genres.csv"
-            
-            # Copy the genre database to the experiment directory
-            genre_db_output = output_dir / "dance_music_genres.csv"
-            shutil.copy2(default_csv_path, genre_db_output)
-            logging.info(f"Saved genre database for reproducibility to {genre_db_output}")
-        except Exception as e:
-            logging.warning(f"Failed to save genre database: {e}")

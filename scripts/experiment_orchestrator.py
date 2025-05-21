@@ -130,8 +130,7 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
         output_dir=root_output_dir,
         git_info=git_info,
         config_file=config_file,
-        config=config,
-        save_genre_db=final_use_genre_defaults
+        config=config
     )
     
     # 5. Copy input data to experiment directory
@@ -157,11 +156,18 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
     
     # Log whether genre defaults will be used
     if final_use_genre_defaults:
-        logging.info("Genre-based defaults enabled. Will check paths for genre information.")
+        logging.info("Genre-based defaults enabled. Will create a GenreDB instance.")
+        try:
+            genre_db_instance = GenreDB()  # Use default database location
+            logging.info("Successfully created GenreDB instance")
+        except Exception as e:
+            logging.error(f"Failed to initialize GenreDB: {e}")
+            raise ValueError(f"Could not load genre database. Error: {e}")
     else:
-        logging.info("Genre-based defaults disabled. Using explicit configuration values only.")
+        logging.info("Genre-based defaults disabled. No GenreDB will be used.")
+        genre_db_instance = None
     
-    # Use the enhanced process_batch function with genre defaults parameter
+    # Use the process_batch function with the GenreDB instance if needed
     try:
         beat_results = process_batch(
             directory_path=experiment_data_dir,
@@ -169,7 +175,7 @@ def run_experiment(config_file: Path, input_dir: Optional[Path] = None,
             detector_kwargs=detector_kwargs,
             beats_args=beats_args,
             no_progress=False,
-            use_genre_defaults=final_use_genre_defaults
+            genre_db=genre_db_instance
         )
     except Exception as e:
         print(f"DEBUG: Error in process_batch: {e}")

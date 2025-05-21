@@ -28,9 +28,8 @@ def test_get_git_info(mock_check_output):
     assert mock_check_output.call_count == 2
 
 
-@patch('shutil.copy2')
 @patch('yaml.dump')
-def test_save_reproducibility_info(mock_yaml_dump, mock_copy2):
+def test_save_reproducibility_info(mock_yaml_dump):
     """Test that save_reproducibility_info creates the expected files."""
     with tempfile.TemporaryDirectory() as temp_dir:
         output_dir = Path(temp_dir)
@@ -43,8 +42,7 @@ def test_save_reproducibility_info(mock_yaml_dump, mock_copy2):
         save_reproducibility_info(
             output_dir=output_dir,
             git_info=git_info,
-            config=config,
-            save_genre_db=True
+            config=config
         )
         
         # Check that files were created
@@ -60,6 +58,3 @@ def test_save_reproducibility_info(mock_yaml_dump, mock_copy2):
         
         # Check that yaml.dump was called with the config
         mock_yaml_dump.assert_called_once()
-        
-        # If save_genre_db is True, shutil.copy2 should be called
-        assert mock_copy2.call_count > 0

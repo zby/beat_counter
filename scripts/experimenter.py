@@ -26,7 +26,7 @@ from beat_counter.core import process_batch, extract_beats
 from beat_counter.utils.file_utils import find_audio_files
 from beat_counter.core.video import generate_batch_videos
 from beat_counter.core.beats import Beats
-from beat_counter.genre_db import GenreDB # Needed for potential monkey-patching or direct use
+from beat_counter.genre_db import GenreDB
 from beat_counter.utils.reproducibility import get_git_info, save_reproducibility_info
 from tqdm import tqdm
 
@@ -97,38 +97,21 @@ def run_experiment(experiment_dir: Path, cli_use_genre_defaults: Optional[bool] 
 
     # 5. Handle GenreDB if defaults are used
     if final_use_genre_defaults:
-        logging.info(f"Genre-based defaults enabled. Expecting genre CSV: {genre_csv_path}")
+        logging.info(f"Genre-based defaults enabled. Using genre CSV: {genre_csv_path}")
         if not genre_csv_path.is_file():
             raise FileNotFoundError(
                 f"Genre database file '{genre_csv_path.name}' not found in {experiment_dir}, "
                 "but 'use_genre_defaults' is enabled."
             )
-        # IMPORTANT ASSUMPTION:
-        # To make GenreDB use the experiment-specific CSV without modifying GenreDB's code,
-        # we would typically need to monkey-patch GenreDB.DEFAULT_DB_PATH (or a similar internal variable)
-        # *before* GenreDB.get_instance() is called for the first time by any code path.
-        # For example: GenreDB.DEFAULT_DB_PATH = str(genre_csv_path)
-        # This script assumes that GenreDB will correctly pick up this specific CSV.
-        # If GenreDB loads its default path at import time or caches its instance too early,
-        # this might require more intricate handling or a modification to GenreDB itself.
-        # For now, we proceed assuming process_batch and save_reproducibility_info
-        # will use the GenreDB instance reflecting this path.
-        # Potentially, one might need to set an environment variable if GenreDB supports it.
-        logging.info(f"Attempting to use genre definitions from: {genre_csv_path}")
-        # Example of what might be needed if GenreDB supports it (hypothetical):
-        # GenreDB.set_active_db_path(genre_csv_path)
-        # Or if it's a singleton that re-initializes with a path:
-        # GenreDB.get_instance(db_path=genre_csv_path) 
-        # Without knowing GenreDB's internals, this is the best we can do from this script.
         try:
-            genre_db_instance = GenreDB(db_path=genre_csv_path) # Instantiate GenreDB with specific path
+            genre_db_instance = GenreDB(db_path=genre_csv_path)
             logging.info(f"Successfully loaded GenreDB instance from {genre_csv_path}")
         except Exception as e:
             logging.error(f"Failed to initialize GenreDB from {genre_csv_path}: {e}")
             raise ValueError(f"Could not load genre database from {genre_csv_path}. Error: {e}")
     else:
         logging.info("Genre-based defaults disabled. Using explicit configuration values only.")
-        genre_db_instance = None # No GenreDB instance if defaults are not used
+        genre_db_instance = None
 
     # 6. Check reproducibility information
     current_git_info = get_git_info()
@@ -157,14 +140,12 @@ def run_experiment(experiment_dir: Path, cli_use_genre_defaults: Optional[bool] 
         raise ValueError(f"Configuration file {config_yaml_path} must include 'video_settings'")
 
     # 8. Save reproducibility information (before processing)
-    # This will also save the config and potentially the genre DB used.
+    # This will save git information and experiment configuration
     save_reproducibility_info(
-        output_dir=experiment_dir, # Save directly in the experiment directory
+        output_dir=experiment_dir,  # Save directly in the experiment directory
         git_info=current_git_info,
-        config_file_path=config_yaml_path, # Pass the path to the config file used
-        config_data=config, # Pass the loaded config data
-        save_genre_db=final_use_genre_defaults,
-        genre_db_csv_path_override=genre_csv_path if final_use_genre_defaults else None # Explicitly tell where to copy from
+        config_file=config_yaml_path,  # Path to the config file
+        config=config  # Configuration dictionary
     )
     
     # 9. Step A: Beat Generation (in-place in audio_input_output_dir)
