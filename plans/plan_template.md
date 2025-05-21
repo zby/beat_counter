@@ -36,10 +36,8 @@ _No tests – administrative._
 
 [Unit tests should be colocated with code]
 
-* `[test file path]`
-  ```python
-  [sample test code]
-  ```
+[Describe what needs to be tested]
+
 * [Test performance expectation]
 
 Run the new tests and iterate on fixing errors.
