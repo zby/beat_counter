@@ -298,7 +298,8 @@ def main():
     parser = argparse.ArgumentParser(description="Compare results from two beat detection experiments (directories) or two .beats files.")
     parser.add_argument("path1", help="Path to the first experiment directory or .beats file")
     parser.add_argument("path2", help="Path to the second experiment directory or .beats file")
-    parser.add_argument("selected_file", nargs="?", help="When comparing directories, only compare this specific file")
+    parser.add_argument("selected_file", nargs="?", help="When comparing directories, only compare this specific file (enclose in quotes if the filename contains spaces)")
+    parser.add_argument("--file", help="Alternative way to specify a file to compare when it contains spaces (use this instead of positional argument)")
     parser.add_argument("--output", help="Path to save comparison results as JSON")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show detailed differences (primarily for directory mode)")
     parser.add_argument("--summarize", "-s", action="store_true", help="Show summary statistics only (directory mode)")
@@ -313,6 +314,9 @@ def main():
     try:
         path1 = Path(args.path1)
         path2 = Path(args.path2)
+        
+        # Determine the selected file (prefer --file if provided)
+        selected_file = args.file if args.file else args.selected_file
 
         if not path1.exists():
             print(f"Error: Path does not exist: {path1}", file=sys.stderr)
@@ -331,9 +335,9 @@ def main():
             return _compare_two_files(path1, path2, args.tolerance, args.limit, output_path)
             
         # Mode 3: Comparing a specific file from two directories
-        elif path1.is_dir() and path2.is_dir() and args.selected_file:
-            file1_path = path1 / args.selected_file
-            file2_path = path2 / args.selected_file
+        elif path1.is_dir() and path2.is_dir() and selected_file:
+            file1_path = path1 / selected_file
+            file2_path = path2 / selected_file
             
             if not file1_path.exists():
                 print(f"Error: File does not exist: {file1_path}", file=sys.stderr)
@@ -342,7 +346,7 @@ def main():
                 print(f"Error: File does not exist: {file2_path}", file=sys.stderr)
                 return 1
                 
-            print(f"Comparing file '{args.selected_file}' from directories: {path1.name} vs {path2.name}")
+            print(f"Comparing file '{selected_file}' from directories: {path1.name} vs {path2.name}")
             
             output_path = Path(args.output) if args.output else None
             return _compare_two_files(file1_path, file2_path, args.tolerance, args.limit, output_path)

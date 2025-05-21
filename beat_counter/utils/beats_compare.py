@@ -606,7 +606,6 @@ def format_comparison_output(
             ts_val = item["file2_ts"]
             diff_text.append(f"+ {ts_val:.3f}s [ONLY IN {file2_name}]")
             change_flags.append(True)
-
     # ------------------------------------------------------------------
     # Apply context window based on num_context_lines
     # ------------------------------------------------------------------
@@ -622,8 +621,8 @@ def format_comparison_output(
                     indices_to_include.add(i)
 
         if not indices_to_include:
-            # No actual changes ⇒ include entire context (all lines)
-            emitted_lines = diff_text
+            # No actual changes, just show a summary instead of all lines
+            emitted_lines = ["(All timestamps match exactly - no differences found)"]
         else:
             # Ensure deterministic order
             emitted_lines = [diff_text[i] for i in range(len(diff_text)) if i in indices_to_include]
