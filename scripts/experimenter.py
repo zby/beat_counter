@@ -165,7 +165,7 @@ def run_experiment(experiment_dir: Path, cli_use_genre_defaults: Optional[bool] 
     try:
         beat_results = process_batch(
             directory_path=audio_input_output_dir,
-            algorithm=algorithm,
+            detector_name=algorithm,
             detector_kwargs=detector_kwargs,
             beats_args=beats_args,
             no_progress=False, # Assuming interactive or TUI progress is fine
