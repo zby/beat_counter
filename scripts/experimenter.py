@@ -3,7 +3,7 @@
 Experiment Orchestrator Script
 
 This script automates running experiments for beat and video generation.
-It operates on an experiment directory, which should contain:
+It operates on one or more experiment directories, each should contain:
 - experiment_config.yaml: Configuration for the experiment.
 - dance_music_genres.csv: Genre database (if genre defaults are used).
 - by_genre/: A subdirectory with audio files structured by genre.
@@ -205,6 +205,39 @@ def run_experiment(experiment_dir: Path, cli_use_genre_defaults: Optional[bool] 
     logging.info(f"Results are stored in-place within: {audio_input_output_dir}")
 
 
+def run_experiments(experiment_dirs: List[Path], cli_use_genre_defaults: Optional[bool] = None) -> None:
+    """
+    Run multiple experiments sequentially.
+    
+    Parameters
+    ----------
+    experiment_dirs : List[Path]
+        List of paths to experiment directories.
+    cli_use_genre_defaults : Optional[bool]
+        Whether to use genre-based parameter inference, overriding config.
+        None means use the config file's setting.
+    """
+    total_experiments = len(experiment_dirs)
+    successful = 0
+    failed = 0
+    
+    for i, exp_dir in enumerate(experiment_dirs, 1):
+        logging.info(f"Processing experiment {i}/{total_experiments}: {exp_dir.name}")
+        try:
+            run_experiment(
+                experiment_dir=exp_dir,
+                cli_use_genre_defaults=cli_use_genre_defaults
+            )
+            successful += 1
+        except Exception as e:
+            logging.error(f"Experiment {exp_dir.name} failed: {e}")
+            failed += 1
+    
+    # Final summary
+    logging.info(f"Completed processing {total_experiments} experiments.")
+    logging.info(f"Successful: {successful}, Failed: {failed}")
+
+
 def main():
     """Main entry point for the script."""
     logging.basicConfig(
@@ -213,11 +246,12 @@ def main():
     )
     
     parser = argparse.ArgumentParser(
-        description="Run beat detection and video generation experiment from a specified directory."
+        description="Run beat detection and video generation experiment from specified directories."
     )
     parser.add_argument(
-        "experiment_dir",
-        help="Path to the experiment directory. It must contain 'experiment_config.yaml' "
+        "experiment_dirs",
+        nargs='+',
+        help="Paths to experiment directories. Each must contain 'experiment_config.yaml' "
              "and a 'by_genre/' subdirectory for audio files. "
              "If using genre defaults, 'dance_music_genres.csv' should also be present."
     )
@@ -240,15 +274,15 @@ def main():
     
     args = parser.parse_args()
     
-    experiment_dir = Path(args.experiment_dir)
+    experiment_dirs = [Path(exp_dir) for exp_dir in args.experiment_dirs]
     
     try:
-        run_experiment(
-            experiment_dir=experiment_dir,
-            cli_use_genre_defaults=args.use_genre_defaults # Pass the CLI flag state
+        run_experiments(
+            experiment_dirs=experiment_dirs,
+            cli_use_genre_defaults=args.use_genre_defaults
         )
     except Exception as e:
-        logging.error(f"Experiment failed: {e}")
+        logging.error(f"Experiment processing failed: {e}")
         # For more detailed debugging, uncomment the following line:
         # logging.exception("Full traceback:")
         sys.exit(1)
