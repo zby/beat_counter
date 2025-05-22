@@ -263,11 +263,8 @@ def test_format_comparison_output_no_errors_or_diffs():
     assert "+++ f2" in output
     assert "Internal Timestamp Proximity Violations:" not in output  # No errors
     assert "Beat counts are identical" in output
-    # Exact matches should render as context lines (space prefix)
-    assert " 1.000s" in output
-    assert "[EXACT]" in output  # new label for exact matches
-    assert " 2.000s" in output
-    assert " 3.000s" in output
+    # For identical timestamps, we show a summary rather than all timestamps
+    assert "(All timestamps match exactly - no differences found)" in output
     assert "Exact matches: 3" in output
     assert "Proximate matches: 0" in output
     assert "Total matches: 3" in output  # new total matches line
@@ -286,12 +283,15 @@ def test_format_comparison_output_empty_inputs():
     assert "+++ empty2" in output
     assert "Internal Timestamp Proximity Violations:" not in output
     assert "Beat counts are identical" in output
-    # Diff section should be empty (no timestamps)
-    diff_section_content = output.split("Beat counts are identical")[-1]
-    assert "+ " not in diff_section_content
-    assert "- " not in diff_section_content
-    assert "~ " not in diff_section_content
-
+    # For empty inputs, the diff section should say no differences detected
+    assert "Timestamps Diff: (no differences detected)" in output
+    
+    # For empty input there should be no diff lines starting with +, -, or ~
+    # followed by a timestamp (which would look like "+ 1.000s" etc.)
+    diff_section = output.split("Timestamps Diff:")[1].split("Summary Statistics:")[0]
+    assert "s [ONLY IN" not in diff_section  # No addition/deletion timestamps with labels
+    assert "[PROXIMATE]" not in diff_section  # No approximate match timestamps
+    
     assert "Exact matches: 0" in output
     assert "Proximate matches: 0" in output
     assert "Total matches: 0" in output  # new total matches line
