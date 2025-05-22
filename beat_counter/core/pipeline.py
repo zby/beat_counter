@@ -209,22 +209,19 @@ def process_batch(
         
         # Apply genre-specific parameters if a GenreDB instance was provided
         if genre_db is not None:
-            try:
-                genre = parse_genre_from_path(full_path_str)
-                # Apply genre defaults to detector and Beats kwargs
-                file_detector_kwargs = genre_db.detector_kwargs_for_genre(
-                    genre, existing=file_detector_kwargs
-                )
-                file_beats_args = genre_db.beats_kwargs_for_genre(
-                    genre, existing=file_beats_args
-                )
-                logging.info(f"Applied genre '{genre}' defaults for {relative_path_str}")
-            except ValueError:
-                # No genre in path, just use defaults (no warning needed)
-                pass
+            genre = parse_genre_from_path(full_path_str)
+            # Apply genre defaults to detector and Beats kwargs
+            file_detector_kwargs = genre_db.detector_kwargs_for_genre(
+                genre, existing=file_detector_kwargs
+            )
+            file_beats_args = genre_db.beats_kwargs_for_genre(
+                genre, existing=file_beats_args
+            )
+            logging.info(f"Applied genre '{genre}' defaults for {relative_path_str}")
         
         try:
             # Process this audio file and get Beats object
+            logging.info(f"Processing {relative_path_str} with beats_args: {file_beats_args} and detector_kwargs: {file_detector_kwargs}")
             beats = extract_beats(
                 audio_file_path=full_path_str,
                 output_path=None, # Let extract_beats handle default output
